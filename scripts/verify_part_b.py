@@ -4,7 +4,18 @@ import subprocess
 import time
 
 ORCHESTRATOR_URL = "https://full-shelf-orchestrator-620464070103.us-central1.run.app"
-JUDGE_KEY = "fs-judge-key-2026"
+def get_judge_key() -> str:
+    try:
+        from google.cloud import secretmanager
+        client = secretmanager.SecretManagerServiceClient()
+        name = "projects/preflight-hackathon/secrets/full-shelf-judge-api-key/versions/latest"
+        res = client.access_secret_version(request={"name": name})
+        return res.payload.data.decode("utf-8").strip()
+    except Exception as e:
+        print(f"Secret Manager fetch note: {e}")
+        return ""
+
+JUDGE_KEY = get_judge_key()
 
 
 def main():

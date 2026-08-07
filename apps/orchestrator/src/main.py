@@ -21,24 +21,34 @@ app = FastAPI(title="Full Shelf ADK Orchestrator", version="1.0.0")
 tracer = get_tracer("orchestrator")
 
 PLAN_LEDGER_URL = os.getenv("PLAN_LEDGER_URL", "https://full-shelf-plan-ledger-620464070103.us-central1.run.app")
-JUDGE_API_KEY = os.getenv("JUDGE_API_KEY", "fs-judge-key-2026")
+JUDGE_API_KEY = os.getenv("JUDGE_API_KEY", "")
 
 
 def verify_judge_api_key(
-    x_full_shelf_api_key: Optional[str] = Header(None),
-    authorization: Optional[str] = Header(None)
-):
-    """Protects AI reasoning and mutation-triggering endpoints from unauthorized public invocation."""
-    if x_full_shelf_api_key == JUDGE_API_KEY:
-        return True
-    if authorization and (JUDGE_API_KEY in authorization or "Bearer fs-judge" in authorization):
-        return True
-    if os.getenv("DISABLE_AUTH_FOR_TESTS") == "true":
-        return True
-    raise HTTPException(
-        status_code=401,
-        detail="Unauthorized public invocation. Required header: 'X-Full-Shelf-API-Key: fs-judge-key-2026'"
-    )
+
+
+def get_judge_api_key() -> str:
+    key = os.getenv("JUDGE_API_KEY")
+    if key:
+        return key.strip()
+    try:
+        from google.cloud import secretmanager
+        client = secretmanager.SecretManagerServiceClient()
+        name = "projects/preflight-hackathon/secrets/full-shelf-judge-api-key/versions/latest"
+        res = client.access_secret_version(request={"name": name})
+        return res.payload.data.decode("utf-8").strip()
+    except Exception as e:
+        print(f"Secret Manager fetch note: {e}")
+        return ""
+
+
+def verify_judge_key(x_api_key: Optional[str] = Header(None, alias="X-Full-Shelf-API-Key")):
+    expected_key = get_judge_api_key()
+    if not expected_key or x_api_key != expected_key:
+        raise HTTPException(
+            status_code=401,
+            detail="Unauthorized public invocation. Invalid or missing X-Full-Shelf-API-Key header."
+        )
 
 
 class AssessmentRequest(BaseModel):
