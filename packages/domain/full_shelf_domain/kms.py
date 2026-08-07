@@ -1,8 +1,22 @@
 import hmac
 import hashlib
 import json
-from typing import Dict, Any
+import base64
+import os
+from typing import Dict, Any, Optional
+from cryptography.hazmat.primitives.serialization import load_pem_public_key
+from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives import hashes
+from google.cloud import kms_v1
+
 from .models import ApprovalEnvelope, PlanDiff
+
+LIVE_KMS_RESOURCE_PATH = os.getenv(
+    "KMS_KEY_VERSION_PATH",
+    "projects/preflight-hackathon/locations/us-central1/keyRings/full-shelf-keyring/cryptoKeys/approval-signer/cryptoKeyVersions/1"
+)
+
+_cached_public_key_pem = None
 
 
 def compute_plan_diff_hash(diff: PlanDiff) -> str:
@@ -24,7 +38,7 @@ def construct_signed_payload_string(envelope: ApprovalEnvelope) -> str:
     """Constructs the canonical signed payload string covering all rev08 plan diff fields."""
     d = envelope.plan_diff
     computed_diff_hash = compute_plan_diff_hash(d)
-    
+
     return (
         f"{envelope.approval_id}:{envelope.rev_id}:{envelope.principal_id}:{envelope.incident_id}:"
         f"{envelope.plan_id}:{envelope.source_revision}:{envelope.proposed_revision}:"
@@ -33,7 +47,25 @@ def construct_signed_payload_string(envelope: ApprovalEnvelope) -> str:
     )
 
 
-def verify_kms_approval_envelope(envelope: ApprovalEnvelope, secret_key: bytes = b"full-shelf-kms-key") -> bool:
+def get_kms_public_key_pem(kms_key_version: str = LIVE_KMS_RESOURCE_PATH) -> Optional[str]:
+    """Retrieves the public key PEM for the asymmetric signing key from Cloud KMS."""
+    global _cached_public_key_pem
+    if _cached_public_key_pem is not None:
+        return _cached_public_key_pem
+
+    try:
+        client = kms_v1.KeyManagementServiceClient()
+        pub_key_resp = client.get_public_key(request={"name": kms_key_version})
+        _cached_public_key_pem = pub_key_resp.pem
+        return _cached_public_key_pem
+    except Exception as ex:
+        print(f"Failed to fetch Cloud KMS public key: {ex}")
+        return None
+
+
+def verify_kms_approval_envelope(
+    envelope: ApprovalEnvelope, secret_key: bytes = b"full-shelf-kms-key"
+) -> bool:
     """
     Verifies that the KMS approval envelope cryptographically binds:
     - source_revision ('rev07') and proposed_revision ('rev08')
@@ -41,21 +73,39 @@ def verify_kms_approval_envelope(envelope: ApprovalEnvelope, secret_key: bytes =
     - O203: 20 cases converted to refrigerated partner pickup
     - plan_diff_hash
     - approver identity, incident ID, expiration, kms_key_version
+    Supports both live RSA PKCS1v15 Cloud KMS asymmetric signatures and HMAC fallbacks.
     """
     # 1. Verify internal plan_diff_hash matches the diff contents
     expected_diff_hash = compute_plan_diff_hash(envelope.plan_diff)
     if envelope.plan_diff.plan_diff_hash != expected_diff_hash:
         return False
 
-    # 2. Verify HMAC / KMS signature over canonical signed string
-    signed_data = construct_signed_payload_string(envelope)
-    expected_sig = hmac.new(secret_key, signed_data.encode("utf-8"), hashlib.sha256).hexdigest()
-    
+    # 2. Construct canonical signed payload data
+    signed_data = construct_signed_payload_string(envelope).encode("utf-8")
+
+    # 3. Attempt RSA PKCS1v15 Verification via Cloud KMS public key if signature is base64
+    try:
+        sig_bytes = base64.b64decode(envelope.kms_signature)
+        pem = get_kms_public_key_pem(envelope.kms_key_version)
+        if pem and len(sig_bytes) == 256:
+            pub_key = load_pem_public_key(pem.encode("utf-8"))
+            pub_key.verify(
+                sig_bytes,
+                signed_data,
+                padding.PKCS1v15(),
+                hashes.SHA256(),
+            )
+            return True
+    except Exception:
+        pass
+
+    # 4. Fallback HMAC-SHA256 signature check
+    expected_sig = hmac.new(secret_key, signed_data, hashlib.sha256).hexdigest()
     return hmac.compare_digest(envelope.kms_signature, expected_sig)
 
 
 def create_signed_approval_envelope(
-    approval_id: str,
+    approval_id: str = "APP-008",
     rev_id: str = "rev08",
     principal_id: str = "operations-director@fullshelf.org",
     incident_id: str = "INC-TRUCK-01",
@@ -68,10 +118,11 @@ def create_signed_approval_envelope(
     pickup_order_id: str = "O203",
     pickup_cases: int = 20,
     expires_at: str = "2026-08-07T18:00:00Z",
-    kms_key_version: str = "projects/preflight-hackathon/locations/us-central1/keyRings/full-shelf-keyring/cryptoKeys/approval-signer/cryptoKeyVersions/1",
+    kms_key_version: str = LIVE_KMS_RESOURCE_PATH,
     secret_key: bytes = b"full-shelf-kms-key",
+    use_live_kms: bool = True,
 ) -> ApprovalEnvelope:
-    """Generates a valid signed approval envelope covering the complete plan diff."""
+    """Generates a valid signed approval envelope using live Cloud KMS asymmetric RSA signing or HMAC fallback."""
     temp_diff = PlanDiff(
         source_revision=source_revision,
         proposed_revision=proposed_revision,
@@ -99,6 +150,21 @@ def create_signed_approval_envelope(
         expires_at=expires_at,
     )
 
-    signed_data = construct_signed_payload_string(envelope)
-    envelope.kms_signature = hmac.new(secret_key, signed_data.encode("utf-8"), hashlib.sha256).hexdigest()
+    signed_data_str = construct_signed_payload_string(envelope)
+    signed_bytes = signed_data_str.encode("utf-8")
+
+    if use_live_kms:
+        try:
+            client = kms_v1.KeyManagementServiceClient()
+            digest = hashlib.sha256(signed_bytes).digest()
+            sign_res = client.asymmetric_sign(
+                request={"name": kms_key_version, "digest": {"sha256": digest}}
+            )
+            envelope.kms_signature = base64.b64encode(sign_res.signature).decode("utf-8")
+            return envelope
+        except Exception as ex:
+            print(f"Live Cloud KMS signing note (falling back to HMAC): {ex}")
+
+    # Fallback HMAC-SHA256 signature
+    envelope.kms_signature = hmac.new(secret_key, signed_bytes, hashlib.sha256).hexdigest()
     return envelope
