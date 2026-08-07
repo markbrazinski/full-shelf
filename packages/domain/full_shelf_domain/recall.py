@@ -1,17 +1,42 @@
 import json
 import os
 from datetime import datetime, timezone
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 import httpx
 
 from google import genai
-from google.cloud import pubsub_v1
+from google.cloud import pubsub_v1, spanner, tasks_v2
 from full_shelf_observability import generate_trace_id
 
 
 PROJECT_ID = os.getenv("GCP_PROJECT_ID", "preflight-hackathon")
 TOPIC_ID = os.getenv("PUBSUB_TOPIC_ID", "full-shelf-incidents")
 PLAN_LEDGER_URL = os.getenv("PLAN_LEDGER_URL", "https://full-shelf-plan-ledger-620464070103.us-central1.run.app")
+MODEL_ID = "gemini-3.5-flash"
+VERTEX_LOCATION = "global"
+
+VALID_LIFECYCLE_STATES = [
+    "DETECTED",
+    "SCOPING",
+    "CONTAINMENT_IN_PROGRESS",
+    "PARTIALLY_CONTAINED",
+    "CONTAINED",
+    "CLOSED"
+]
+
+
+def verify_gemini_35_availability() -> Dict[str, Any]:
+    """Asserts that Gemini 3.5 Flash or newer is active on Vertex AI. Fails startup if unavailable."""
+    client = genai.Client(vertexai=True, project=PROJECT_ID, location=VERTEX_LOCATION)
+    res = client.models.generate_content(model=MODEL_ID, contents="ping")
+    if not res.text:
+        raise RuntimeError(f"Model verification failed for {MODEL_ID}")
+    return {
+        "status": "HEALTHY",
+        "model_id": MODEL_ID,
+        "vertex_location": VERTEX_LOCATION,
+        "response": res.text.strip()
+    }
 
 
 def inspect_recall_notice_with_model_armor(notice_text: str) -> Dict[str, Any]:
@@ -26,52 +51,12 @@ def inspect_recall_notice_with_model_armor(notice_text: str) -> Dict[str, Any]:
     }
 
 
-def publish_recall_event_to_pubsub(
-    lot_id: str = "LTC-4471",
-    product_name: str = "Romaine Lettuce",
-    hazard: str = "E. coli O157:H7",
-    action_required: str = "PAUSE_DISPATCH_AND_QUARANTINE",
-    source_anchor: str = "FDA Enforcement Report #2026-0807-L4",
-    trace_id: Optional[str] = None
-) -> Dict[str, Any]:
-    """Publishes LTC-4471 recall incident event to Pub/Sub topic full-shelf-incidents."""
-    t_id = trace_id or generate_trace_id()
-    publisher = pubsub_v1.PublisherClient()
-    topic_path = publisher.topic_path(PROJECT_ID, TOPIC_ID)
-
-    event_payload = {
-        "event_id": f"EVT-RECALL-{lot_id}",
-        "tenant_id": "east-bay-food-bank",
-        "event_type": "FOOD_SAFETY_RECALL",
-        "lot_id": lot_id,
-        "product_name": product_name,
-        "hazard": hazard,
-        "action_required": action_required,
-        "source_anchor": source_anchor,
-        "raw_notice": f"FDA ENFORCEMENT REPORT #{source_anchor}: Urgent recall issued for Lot {lot_id} ({product_name}) due to contamination with {hazard}. Action: {action_required}.",
-        "trace_id": t_id,
-        "published_at": datetime.now(timezone.utc).isoformat(),
-    }
-
-    data_bytes = json.dumps(event_payload).encode("utf-8")
-    future = publisher.publish(topic_path, data=data_bytes, trace_id=t_id, tenant_id="east-bay-food-bank")
-    message_id = future.result(timeout=10.0)
-
-    return {
-        "status": "PUBLISHED",
-        "topic": topic_path,
-        "message_id": message_id,
-        "trace_id": t_id,
-        "payload": event_payload,
-    }
-
-
-def extract_recall_entities_with_gemini(raw_notice: str) -> Dict[str, Any]:
-    """Extracts lot, product, hazard, action, and source anchor from FDA notice using Gemini 2.5 Flash on Vertex AI."""
-    client = genai.Client(vertexai=True, project=PROJECT_ID, location="us-central1")
+def extract_recall_entities_with_gemini_35(raw_notice: str) -> Dict[str, Any]:
+    """Extracts recall entities from notice using Gemini 3.5 Flash on Vertex AI (location='global')."""
+    client = genai.Client(vertexai=True, project=PROJECT_ID, location=VERTEX_LOCATION)
     prompt = f"""
-    You are an automated Food Safety Reasoning Agent.
-    Extract recall parameters from the following FDA notice into exact JSON:
+    You are an automated Food Safety Reasoning Agent powering Full Shelf.
+    Extract recall parameters from this REPRESENTATIVE DEMO NOTICE into exact JSON:
     Notice: "{raw_notice}"
 
     Return ONLY a JSON object with exact keys:
@@ -83,7 +68,7 @@ def extract_recall_entities_with_gemini(raw_notice: str) -> Dict[str, Any]:
     """
 
     res = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model=MODEL_ID,
         contents=prompt,
     )
 
@@ -104,55 +89,67 @@ def extract_recall_entities_with_gemini(raw_notice: str) -> Dict[str, Any]:
             "fallback_note": str(e)
         }
 
+    extracted["notice_label"] = "REPRESENTATIVE DEMO NOTICE"
+    extracted["model_used"] = MODEL_ID
+    extracted["vertex_location"] = VERTEX_LOCATION
     return extracted
 
 
-def open_recall_incident_in_spanner(
-    tenant_id: str = "east-bay-food-bank",
-    incident_id: str = "INC-RECALL-01",
-    recall_data: Optional[Dict[str, Any]] = None,
-    trace_id: Optional[str] = None
-) -> Dict[str, Any]:
-    """Opens INC-RECALL-01 in Spanner via plan-ledger S2S endpoint, preserving Orchestrator's read-only IAM isolation."""
-    now = datetime.now(timezone.utc)
-    t_id = trace_id or generate_trace_id()
+class IncidentLifecycleManager:
+    """Manages strict incident lifecycle state transitions: DETECTED -> SCOPING -> CONTAINMENT_IN_PROGRESS -> PARTIALLY_CONTAINED."""
 
-    data = recall_data or {
-        "lot_id": "LTC-4471",
-        "product_name": "Romaine Lettuce",
-        "hazard": "E. coli O157:H7",
-        "action_required": "PAUSE_DISPATCH_AND_QUARANTINE",
-        "source_anchor": "FDA Enforcement Report #2026-0807-L4",
-    }
+    @staticmethod
+    def validate_transition(current_state: str, target_state: str, has_unconfirmed_downstream: bool = True) -> bool:
+        if target_state in ["CONTAINED", "CLOSED"] and has_unconfirmed_downstream:
+            raise ValueError(f"Refused transition from {current_state} to {target_state}: DOWNSTREAM_CUSTODY_UNCONFIRMED")
 
-    payload = {
-        "tenant_id": tenant_id,
-        "incident_id": incident_id,
-        "event_type": "FOOD_SAFETY_RECALL",
-        "lot_id": data["lot_id"],
-        "trace_id": t_id,
-        "details": data,
+        allowed_transitions = {
+            "DETECTED": ["SCOPING"],
+            "SCOPING": ["CONTAINMENT_IN_PROGRESS"],
+            "CONTAINMENT_IN_PROGRESS": ["PARTIALLY_CONTAINED"],
+            "PARTIALLY_CONTAINED": ["CONTAINED"],
+            "CONTAINED": ["CLOSED"],
+        }
+
+        if target_state not in allowed_transitions.get(current_state, []):
+            raise ValueError(f"Invalid transition path: {current_state} -> {target_state}")
+        return True
+
+
+def schedule_site01_deadline_task(incident_id: str = "INC-RECALL-01") -> Dict[str, Any]:
+    """Schedules acknowledgment deadline task using GCP Cloud Tasks."""
+    client = tasks_v2.CloudTasksClient()
+    parent = client.queue_path(PROJECT_ID, "us-central1", "full-shelf-deadlines")
+
+    task = {
+        "http_request": {
+            "http_method": tasks_v2.HttpMethod.POST,
+            "url": f"{PLAN_LEDGER_URL}/api/v1/incidents/site01-deadline",
+            "headers": {"Content-Type": "application/json"},
+            "body": json.dumps({"incident_id": incident_id, "site_id": "SITE-01", "deadline_seconds": 3600}).encode("utf-8"),
+        }
     }
 
     try:
-        with httpx.Client(timeout=10.0) as client:
-            res = client.post(f"{PLAN_LEDGER_URL}/api/v1/incidents/open", json=payload)
-            if res.status_code == 200:
-                ledger_res = res.json()
-                return ledger_res
+        created_task = client.create_task(request={"parent": parent, "task": task})
+        return {
+            "status": "SCHEDULED",
+            "task_name": created_task.name,
+            "queue": parent,
+            "target_url": task["http_request"]["url"]
+        }
     except Exception as e:
-        print(f"Call to plan-ledger open incident note: {e}")
-
+        print(f"Cloud Tasks note: {e}")
+def publish_recall_event_to_pubsub(event_payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Publishes recall event to GCP Pub/Sub topic full-shelf-incidents."""
+    publisher = pubsub_v1.PublisherClient()
+    topic_path = publisher.topic_path(PROJECT_ID, TOPIC_ID)
+    data = json.dumps(event_payload).encode("utf-8")
+    future = publisher.publish(topic_path, data)
+    message_id = future.result()
     return {
-        "incident_id": incident_id,
-        "tenant_id": tenant_id,
-        "event_type": "FOOD_SAFETY_RECALL",
-        "affected_lot_id": data["lot_id"],
-        "hazard": data["hazard"],
-        "action_required": data["action_required"],
-        "source_anchor": data["source_anchor"],
-        "plan_status": "INVALIDATED_RECALL",
-        "terminal_state": "PARTIALLY_CONTAINED",
-        "trace_id": t_id,
-        "opened_at": now.isoformat(),
+        "status": "PUBLISHED",
+        "topic": topic_path,
+        "message_id": message_id,
+        "event_payload": event_payload
     }
