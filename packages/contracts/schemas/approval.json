@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "FullShelfApprovalEnvelope",
+  "type": "object",
+  "properties": {
+    "approval_id": { "type": "string" },
+    "rev_id": { "type": "string" },
+    "principal_id": { "type": "string" },
+    "incident_id": { "type": "string" },
+    "plan_id": { "type": "string" },
+    "expected_revision": { "type": "string" },
+    "action_type": { "type": "string" },
+    "target_order_id": { "type": "string" },
+    "target_cases": { "type": "integer" },
+    "payload_hash": { "type": "string" },
+    "kms_signature": { "type": "string" },
+    "expires_at": { "type": "string", "format": "date-time" }
+  },
+  "required": [
+    "approval_id", "rev_id", "principal_id", "incident_id",
+    "plan_id", "expected_revision", "action_type", "target_order_id",
+    "target_cases", "payload_hash", "kms_signature", "expires_at"
+  ]
+}

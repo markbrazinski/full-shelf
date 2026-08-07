@@ -1,0 +1,26 @@
+{
+  "scenario": "A. Healthy Morning Plan",
+  "date": "2026-08-07",
+  "tenant_id": "east-bay-food-bank",
+  "plan": {
+    "plan_id": "PLAN-2026-08-07",
+    "revision": "v1",
+    "status": "ACTIVE",
+    "created_at": "2026-08-07T07:30:00Z"
+  },
+  "trucks": [
+    { "vehicle_id": "TRUCK-01", "name": "Refrigerated Truck 1", "max_capacity_cases": 60, "assigned_orders": ["O201", "O202", "O203"] },
+    { "vehicle_id": "TRUCK-02", "name": "Refrigerated Truck 2", "max_capacity_cases": 60, "assigned_orders": ["O204", "O205"] }
+  ],
+  "orders": [
+    { "order_id": "O201", "destination_agency_id": "AGENCY-01", "destination_agency_name": "Agency 01", "cases": 18, "lot_id": "LOT-RECALL-88", "assigned_vehicle_id": "TRUCK-01", "status": "PLANNED" },
+    { "order_id": "O202", "destination_agency_id": "AGENCY-02", "destination_agency_name": "Agency 02", "cases": 22, "lot_id": "LOT-RECALL-88", "assigned_vehicle_id": "TRUCK-01", "status": "PLANNED" },
+    { "order_id": "O203", "destination_agency_id": "AGENCY-03", "destination_agency_name": "Agency 03", "cases": 20, "lot_id": "LOT-RECALL-88", "assigned_vehicle_id": "TRUCK-01", "status": "PLANNED" },
+    { "order_id": "O204", "destination_agency_id": "AGENCY-04", "destination_agency_name": "Agency 04", "cases": 15, "lot_id": "LOT-SAFE-99", "assigned_vehicle_id": "TRUCK-02", "status": "PLANNED" },
+    { "order_id": "O205", "destination_agency_id": "AGENCY-05", "destination_agency_name": "Agency 05", "cases": 21, "lot_id": "LOT-SAFE-99", "assigned_vehicle_id": "TRUCK-02", "status": "PLANNED" }
+  ],
+  "lots": [
+    { "lot_id": "LOT-RECALL-88", "code": "LTC-4471", "produce_type": "Romaine Lettuce", "hazard_status": "SAFE", "total_cases": 96 },
+    { "lot_id": "LOT-SAFE-99", "code": "LTC-5090", "produce_type": "Iceberg Lettuce", "hazard_status": "SAFE", "total_cases": 100 }
+  ]
+}

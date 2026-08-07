@@ -1,0 +1,69 @@
+openapi: 3.0.3
+info:
+  title: Full Shelf Plan Ledger API
+  version: 1.0.0
+  description: Deterministic mutation service, policy engine, and Spanner authority for Full Shelf.
+paths:
+  /api/v1/plans/preview:
+    get:
+      summary: Get morning distribution plan preview
+      parameters:
+        - name: tenant_id
+          in: query
+          required: true
+          schema:
+            type: string
+            default: east-bay-food-bank
+      responses:
+        '200':
+          description: Plan preview response
+  /api/v1/actions/execute:
+    post:
+      summary: Execute policy-governed operational action
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                action_id: { type: string }
+                tenant_id: { type: string }
+                agent_role: { type: string }
+                action_type: { type: string }
+                plan_id: { type: string }
+                expected_revision: { type: string }
+                parameters: { type: object }
+                approval_envelope: { type: object }
+                idempotency_key: { type: string }
+      responses:
+        '200':
+          description: Action receipt (SUCCESS or DENIED)
+  /api/v1/incidents/recall:
+    post:
+      summary: Trigger food safety recall barrier and plan invalidation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                lot_id: { type: string }
+                hazard: { type: string }
+                substitute_lot_id: { type: string }
+      responses:
+        '200':
+          description: Recall reconciliation and barrier receipt
+  /api/v1/evidence/system:
+    get:
+      summary: Get System Evidence report for auditability
+      parameters:
+        - name: tenant_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: System Evidence drawer report

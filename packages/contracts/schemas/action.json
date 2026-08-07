@@ -1,0 +1,17 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "FullShelfAction",
+  "type": "object",
+  "properties": {
+    "action_id": { "type": "string" },
+    "tenant_id": { "type": "string" },
+    "agent_role": { "type": "string" },
+    "action_type": { "type": "string", "enum": ["REROUTE_ORDER", "CONVERT_TO_PICKUP", "INVALIDATE_PLAN", "ACTIVATE_LOT_BARRIER", "REALLOCATE_SAFE_LOT"] },
+    "plan_id": { "type": "string" },
+    "expected_revision": { "type": "string" },
+    "parameters": { "type": "object" },
+    "approval_envelope": { "$ref": "approval.json" },
+    "idempotency_key": { "type": "string" }
+  },
+  "required": ["action_id", "tenant_id", "agent_role", "action_type", "plan_id", "expected_revision", "parameters", "idempotency_key"]
+}

@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "FullShelfPlan",
+  "type": "object",
+  "properties": {
+    "plan_id": { "type": "string" },
+    "tenant_id": { "type": "string" },
+    "revision": { "type": "string" },
+    "status": { "type": "string", "enum": ["ACTIVE", "SUPERSEDED", "INVALIDATED_RECALL"] },
+    "orders": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "order_id": { "type": "string" },
+          "destination_agency_id": { "type": "string" },
+          "cases": { "type": "integer" },
+          "lot_id": { "type": "string" },
+          "status": { "type": "string" }
+        },
+        "required": ["order_id", "destination_agency_id", "cases", "lot_id", "status"]
+      }
+    },
+    "vehicle_assignments": { "type": "object" },
+    "created_at": { "type": "string", "format": "date-time" }
+  },
+  "required": ["plan_id", "tenant_id", "revision", "status", "orders", "created_at"]
+}

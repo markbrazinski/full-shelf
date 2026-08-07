@@ -1,0 +1,33 @@
+{
+  "scenario": "B. Truck Breakdown & Governed Recovery",
+  "incident": {
+    "incident_id": "INC-TRUCK-01",
+    "incident_type": "TRUCK_BREAKDOWN",
+    "failed_vehicle_id": "TRUCK-01",
+    "failed_after_stop": "AGENCY-01",
+    "order_201_status": "DELIVERED"
+  },
+  "capacity_check": {
+    "truck_2_existing_cases": 36,
+    "order_202_cases": 22,
+    "order_203_cases": 20,
+    "total_cases_if_both_routed": 78,
+    "capacity_limit": 60,
+    "result": "INFEASIBLE_EXCEEDS_CAPACITY"
+  },
+  "repaired_plan": {
+    "plan_id": "PLAN-2026-08-07",
+    "revision": "v2",
+    "status": "ACTIVE",
+    "order_202_action": "REROUTED_TO_TRUCK_02",
+    "order_203_action": "CONVERTED_TO_PARTNER_PICKUP",
+    "approval": {
+      "approval_id": "APP-008",
+      "rev_id": "rev08",
+      "action_type": "CONVERT_TO_PARTNER_PICKUP",
+      "target_order_id": "O203",
+      "target_cases": 20,
+      "kms_bound": true
+    }
+  }
+}

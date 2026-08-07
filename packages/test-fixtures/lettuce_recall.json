@@ -1,0 +1,30 @@
+{
+  "scenario": "C. Lettuce Recall & Graph Reconciliation",
+  "recall_notice": {
+    "lot_id": "LOT-RECALL-88",
+    "code": "LTC-4471",
+    "hazard": "E. coli O157:H7",
+    "safe_substitute_lot_id": "LOT-SAFE-99",
+    "safe_substitute_code": "LTC-5090"
+  },
+  "affected_plan": {
+    "plan_id": "PLAN-2026-08-07",
+    "previous_revision": "v2",
+    "new_status": "INVALIDATED_RECALL"
+  },
+  "custody_nodes": [
+    { "node_id": "N-WH", "type": "WAREHOUSE", "name": "Warehouse", "on_hand_cases": 24 },
+    { "node_id": "N-TR2", "type": "VEHICLE", "name": "Truck 2", "on_hand_cases": 22 },
+    { "node_id": "N-STG", "type": "STAGING", "name": "Pickup Staging", "on_hand_cases": 20 },
+    { "node_id": "N-AG01", "type": "AGENCY", "name": "Agency 01", "on_hand_cases": 10 },
+    { "node_id": "N-ST01", "type": "SUBSITE", "name": "Site 01", "on_hand_cases": 8 },
+    { "node_id": "N-RESC", "type": "DIRECT_RESCUE", "name": "Direct Rescue", "on_hand_cases": 12 }
+  ],
+  "unique_physical_cases": 96,
+  "service_impact": {
+    "safely_supplied_agencies": ["Agency 01", "Agency 02", "Agency 04", "Agency 05"],
+    "shortfall_agency": "Agency 03",
+    "shortfall_cases": 20
+  },
+  "terminal_state": "PARTIALLY_CONTAINED_AWAITING_RECOVERY"
+}

@@ -1,0 +1,18 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "FullShelfReceipt",
+  "type": "object",
+  "properties": {
+    "receipt_id": { "type": "string" },
+    "action_id": { "type": "string" },
+    "tenant_id": { "type": "string" },
+    "plan_revision_id": { "type": "string" },
+    "action_type": { "type": "string" },
+    "status": { "type": "string", "enum": ["SUCCESS", "DENIED", "REJECTED"] },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "mutations_applied": { "type": "integer" },
+    "message": { "type": "string" },
+    "trace_id": { "type": "string" }
+  },
+  "required": ["receipt_id", "action_id", "tenant_id", "plan_revision_id", "action_type", "status", "timestamp", "mutations_applied", "trace_id"]
+}

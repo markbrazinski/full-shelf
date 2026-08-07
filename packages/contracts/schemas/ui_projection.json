@@ -1,0 +1,35 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "FullShelfUIProjection",
+  "type": "object",
+  "properties": {
+    "day_preview": {
+      "type": "object",
+      "properties": {
+        "date": { "type": "string" },
+        "active_plan_revision": { "type": "string" },
+        "total_deliveries": { "type": "integer" },
+        "total_cases": { "type": "integer" },
+        "trucks_assigned": { "type": "integer" },
+        "agencies": { "type": "array", "items": { "type": "object" } }
+      },
+      "required": ["date", "active_plan_revision", "total_deliveries", "total_cases", "trucks_assigned"]
+    },
+    "incident_summary": {
+      "type": "object",
+      "properties": {
+        "active_incidents": { "type": "array", "items": { "type": "object" } },
+        "terminal_state": { "type": "string" }
+      }
+    },
+    "custody_graph": {
+      "type": "object",
+      "properties": {
+        "total_unique_cases": { "type": "integer" },
+        "nodes": { "type": "array", "items": { "type": "object" } },
+        "edges": { "type": "array", "items": { "type": "object" } }
+      }
+    }
+  },
+  "required": ["day_preview", "incident_summary", "custody_graph"]
+}

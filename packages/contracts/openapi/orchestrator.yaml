@@ -1,0 +1,27 @@
+openapi: 3.0.3
+info:
+  title: Full Shelf ADK Orchestrator API
+  version: 1.0.0
+  description: ADK Gemini agent orchestrator service (Read-Only agent reasoning).
+paths:
+  /api/v1/orchestrator/preview:
+    get:
+      summary: Fetch agent-synthesized preview of the day
+      responses:
+        '200':
+          description: Natural language & structured preview
+  /api/v1/orchestrator/incident/assess:
+    post:
+      summary: Agent assessment of disruption event
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                event_type: { type: string }
+                event_details: { type: object }
+      responses:
+        '200':
+          description: Proposed recovery actions and reasoning

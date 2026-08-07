@@ -1,0 +1,12 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "FullShelfAgentCard",
+  "type": "object",
+  "properties": {
+    "agent_role": { "type": "string", "enum": ["Incident Coordinator", "Network and Custody Agent", "Recovery Planner", "Partner Operations Agent"] },
+    "capabilities": { "type": "array", "items": { "type": "string" } },
+    "is_read_only": { "type": "boolean" },
+    "allowed_tool_names": { "type": "array", "items": { "type": "string" } }
+  },
+  "required": ["agent_role", "capabilities", "is_read_only", "allowed_tool_names"]
+}

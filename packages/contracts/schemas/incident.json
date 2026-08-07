@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "FullShelfIncident",
+  "type": "object",
+  "properties": {
+    "incident_id": { "type": "string" },
+    "parent_coordinator_id": { "type": "string" },
+    "tenant_id": { "type": "string" },
+    "incident_type": { "type": "string", "enum": ["TRUCK_BREAKDOWN", "FOOD_SAFETY_RECALL"] },
+    "status": { "type": "string", "enum": ["ACTIVE", "RESOLVED", "PARTIALLY_CONTAINED_AWAITING_RECOVERY", "CONTAINED"] },
+    "affected_lot_id": { "type": "string" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "resolved_at": { "type": "string", "format": "date-time" }
+  },
+  "required": ["incident_id", "parent_coordinator_id", "tenant_id", "incident_type", "status", "created_at"]
+}

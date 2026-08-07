@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "FullShelfEvent",
+  "type": "object",
+  "properties": {
+    "event_id": { "type": "string" },
+    "event_type": { "type": "string", "enum": ["TRUCK_BREAKDOWN", "FOOD_SAFETY_RECALL", "APPROVAL_SUBMITTED", "PARTNER_ACKNOWLEDGED"] },
+    "tenant_id": { "type": "string" },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "payload": { "type": "object" },
+    "trace_id": { "type": "string" }
+  },
+  "required": ["event_id", "event_type", "tenant_id", "timestamp", "payload", "trace_id"]
+}
