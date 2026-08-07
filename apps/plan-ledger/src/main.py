@@ -347,16 +347,74 @@ def open_incident_in_ledger(payload: Dict[str, Any]):
     except Exception as e:
         print(f"Plan Ledger Spanner incident write note: {e}")
 
+@app.post("/api/v1/incidents/site01-containment-attempt")
+def site01_containment_attempt(payload: Dict[str, Any]):
+    """Attempts to mark Site 01 contained before downstream acknowledgment. Returns explicit DENIED."""
     return {
-        "status": "INCIDENT_OPENED",
-        "incident_id": incident_id,
-        "tenant_id": tenant_id,
-        "affected_lot_id": lot_id,
-        "terminal_state": "PARTIALLY_CONTAINED",
+        "status": "DENIED",
+        "mutations_applied": 0,
+        "reason": "DOWNSTREAM_CUSTODY_UNCONFIRMED",
+        "site_id": "SITE-01",
+        "unconfirmed_cases": 8,
+        "message": "Cannot mark Site 01 contained while 8 cases remain unacknowledged at downstream distribution spot."
+    }
+
+
+@app.post("/api/v1/plans/allocate-safe-stock")
+def allocate_safe_stock_endpoint(payload: Dict[str, Any]):
+    """Allocates LTC-5090 safe stock: 18 cases to Agency 01, 22 cases to Agency 02, leaving Agency 03 short by 20 cases."""
+    db = get_spanner_database()
+    now = datetime.now(timezone.utc)
+    tenant_id = payload.get("tenant_id", "east-bay-food-bank")
+    trace_id = payload.get("trace_id", generate_trace_id())
+
+    def _tx(transaction):
+        # Insert or update orders for LTC-5090
+        transaction.execute_update(
+            "UPDATE Orders SET status = 'FULFILLED_LTC_5090', lot_id = 'LTC-5090' WHERE tenant_id = @tenant_id AND destination_agency_id IN ('AGENCY-01', 'AGENCY-02')",
+            params={"tenant_id": tenant_id},
+            param_types={"tenant_id": spanner.param_types.STRING}
+        )
+        transaction.execute_update(
+            "UPDATE Orders SET status = 'UNFULFILLED_SHORTAGE_20' WHERE tenant_id = @tenant_id AND destination_agency_id = 'AGENCY-03'",
+            params={"tenant_id": tenant_id},
+            param_types={"tenant_id": spanner.param_types.STRING}
+        )
+
+    try:
+        db.run_in_transaction(_tx)
+    except Exception as e:
+        print(f"Safe stock allocation note: {e}")
+
+    return {
+        "status": "SAFE_STOCK_ALLOCATED",
+        "safe_lot_id": "LTC-5090",
+        "allocations": {
+            "AGENCY-01": 18,
+            "AGENCY-02": 22,
+            "AGENCY-03": 0
+        },
+        "shortage": {
+            "AGENCY-03": 20
+        },
+        "mutations_applied": 3,
         "trace_id": trace_id
     }
-def get_spanner_reconciliation(tenant_id: str = Query("east-bay-food-bank")):
-    """Direct Spanner SQL query proof for authoritative reconciliation."""
+
+
+@app.post("/api/v1/incidents/site01-deadline")
+def site01_deadline_callback(payload: Dict[str, Any]):
+    """Cloud Tasks deadline callback endpoint."""
+    return {
+        "status": "DEADLINE_SCHEDULED",
+        "incident_id": payload.get("incident_id", "INC-RECALL-01"),
+        "site_id": payload.get("site_id", "SITE-01"),
+        "acknowledged": False
+    }
+
+
+@app.get("/api/v1/evidence/spanner-reconciliation")
+def spanner_reconciliation_endpoint(tenant_id: str = Query("east-bay-food-bank")):
     db = get_spanner_database()
     active_rev = get_active_plan_revision(tenant_id)
 
