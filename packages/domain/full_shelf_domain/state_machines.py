@@ -4,8 +4,8 @@ from .models import PlanStatus, IncidentStatus
 
 class PlanRevisionStateMachine:
     VALID_TRANSITIONS = {
-        ("v1", PlanStatus.ACTIVE): [("v2", PlanStatus.ACTIVE)],  # Truck breakdown recovery: v1 -> v2
-        ("v2", PlanStatus.ACTIVE): [("v3", PlanStatus.INVALIDATED_RECALL)],  # Lettuce recall invalidation: v2 -> v3
+        ("rev07", PlanStatus.ACTIVE): [("rev08", PlanStatus.ACTIVE)],  # Truck breakdown recovery: rev07 -> rev08
+        ("rev08", PlanStatus.ACTIVE): [("rev09", PlanStatus.INVALIDATED_RECALL)],  # Lettuce recall invalidation: rev08 -> rev09
     }
 
     @classmethod
@@ -18,10 +18,10 @@ class IncidentStateMachine:
     VALID_TRANSITIONS = {
         ("TRUCK_BREAKDOWN", IncidentStatus.ACTIVE): [IncidentStatus.RESOLVED],
         ("FOOD_SAFETY_RECALL", IncidentStatus.ACTIVE): [
-            IncidentStatus.PARTIALLY_CONTAINED_AWAITING_RECOVERY,
+            IncidentStatus.PARTIALLY_CONTAINED,
             IncidentStatus.CONTAINED,
         ],
-        ("FOOD_SAFETY_RECALL", IncidentStatus.PARTIALLY_CONTAINED_AWAITING_RECOVERY): [IncidentStatus.CONTAINED],
+        ("FOOD_SAFETY_RECALL", IncidentStatus.PARTIALLY_CONTAINED): [IncidentStatus.CONTAINED],
     }
 
     @classmethod

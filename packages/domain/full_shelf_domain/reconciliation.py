@@ -25,13 +25,13 @@ class RecallReconciliationResult:
 def reconcile_recall_graph(
     nodes: List[CustodyNode],
     edges: List[CustodyEdge],
-    recalled_lot_id: str,
-    unconfirmed_subsite_ids: List[str],
+    recalled_lot_id: str = "LTC-4471",
+    unconfirmed_subsite_ids: List[str] = None,
 ) -> RecallReconciliationResult:
     """
-    Reconciles custody graph for a recalled lot without double-counting physical cases.
+    Reconciles custody graph for recalled lot LTC-4471 without double-counting physical cases.
     
-    Canonical physical positions for LOT-RECALL-88 / LTC-4471:
+    Canonical physical positions for LTC-4471:
       - Warehouse: 24
       - Truck 2 (O202): 22
       - Pickup Staging (O203): 20
@@ -41,8 +41,11 @@ def reconcile_recall_graph(
       Total unique physical cases = 24 + 22 + 20 + 10 + 8 + 12 = 96 cases.
       
     If Site 01 (8 cases) remains unconfirmed, is_fully_contained=False and
-    terminal_status = "PARTIALLY_CONTAINED_AWAITING_RECOVERY".
+    terminal_status = "PARTIALLY_CONTAINED".
     """
+    if unconfirmed_subsite_ids is None:
+        unconfirmed_subsite_ids = []
+
     node_breakdown: Dict[str, int] = {}
     total_physical_cases = 0
 
@@ -58,9 +61,7 @@ def reconcile_recall_graph(
             unconfirmed_cases += edge.case_count
 
     is_contained = unconfirmed_cases == 0
-    terminal_status = (
-        "CONTAINED" if is_contained else "PARTIALLY_CONTAINED_AWAITING_RECOVERY"
-    )
+    terminal_status = "CONTAINED" if is_contained else "PARTIALLY_CONTAINED"
 
     return RecallReconciliationResult(
         recalled_lot_id=recalled_lot_id,

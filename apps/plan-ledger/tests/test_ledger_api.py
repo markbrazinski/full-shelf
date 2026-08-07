@@ -13,59 +13,61 @@ def test_get_morning_plan_preview():
     response = client.get("/api/v1/plans/preview?tenant_id=east-bay-food-bank")
     assert response.status_code == 200
     data = response.json()
-    assert data["active_plan_revision"] == "v1"
+    assert data["active_plan_revision"] == "rev07"
     assert len(data["deliveries"]) == 5
     assert data["deliveries"][0]["order_id"] == "O201"
+    assert data["deliveries"][0]["lot_id"] == "LTC-4471"
+    assert data["deliveries"][3]["lot_id"] == "LTC-5090"
 
 
-def test_execute_action_convert_pickup_success():
-    payload = {"action": "CONVERT_TO_PARTNER_PICKUP", "order_id": "O203", "cases": 20, "plan_id": "PLAN-2026-08-07"}
+def test_execute_action_rev08_approved_plan_diff_success():
     approval = create_signed_approval_envelope(
         approval_id="APP-008",
         rev_id="rev08",
-        principal_id="director@fullshelf.org",
+        principal_id="operations-director@fullshelf.org",
         incident_id="INC-TRUCK-01",
         plan_id="PLAN-2026-08-07",
-        expected_revision="v1",
-        action_type="CONVERT_TO_PARTNER_PICKUP",
-        target_order_id="O203",
-        target_cases=20,
-        payload=payload,
+        source_revision="rev07",
+        proposed_revision="rev08",
+        reroute_order_id="O202",
+        reroute_cases=22,
+        reroute_target_vehicle="TRUCK-02",
+        pickup_order_id="O203",
+        pickup_cases=20,
         expires_at="2026-08-07T18:00:00Z",
     )
 
     req_body = {
-        "action_id": "ACT-CONVERT-O203",
+        "action_id": "ACT-APPLY-REV08",
         "tenant_id": "east-bay-food-bank",
         "agent_role": "Recovery Planner",
-        "action_type": "CONVERT_TO_PARTNER_PICKUP",
+        "action_type": "APPLY_REPAIR_PLAN_REV08",
         "plan_id": "PLAN-2026-08-07",
-        "expected_revision": "v1",
-        "parameters": payload,
+        "expected_revision": "rev07",
+        "parameters": {"action": "APPLY_REV08"},
         "approval_envelope": approval.model_dump(),
-        "idempotency_key": "IDEM-KEY-001",
+        "idempotency_key": "IDEM-KEY-REV08-001",
     }
 
     response = client.post("/api/v1/actions/execute", json=req_body)
     assert response.status_code == 200
     res_data = response.json()
     assert res_data["status"] == "SUCCESS"
-    assert res_data["plan_revision_id"] == "v2"
+    assert res_data["plan_revision_id"] == "rev08"
     assert res_data["mutations_applied"] == 2
 
 
 def test_execute_action_duplicate_idempotency_key_zero_mutations():
     """Replaying identical idempotency key yields zero additional mutations."""
-    payload = {"action": "CONVERT_TO_PARTNER_PICKUP", "order_id": "O203", "cases": 20, "plan_id": "PLAN-2026-08-07"}
     req_body = {
-        "action_id": "ACT-CONVERT-O203",
+        "action_id": "ACT-APPLY-REV08",
         "tenant_id": "east-bay-food-bank",
         "agent_role": "Recovery Planner",
-        "action_type": "CONVERT_TO_PARTNER_PICKUP",
+        "action_type": "APPLY_REPAIR_PLAN_REV08",
         "plan_id": "PLAN-2026-08-07",
-        "expected_revision": "v2",
-        "parameters": payload,
-        "idempotency_key": "IDEM-KEY-001",  # Same idempotency key as prior test
+        "expected_revision": "rev08",
+        "parameters": {"action": "APPLY_REV08"},
+        "idempotency_key": "IDEM-KEY-REV08-001",  # Same idempotency key
     }
 
     response = client.post("/api/v1/actions/execute", json=req_body)
@@ -77,14 +79,14 @@ def test_execute_action_duplicate_idempotency_key_zero_mutations():
 
 
 def test_trigger_recall_96_unique_cases_and_terminal_state():
-    response = client.post("/api/v1/incidents/recall", json={"lot_id": "LOT-RECALL-88", "hazard": "E. coli O157:H7"})
+    response = client.post("/api/v1/incidents/recall", json={"lot_id": "LTC-4471", "hazard": "E. coli O157:H7"})
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "RECALL_BARRIER_ACTIVATED"
     assert data["plan_status"] == "INVALIDATED_RECALL"
     assert data["reconciliation"]["total_unique_physical_cases"] == 96
     assert data["reconciliation"]["sub_distributed_unconfirmed_cases"] == 8
-    assert data["reconciliation"]["terminal_status"] == "PARTIALLY_CONTAINED_AWAITING_RECOVERY"
+    assert data["reconciliation"]["terminal_status"] == "PARTIALLY_CONTAINED"
 
 
 def test_get_system_evidence():

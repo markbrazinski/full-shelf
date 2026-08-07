@@ -32,7 +32,7 @@ export class FullShelfApiClient {
     return res.json();
   }
 
-  async triggerRecall(lotId: string = 'LOT-RECALL-88', hazard: string = 'E. coli O157:H7'): Promise<RecallResponse> {
+  async triggerRecall(lotId: string = 'LTC-4471', hazard: string = 'E. coli O157:H7'): Promise<RecallResponse> {
     const res = await fetch(`${this.ledgerUrl}/api/v1/incidents/recall`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

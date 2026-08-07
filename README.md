@@ -39,4 +39,4 @@ The test suite validates:
 4. **Idempotent replay**: Replaying identical action requests yields zero additional mutations.
 5. **Recall graph reconciliation**: Reconciles 96 unique cases across custody nodes without double counting.
 6. **Tenant isolation**: Enforces tenant-scoped query and mutation boundary.
-7. **Truthful unresolved terminal state**: Evaluates to `PARTIALLY_CONTAINED_AWAITING_RECOVERY` while downstream acknowledgments remain pending.
+7. **Truthful unresolved terminal state**: Evaluates to `PARTIALLY_CONTAINED` while downstream acknowledgments remain pending.

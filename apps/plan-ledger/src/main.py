@@ -6,7 +6,7 @@ import os
 
 from full_shelf_domain.models import (
     Vehicle, Order, PlanRevision, ApprovalEnvelope, Receipt,
-    CustodyNode, CustodyEdge, NodeType, PlanStatus, IncidentStatus
+    CustodyNode, CustodyEdge, NodeType, PlanStatus, IncidentStatus, PlanDiff
 )
 from full_shelf_domain.capacity import check_vehicle_capacity
 from full_shelf_domain.kms import verify_kms_approval_envelope
@@ -18,7 +18,7 @@ app = FastAPI(title="Full Shelf Plan Ledger Service", version="1.0.0")
 # In-Memory State Store (backed by Spanner in cloud deployment)
 class StateStore:
     def __init__(self):
-        self.active_revision = "v1"
+        self.active_revision = "rev07"
         self.executed_actions: Dict[str, Receipt] = {}
         self.recalled_lots: set = set()
         self.subsite_acknowledged: bool = False
@@ -32,16 +32,16 @@ class ExecuteActionRequest(BaseModel):
     agent_role: str
     action_type: str
     plan_id: str
-    expected_revision: str
+    expected_revision: str = "rev07"
     parameters: Dict[str, Any]
     approval_envelope: Optional[ApprovalEnvelope] = None
     idempotency_key: str
 
 
 class RecallRequest(BaseModel):
-    lot_id: str = "LOT-RECALL-88"
+    lot_id: str = "LTC-4471"
     hazard: str = "E. coli O157:H7"
-    substitute_lot_id: str = "LOT-SAFE-99"
+    substitute_lot_id: str = "LTC-5090"
 
 
 @app.get("/")
@@ -61,11 +61,11 @@ def get_morning_plan_preview(tenant_id: str = Query("east-bay-food-bank")):
             {"vehicle_id": "TRUCK-02", "name": "Refrigerated Truck 2", "capacity": 60, "assigned_cases": 36},
         ],
         "deliveries": [
-            {"order_id": "O201", "agency": "Agency 01", "cases": 18, "lot_id": "LOT-RECALL-88", "vehicle": "TRUCK-01"},
-            {"order_id": "O202", "agency": "Agency 02", "cases": 22, "lot_id": "LOT-RECALL-88", "vehicle": "TRUCK-01"},
-            {"order_id": "O203", "agency": "Agency 03", "cases": 20, "lot_id": "LOT-RECALL-88", "vehicle": "TRUCK-01"},
-            {"order_id": "O204", "agency": "Agency 04", "cases": 15, "lot_id": "LOT-SAFE-99", "vehicle": "TRUCK-02"},
-            {"order_id": "O205", "agency": "Agency 05", "cases": 21, "lot_id": "LOT-SAFE-99", "vehicle": "TRUCK-02"},
+            {"order_id": "O201", "agency": "Agency 01", "cases": 18, "lot_id": "LTC-4471", "vehicle": "TRUCK-01"},
+            {"order_id": "O202", "agency": "Agency 02", "cases": 22, "lot_id": "LTC-4471", "vehicle": "TRUCK-01"},
+            {"order_id": "O203", "agency": "Agency 03", "cases": 20, "lot_id": "LTC-4471", "vehicle": "TRUCK-01"},
+            {"order_id": "O204", "agency": "Agency 04", "cases": 15, "lot_id": "LTC-5090", "vehicle": "TRUCK-02"},
+            {"order_id": "O205", "agency": "Agency 05", "cases": 21, "lot_id": "LTC-5090", "vehicle": "TRUCK-02"},
         ],
         "status": "HEALTHY",
     }
@@ -108,7 +108,7 @@ def execute_action(req: ExecuteActionRequest):
         return receipt
 
     # 3. Action-Specific Policy Evaluations
-    if req.action_type == "CONVERT_TO_PARTNER_PICKUP":
+    if req.action_type == "APPLY_REPAIR_PLAN_REV08":
         if not req.approval_envelope or not verify_kms_approval_envelope(req.approval_envelope):
             receipt = Receipt(
                 receipt_id=f"RCT-DENIED-{req.action_id}",
@@ -119,14 +119,14 @@ def execute_action(req: ExecuteActionRequest):
                 status="DENIED",
                 timestamp="2026-08-07T09:05:00Z",
                 mutations_applied=0,
-                message="KMS signature or approval envelope payload hash verification failed.",
+                message="KMS signature or approval envelope plan diff verification failed.",
                 trace_id="TRC-KMS-001",
             )
             store.executed_actions[req.idempotency_key] = receipt
             return receipt
 
-        # Transition plan revision v1 -> v2
-        store.active_revision = "v2"
+        # Transition plan revision rev07 -> rev08
+        store.active_revision = "rev08"
         receipt = Receipt(
             receipt_id=f"RCT-SUCCESS-{req.action_id}",
             action_id=req.action_id,
@@ -136,7 +136,7 @@ def execute_action(req: ExecuteActionRequest):
             status="SUCCESS",
             timestamp="2026-08-07T09:05:00Z",
             mutations_applied=2,  # Reroute O202 + Convert O203 to Pickup
-            message="Plan revision updated to v2. O202 rerouted to Truck 2, O203 converted to partner pickup.",
+            message="Plan revision updated to rev08. O202 rerouted to Truck 2, O203 converted to partner pickup.",
             trace_id="TRC-EXEC-001",
         )
         store.executed_actions[req.idempotency_key] = receipt
@@ -161,9 +161,9 @@ def execute_action(req: ExecuteActionRequest):
 
 @app.post("/api/v1/incidents/recall")
 def trigger_recall(req: RecallRequest):
-    """Executes recall lot barrier, invalidates plan revision v2, reconciles 96 unique cases."""
+    """Executes recall lot barrier, invalidates plan revision rev08, reconciles 96 unique cases."""
     store.recalled_lots.add(req.lot_id)
-    store.active_revision = "v3"  # Invalidated
+    store.active_revision = "rev09"  # Invalidated
 
     # Custody Graph Reconciliation (96 unique cases)
     nodes = [

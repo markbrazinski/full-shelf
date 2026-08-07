@@ -1,15 +1,16 @@
 {
   "scenario": "C. Lettuce Recall & Graph Reconciliation",
   "recall_notice": {
-    "lot_id": "LOT-RECALL-88",
+    "lot_id": "LTC-4471",
     "code": "LTC-4471",
     "hazard": "E. coli O157:H7",
-    "safe_substitute_lot_id": "LOT-SAFE-99",
+    "safe_substitute_lot_id": "LTC-5090",
     "safe_substitute_code": "LTC-5090"
   },
   "affected_plan": {
     "plan_id": "PLAN-2026-08-07",
-    "previous_revision": "v2",
+    "previous_revision": "rev08",
+    "new_revision": "rev09",
     "new_status": "INVALIDATED_RECALL"
   },
   "custody_nodes": [
@@ -26,5 +27,5 @@
     "shortfall_agency": "Agency 03",
     "shortfall_cases": 20
   },
-  "terminal_state": "PARTIALLY_CONTAINED_AWAITING_RECOVERY"
+  "terminal_state": "PARTIALLY_CONTAINED"
 }

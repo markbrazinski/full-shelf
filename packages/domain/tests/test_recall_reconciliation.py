@@ -5,7 +5,7 @@ from full_shelf_domain.reconciliation import reconcile_recall_graph
 
 def test_recall_reconciliation_96_unique_cases():
     """
-    Verifies 96 unique physical cases for LOT-RECALL-88 / LTC-4471:
+    Verifies 96 unique physical cases for LTC-4471:
       Warehouse: 24
       Truck 2: 22
       Pickup Staging: 20
@@ -28,19 +28,19 @@ def test_recall_reconciliation_96_unique_cases():
             edge_id="E-01",
             source_node_id="N-AG01",
             target_node_id="N-ST01",
-            lot_id="LOT-RECALL-88",
+            lot_id="LTC-4471",
             case_count=8,
             is_sub_distribution=True,
         )
     ]
 
     # Site 01 (8 cases) unconfirmed
-    res = reconcile_recall_graph(nodes, edges, "LOT-RECALL-88", unconfirmed_subsite_ids=["N-ST01"])
+    res = reconcile_recall_graph(nodes, edges, "LTC-4471", unconfirmed_subsite_ids=["N-ST01"])
 
     assert res.total_unique_physical_cases == 96
     assert res.sub_distributed_unconfirmed_cases == 8
     assert res.is_fully_contained is False
-    assert res.terminal_status == "PARTIALLY_CONTAINED_AWAITING_RECOVERY"
+    assert res.terminal_status == "PARTIALLY_CONTAINED"
     assert res.node_breakdown["Warehouse"] == 24
     assert res.node_breakdown["Truck 2"] == 22
     assert res.node_breakdown["Pickup Staging"] == 20

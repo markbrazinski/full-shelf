@@ -31,7 +31,7 @@ async def get_agent_preview(tenant_id: str = Query("east-bay-food-bank")):
         except Exception:
             # Fallback fixture if plan-ledger is offline
             plan_data = {
-                "active_plan_revision": "v1",
+                "active_plan_revision": "rev07",
                 "trucks": [{"vehicle_id": "TRUCK-01", "name": "Refrigerated Truck 1", "capacity": 60}],
                 "deliveries": [],
             }
@@ -59,21 +59,30 @@ async def assess_incident(req: AssessmentRequest):
     if req.event_type == "TRUCK_BREAKDOWN":
         return {
             "incident_type": "TRUCK_BREAKDOWN",
-            "reasoning": "Truck 1 failed after Stop 1. Capacity check proves Order 202 (22 cases) and Order 203 (20 cases) cannot both go to Truck 2 (capacity 60). Proposing Order 202 reroute to Truck 2 and Order 203 conversion to partner pickup requiring KMS approval.",
+            "reasoning": "Truck 1 failed after Stop 1. Capacity check proves Order 202 (22 cases) and Order 203 (20 cases) cannot both go to Truck 2 (capacity 60). Proposing plan revision rev08: Order 202 reroute to Truck 2 and Order 203 conversion to partner pickup requiring KMS approval.",
             "proposed_actions": [
                 {"action_type": "REROUTE_ORDER", "order_id": "O202", "target_vehicle": "TRUCK-02"},
                 {"action_type": "CONVERT_TO_PARTNER_PICKUP", "order_id": "O203", "cases": 20, "requires_kms_approval": True},
             ],
+            "plan_diff": {
+                "source_revision": "rev07",
+                "proposed_revision": "rev08",
+                "reroute_order_id": "O202",
+                "reroute_cases": 22,
+                "reroute_target_vehicle": "TRUCK-02",
+                "pickup_order_id": "O203",
+                "pickup_cases": 20,
+            }
         }
     elif req.event_type == "FOOD_SAFETY_RECALL":
         return {
             "incident_type": "FOOD_SAFETY_RECALL",
-            "reasoning": "Recall received for lot LTC-4471 / LOT-RECALL-88 (E. coli O157:H7). Invalidating plan revision v2. Activating lot barrier across 96 unique cases.",
+            "reasoning": "Recall received for lot LTC-4471 (E. coli O157:H7). Invalidating plan revision rev08. Activating lot barrier across 96 unique cases.",
             "proposed_actions": [
                 {"action_type": "INVALIDATE_PLAN", "plan_id": "PLAN-2026-08-07"},
-                {"action_type": "ACTIVATE_LOT_BARRIER", "lot_id": "LOT-RECALL-88"},
+                {"action_type": "ACTIVATE_LOT_BARRIER", "lot_id": "LTC-4471"},
             ],
-            "terminal_state": "PARTIALLY_CONTAINED_AWAITING_RECOVERY",
+            "terminal_state": "PARTIALLY_CONTAINED",
         }
 
     return {"incident_type": req.event_type, "status": "NO_ACTION_REQUIRED"}

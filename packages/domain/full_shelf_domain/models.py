@@ -28,7 +28,7 @@ class PlanStatus(str, Enum):
 class IncidentStatus(str, Enum):
     ACTIVE = "ACTIVE"
     RESOLVED = "RESOLVED"
-    PARTIALLY_CONTAINED_AWAITING_RECOVERY = "PARTIALLY_CONTAINED_AWAITING_RECOVERY"
+    PARTIALLY_CONTAINED = "PARTIALLY_CONTAINED"
     CONTAINED = "CONTAINED"
 
 
@@ -42,8 +42,8 @@ class NodeType(str, Enum):
 
 
 class Lot(BaseModel):
-    lot_id: str
-    code: str  # e.g., "LTC-4471" / "LOT-RECALL-88" or "LTC-5090" / "LOT-SAFE-99"
+    lot_id: str  # "LTC-4471" or "LTC-5090"
+    code: str  # "LTC-4471" or "LTC-5090"
     produce_type: str = "Romaine Lettuce"
     hazard_status: HazardStatus = HazardStatus.SAFE
     hazard_details: Optional[str] = None
@@ -72,24 +72,33 @@ class Order(BaseModel):
 class PlanRevision(BaseModel):
     plan_id: str
     tenant_id: str = "east-bay-food-bank"
-    revision: str  # "v1", "v2", "v3"
+    revision: str  # e.g., "rev07", "rev08"
     status: PlanStatus = PlanStatus.ACTIVE
     orders: List[Order]
     vehicle_assignments: Dict[str, List[str]]  # vehicle_id -> list of order_ids
     created_at: str
 
 
+class PlanDiff(BaseModel):
+    source_revision: str = "rev07"
+    proposed_revision: str = "rev08"
+    reroute_order_id: str = "O202"
+    reroute_cases: int = 22
+    reroute_target_vehicle: str = "TRUCK-02"
+    pickup_order_id: str = "O203"
+    pickup_cases: int = 20
+    plan_diff_hash: str
+
+
 class ApprovalEnvelope(BaseModel):
     approval_id: str
     rev_id: str = "rev08"
     principal_id: str = "operations-director@fullshelf.org"
-    incident_id: str
-    plan_id: str
-    expected_revision: str
-    action_type: str = "CONVERT_TO_PARTNER_PICKUP"
-    target_order_id: str
-    target_cases: int
-    payload_hash: str
+    incident_id: str = "INC-TRUCK-01"
+    plan_id: str = "PLAN-2026-08-07"
+    source_revision: str = "rev07"
+    proposed_revision: str = "rev08"
+    plan_diff: PlanDiff
     kms_key_version: str = "projects/preflight-hackathon/locations/us-central1/keyRings/full-shelf-keyring/cryptoKeys/approval-signer/cryptoKeyVersions/1"
     kms_signature: str
     expires_at: str

@@ -10,7 +10,7 @@ def test_tenant_isolation_boundary():
         destination_agency_id="AGENCY-01",
         destination_agency_name="Agency 01",
         cases=18,
-        lot_id="LOT-RECALL-88",
+        lot_id="LTC-4471",
     )
     order_b = Order(
         order_id="O999",
@@ -18,7 +18,7 @@ def test_tenant_isolation_boundary():
         destination_agency_id="AGENCY-99",
         destination_agency_name="Agency 99",
         cases=10,
-        lot_id="LOT-SAFE-99",
+        lot_id="LTC-5090",
     )
 
     orders = [order_a, order_b]

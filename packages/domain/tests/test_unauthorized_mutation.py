@@ -4,21 +4,21 @@ from full_shelf_domain.state_machines import PlanRevisionStateMachine
 
 
 def test_stale_plan_revision_rejection():
-    """Attempting a mutation on a stale plan revision (e.g. attempting edit on v1 when active is v2) fails with 0 mutations."""
+    """Attempting a mutation on a stale plan revision (e.g. attempting edit on rev07 when active is rev08) fails with 0 mutations."""
     active_plan = PlanRevision(
         plan_id="PLAN-001",
-        revision="v2",
+        revision="rev08",
         status=PlanStatus.ACTIVE,
         orders=[],
         vehicle_assignments={},
         created_at="2026-08-07T09:05:00Z",
     )
 
-    # Action targeted at expected revision 'v1' (stale)
-    expected_rev = "v1"
+    # Action targeted at expected revision 'rev07' (stale)
+    expected_rev = "rev07"
     
     # State machine check
-    is_valid = PlanRevisionStateMachine.can_transition(expected_rev, active_plan.status, "v3", PlanStatus.ACTIVE)
+    is_valid = PlanRevisionStateMachine.can_transition(expected_rev, active_plan.status, "rev09", PlanStatus.ACTIVE)
     assert is_valid is False
 
     receipt = Receipt(

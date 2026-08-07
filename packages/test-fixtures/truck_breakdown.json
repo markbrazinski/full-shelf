@@ -17,7 +17,8 @@
   },
   "repaired_plan": {
     "plan_id": "PLAN-2026-08-07",
-    "revision": "v2",
+    "source_revision": "rev07",
+    "proposed_revision": "rev08",
     "status": "ACTIVE",
     "order_202_action": "REROUTED_TO_TRUCK_02",
     "order_203_action": "CONVERTED_TO_PARTNER_PICKUP",
@@ -25,8 +26,13 @@
       "approval_id": "APP-008",
       "rev_id": "rev08",
       "action_type": "CONVERT_TO_PARTNER_PICKUP",
-      "target_order_id": "O203",
-      "target_cases": 20,
+      "source_revision": "rev07",
+      "proposed_revision": "rev08",
+      "reroute_order_id": "O202",
+      "reroute_cases": 22,
+      "reroute_target_vehicle": "TRUCK-02",
+      "pickup_order_id": "O203",
+      "pickup_cases": 20,
       "kms_bound": true
     }
   }
