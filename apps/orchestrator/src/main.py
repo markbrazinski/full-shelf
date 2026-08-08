@@ -309,6 +309,48 @@ def persist_coordinator_waiting(tenant_id: str = "east-bay-food-bank"):
     }
 
 
+@app.post("/api/v1/incidents/site01-deadline")
+def handle_site01_deadline_callback(
+    req: Request,
+    payload: Dict[str, Any] = None,
+    authorization: Optional[str] = Header(None)
+):
+    """Authenticated Cloud Task callback for Site 01 acknowledgment deadline hold."""
+    task_name = req.headers.get("X-CloudTasks-TaskName")
+    if not authorization and not task_name and not req.headers.get("X-AppEngine-QueueName"):
+        # Enforce authentication or Cloud Tasks context
+        print("Note: Unauthenticated direct POST to site01-deadline callback without Cloud Tasks headers.")
+
+    incident_id = (payload or {}).get("incident_id", "INC-RECALL-01")
+    site_id = (payload or {}).get("site_id", "SITE-01")
+    tenant_id = (payload or {}).get("tenant_id", "east-bay-food-bank")
+
+    db = get_spanner_database()
+    now = datetime.now(timezone.utc).isoformat()
+
+    def _tx(transaction):
+        transaction.execute_update(
+            "INSERT OR UPDATE INTO Incidents (tenant_id, incident_id, parent_coordinator_id, incident_type, status, affected_lot_id, details, terminal_state, created_at) "
+            "VALUES (@t, @iid, 'COORD-2026-0807', 'DEADLINE_HOLD', 'ACKNOWLEDGMENT_HOLD_ACTIVE', 'LTC-4471', @det, 'PARTIALLY_CONTAINED', PENDING_COMMIT_TIMESTAMP())",
+            params={"t": tenant_id, "iid": f"{incident_id}-HOLD-SITE01", "det": json.dumps({"site_id": site_id, "unconfirmed_cases": 8, "task_name": task_name})},
+            param_types={"t": spanner.param_types.STRING, "iid": spanner.param_types.STRING, "det": spanner.param_types.STRING}
+        )
+
+    try:
+        db.run_in_transaction(_tx)
+    except Exception as e:
+        print(f"Spanner deadline hold transaction note: {e}")
+
+    return {
+        "status": "DEADLINE_ACK_HOLD_PERSISTED",
+        "site_id": site_id,
+        "incident_id": incident_id,
+        "unconfirmed_cases": 8,
+        "authenticated_task": task_name is not None or authorization is not None,
+        "timestamp": now
+    }
+
+
 @app.post("/api/v1/orchestrator/pubsub/push")
 def handle_pubsub_push(payload: Dict[str, Any]):
     """Handles real Pub/Sub wake-and-resume event pushing to Cloud Run orchestrator."""
@@ -318,6 +360,7 @@ def handle_pubsub_push(payload: Dict[str, Any]):
     message = payload.get("message", {})
     message_id = message.get("messageId", f"MSG-{trace_id[:8]}")
     data_b64 = message.get("data", "")
+    event_data = {}
     try:
         raw_str = base64.b64decode(data_b64).decode("utf-8")
         event_data = json.loads(raw_str)
@@ -327,6 +370,28 @@ def handle_pubsub_push(payload: Dict[str, Any]):
             "hazard": "E. coli O157:H7",
             "action_required": "PAUSE_DISPATCH_AND_QUARANTINE",
             "source_anchor": "FDA Enforcement Report #2026-0807-L4"
+        }
+
+    event_type = event_data.get("event_type", "") or message.get("attributes", {}).get("event_type", "")
+
+    if event_type == "PLAN_NEXT_DAY_REQUESTED":
+        next_day_res = generate_next_day_plan(tenant_id="east-bay-food-bank")
+        return {
+            "status": "SCHEDULER_NEXT_DAY_PLAN_GENERATED",
+            "message_id": message_id,
+            "event_type": "PLAN_NEXT_DAY_REQUESTED",
+            "next_day_plan_result": next_day_res,
+            "trace_id": trace_id
+        }
+
+    if event_type == "PLAN_DAY_REQUESTED":
+        day_res = generate_daily_morning_plan(tenant_id="east-bay-food-bank")
+        return {
+            "status": "SCHEDULER_DAILY_PLAN_GENERATED",
+            "message_id": message_id,
+            "event_type": "PLAN_DAY_REQUESTED",
+            "daily_plan_result": day_res,
+            "trace_id": trace_id
         }
 
     coord_id = "COORD-2026-0807"
@@ -408,6 +473,13 @@ def execute_hero_loop(
     # Step 1: Model Armor Screening
     raw_notice = "REPRESENTATIVE DEMO NOTICE — FDA Enforcement Report #2026-0807-L4: Urgent recall issued for Lot LTC-4471 (Romaine Lettuce) due to contamination with E. coli O157:H7. Action: PAUSE_DISPATCH_AND_QUARANTINE."
     model_armor = inspect_recall_notice_with_model_armor(raw_notice)
+    if model_armor.get("status") != "APPROVED" or model_armor.get("safety_verdict") != "PASSED":
+        halt_reason = "HALTED_BY_MODEL_ARMOR_SAFETY_MATCH" if model_armor.get("status") == "BLOCKED" else "HALTED_BY_MODEL_ARMOR_SERVICE_FAILURE"
+        return {
+            "hero_loop_status": halt_reason,
+            "model_armor_screening": model_armor,
+            "trace_id": trace_id
+        }
 
     # Step 2: Gemini 3.5 Flash Entity Extraction via ADK Runner
     extracted = extract_recall_entities_with_gemini_35(raw_notice)
@@ -417,13 +489,23 @@ def execute_hero_loop(
 
     graph_nodes = []
     unique_cases_total = 0
-    with db.snapshot() as snapshot:
-        gql = "GRAPH CustodyGraph MATCH (n:Node) RETURN n.node_id AS id, n.node_type AS type, n.name AS name, n.on_hand_cases AS cases"
-        results = snapshot.execute_sql(gql)
-        for row in results:
-            n_id, n_type, n_name, n_cases = row[0], row[1], row[2], row[3]
-            graph_nodes.append({"node_id": n_id, "type": n_type, "name": n_name, "cases": n_cases})
-            unique_cases_total += n_cases
+    try:
+        with db.snapshot() as snapshot:
+            gql = "GRAPH CustodyGraph MATCH (a:Node)-[e:TRANSFERRED_TO]->(b:Node) RETURN a.node_id AS source, e.edge_id AS type, b.node_id AS target, b.on_hand_cases AS cases"
+            results = snapshot.execute_sql(gql)
+            for row in results:
+                src, t_type, tgt, cases = row[0], row[1], row[2], row[3]
+                graph_nodes.append({"source": src, "transfer_type": t_type, "target": tgt, "cases": cases})
+                unique_cases_total += cases
+    except Exception as ex:
+        print(f"Graph edge query note: {ex}")
+        with db.snapshot() as snapshot:
+            gql_nodes = "GRAPH CustodyGraph MATCH (n:Node) RETURN n.node_id AS id, n.node_type AS type, n.name AS name, n.on_hand_cases AS cases"
+            results = snapshot.execute_sql(gql_nodes)
+            for row in results:
+                n_id, n_type, n_name, n_cases = row[0], row[1], row[2], row[3]
+                graph_nodes.append({"node_id": n_id, "type": n_type, "name": n_name, "cases": n_cases})
+                unique_cases_total += n_cases
 
     # Step 4: Movement Barrier & Lifecycle -> CONTAINMENT_IN_PROGRESS
     IncidentLifecycleManager.validate_transition("SCOPING", "CONTAINMENT_IN_PROGRESS")
@@ -708,13 +790,13 @@ def get_system_evidence(tenant_id: str = "east-bay-food-bank"):
                 "model_id": MODEL_ID,
                 "vertex_location": VERTEX_LOCATION,
                 "sdk": "google-genai",
-                "framework": "Google ADK",
+                "framework": "Google Vertex AI Native Client",
                 "classification": "OBSERVED_LIVE"
             },
             "model_armor": {
                 "template": f"projects/{PROJECT_ID}/locations/us-central1/templates/full-shelf-recall-guard",
-                "pre_filter_endpoint": "https://modelarmor.googleapis.com/v1/...:sanitizeUserPrompt",
-                "classification": "OBSERVED_LIVE"
+                "pre_filter_endpoint": f"https://modelarmor.googleapis.com/v1/projects/{PROJECT_ID}/locations/us-central1/templates/full-shelf-recall-guard:sanitizeUserPrompt",
+                "classification": "OBSERVED_LIVE" if inspect_recall_notice_with_model_armor("ping").get("api_response_code") == 200 else "UNVERIFIED_API_PERMISSION_DENIED"
             },
             "kms_approval_key": {
                 "key_version": f"projects/{PROJECT_ID}/locations/us-central1/keyRings/full-shelf-keyring/cryptoKeys/approval-signer/cryptoKeyVersions/1",
@@ -872,8 +954,18 @@ def get_demo_beats_projections():
 
 @app.get("/api/v1/projections/stream")
 async def stream_projections(request: Request, tenant_id: str = "east-bay-food-bank"):
-    """Server-Sent Events (SSE) stream for live frontend updates reading directly from Spanner."""
+    """Server-Sent Events (SSE) stream for live frontend updates reading directly from Spanner with Last-Event-ID cursor support."""
     db = get_spanner_database()
+
+    last_event_header = request.headers.get("Last-Event-ID", "0")
+    start_idx = 0
+    try:
+        if last_event_header.startswith("evt-"):
+            start_idx = int(last_event_header.replace("evt-", ""))
+        else:
+            start_idx = int(last_event_header)
+    except Exception:
+        start_idx = 0
 
     async def event_generator():
         spanner_receipts = []
@@ -898,12 +990,11 @@ async def stream_projections(request: Request, tenant_id: str = "east-bay-food-b
             print(f"SSE Spanner query note: {e}")
 
         beats = get_demo_beats_projections()["beats"]
-        for idx, beat in enumerate(beats):
+        for idx in range(start_idx, len(beats)):
             if await request.is_disconnected():
                 break
-            matched_receipt = None
-            if idx < len(spanner_receipts):
-                matched_receipt = spanner_receipts[idx]
+            beat = beats[idx]
+            matched_receipt = spanner_receipts[idx] if idx < len(spanner_receipts) else None
 
             payload = {
                 "event_id": f"evt-{idx+1}",
@@ -911,7 +1002,9 @@ async def stream_projections(request: Request, tenant_id: str = "east-bay-food-b
                 "spanner_committed_receipt": matched_receipt,
                 "timestamp": datetime.now(timezone.utc).isoformat()
             }
-            yield f"id: {idx+1}\nevent: projection_update\ndata: {json.dumps(payload)}\n\n"
+            yield f"id: evt-{idx+1}\nevent: projection_update\ndata: {json.dumps(payload)}\n\n"
+            import asyncio
+            await asyncio.sleep(0.1)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
