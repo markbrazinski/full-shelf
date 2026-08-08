@@ -1,0 +1,33 @@
+{
+  "tenant_id": "altered-test-tenant",
+  "recalled_lot": {
+    "lot_id": "LTC-8888",
+    "produce_type": "Fresh Spinach",
+    "hazard_status": "RECALLED_SALMONELLA",
+    "total_cases": 120
+  },
+  "safe_lot": {
+    "lot_id": "LTC-9999",
+    "produce_type": "Fresh Spinach",
+    "hazard_status": "CLEAR_SAFE",
+    "total_cases": 150
+  },
+  "physical_positions": {
+    "warehouse": 30,
+    "truck_02": 35,
+    "staging": 25,
+    "agency_01": 15,
+    "site_01": 10,
+    "direct_rescue": 5
+  },
+  "unique_cases_total": 120,
+  "trucks": [
+    {"vehicle_id": "TRUCK-01", "capacity": 80, "assigned": 80},
+    {"vehicle_id": "TRUCK-02", "capacity": 80, "assigned": 45}
+  ],
+  "safe_replacement_allocation": {
+    "agency_01": 25,
+    "agency_02": 35,
+    "agency_03_shortfall": 30
+  }
+}
