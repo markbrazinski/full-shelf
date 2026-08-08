@@ -313,7 +313,7 @@ def execute_action(
                 ]
             )
 
-            transaction.insert(
+            transaction.insert_or_update(
                 table="Receipts",
                 columns=["tenant_id", "receipt_id", "action_id", "plan_revision_id", "action_type", "status", "mutations_applied", "message", "trace_id", "timestamp"],
                 values=[[req.tenant_id, f"RCT-SUCCESS-{req.action_id}", req.action_id, "rev08", req.action_type, "SUCCESS", 2, "rev08 applied", trace_id_str, now]]
