@@ -295,13 +295,13 @@ def execute_action(
                 params={"tenant_id": req.tenant_id},
                 param_types={"tenant_id": spanner.param_types.STRING}
             )
-            transaction.insert(
+            transaction.insert_or_update(
                 table="PlanRevisions",
                 columns=["tenant_id", "plan_id", "revision", "status", "created_at"],
                 values=[[req.tenant_id, req.plan_id, "rev08", "ACTIVE", now]]
             )
 
-            transaction.insert(
+            transaction.insert_or_update(
                 table="Orders",
                 columns=["tenant_id", "plan_id", "revision", "order_id", "destination_agency_id", "destination_agency_name", "cases", "lot_id", "assigned_vehicle_id", "status"],
                 values=[

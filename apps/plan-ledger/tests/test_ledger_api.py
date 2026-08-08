@@ -33,6 +33,7 @@ def test_execute_action_rev08_approved_plan_diff_success():
         pickup_order_id="O203",
         pickup_cases=20,
         expires_at="2026-08-07T18:00:00Z",
+        use_live_kms=True,
     )
 
     req_body = {
