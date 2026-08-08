@@ -2,11 +2,16 @@ import sys
 import os
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
-from main import app
+import importlib.util
+
+ledger_main_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src", "main.py"))
+spec = importlib.util.spec_from_file_location("plan_ledger_main", ledger_main_path)
+ledger_main = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(ledger_main)
+
 from full_shelf_domain.kms import create_signed_approval_envelope
 
-client = TestClient(app)
+client = TestClient(ledger_main.app)
 
 
 def test_get_morning_plan_preview():

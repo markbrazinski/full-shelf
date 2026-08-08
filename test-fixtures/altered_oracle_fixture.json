@@ -1,0 +1,36 @@
+{
+  "scenario_id": "SCENARIO-ALTERED-LTC8899",
+  "recalled_lot": {
+    "lot_id": "LTC-8888",
+    "produce_type": "Organic Spinach",
+    "hazard_status": "RECALLED_SALMONELLA",
+    "total_cases": 120
+  },
+  "unique_cases_total": 120,
+  "physical_positions": {
+    "Warehouse": 30,
+    "Truck 01": 30,
+    "Truck 02": 30,
+    "Agency 10": 20,
+    "Subsite 99": 10
+  },
+  "safe_replacement_allocation": {
+    "safe_lot_id": "LTC-9900",
+    "agency_03_shortfall": 30
+  },
+  "topology": {
+    "nodes": [
+      {"id": "NODE-WH1", "type": "WAREHOUSE", "on_hand_cases": 30},
+      {"id": "NODE-TR1", "type": "VEHICLE", "on_hand_cases": 30},
+      {"id": "NODE-TR2", "type": "VEHICLE", "on_hand_cases": 30},
+      {"id": "NODE-AG10", "type": "AGENCY", "on_hand_cases": 20},
+      {"id": "NODE-SUB99", "type": "SUBSITE", "on_hand_cases": 10}
+    ],
+    "edges": [
+      {"source": "NODE-WH1", "target": "NODE-TR1", "cases": 30},
+      {"source": "NODE-WH1", "target": "NODE-TR2", "cases": 30},
+      {"source": "NODE-TR1", "target": "NODE-AG10", "cases": 20},
+      {"source": "NODE-AG10", "target": "NODE-SUB99", "cases": 10, "is_sub_distribution": true}
+    ]
+  }
+}

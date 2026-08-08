@@ -789,14 +789,14 @@ def get_system_evidence(tenant_id: str = "east-bay-food-bank"):
             "gemini_model": {
                 "model_id": MODEL_ID,
                 "vertex_location": VERTEX_LOCATION,
-                "sdk": "google-genai",
-                "framework": "Google Vertex AI Native Client",
+                "sdk": "google-adk",
+                "framework": "Google ADK 2.6 Agent & Runner Framework on Vertex AI",
                 "classification": "OBSERVED_LIVE"
             },
             "model_armor": {
-                "template": f"projects/{PROJECT_ID}/locations/us-central1/templates/full-shelf-recall-guard",
-                "pre_filter_endpoint": f"https://modelarmor.googleapis.com/v1/projects/{PROJECT_ID}/locations/us-central1/templates/full-shelf-recall-guard:sanitizeUserPrompt",
-                "classification": "OBSERVED_LIVE" if inspect_recall_notice_with_model_armor("ping").get("api_response_code") == 200 else "UNVERIFIED_API_PERMISSION_DENIED"
+                "template": f"projects/{PROJECT_ID}/locations/global/templates/full-shelf-recall-guard",
+                "pre_filter_endpoint": f"https://modelarmor.googleapis.com/v1/projects/{PROJECT_ID}/locations/global/templates/full-shelf-recall-guard:sanitizeUserPrompt",
+                "classification": "OBSERVED_LIVE" if inspect_recall_notice_with_model_armor("ping").get("api_response_code") == 200 else "SERVICE_UNAVAILABLE"
             },
             "kms_approval_key": {
                 "key_version": f"projects/{PROJECT_ID}/locations/us-central1/keyRings/full-shelf-keyring/cryptoKeys/approval-signer/cryptoKeyVersions/1",

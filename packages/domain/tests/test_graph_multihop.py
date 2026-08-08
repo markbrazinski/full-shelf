@@ -5,20 +5,20 @@ from full_shelf_domain.reconciliation import reconcile_recall_graph, RecallRecon
 
 def test_primary_canonical_multihop_graph_reconciliation():
     nodes = [
-        CustodyNode("N1", "WAREHOUSE", "Main Warehouse", 24),
-        CustodyNode("N2", "VEHICLE", "Truck 02 (O202)", 22),
-        CustodyNode("N3", "STAGING", "Pickup Staging (O203)", 20),
-        CustodyNode("N4", "AGENCY", "Agency 01", 10),
-        CustodyNode("N5", "SUBSITE", "Site 01", 8),
-        CustodyNode("N6", "RESCUE", "Direct-Rescue Recipient", 12),
+        CustodyNode(node_id="N1", node_type="WAREHOUSE", name="Main Warehouse", on_hand_cases=24),
+        CustodyNode(node_id="N2", node_type="VEHICLE", name="Truck 02 (O202)", on_hand_cases=22),
+        CustodyNode(node_id="N3", node_type="STAGING", name="Pickup Staging (O203)", on_hand_cases=20),
+        CustodyNode(node_id="N4", node_type="AGENCY", name="Agency 01", on_hand_cases=10),
+        CustodyNode(node_id="N5", node_type="SUBSITE", name="Site 01", on_hand_cases=8),
+        CustodyNode(node_id="N6", node_type="DIRECT_RESCUE", name="Direct-Rescue Recipient", on_hand_cases=12),
     ]
 
     edges = [
-        CustodyEdge("E1", "TRANSFERRED_TO", "N1", "N2", 22, False),
-        CustodyEdge("E2", "TRANSFERRED_TO", "N1", "N3", 20, False),
-        CustodyEdge("E3", "TRANSFERRED_TO", "N1", "N4", 18, False),
-        CustodyEdge("E4", "TRANSFERRED_TO", "N4", "N5", 8, True),
-        CustodyEdge("E5", "TRANSFERRED_TO", "N1", "N6", 12, False),
+        CustodyEdge(edge_id="E1", edge_type="TRANSFERRED_TO", source_node_id="N1", target_node_id="N2", lot_id="LTC-4471", case_count=22, is_sub_distribution=False),
+        CustodyEdge(edge_id="E2", edge_type="TRANSFERRED_TO", source_node_id="N1", target_node_id="N3", lot_id="LTC-4471", case_count=20, is_sub_distribution=False),
+        CustodyEdge(edge_id="E3", edge_type="TRANSFERRED_TO", source_node_id="N1", target_node_id="N4", lot_id="LTC-4471", case_count=18, is_sub_distribution=False),
+        CustodyEdge(edge_id="E4", edge_type="TRANSFERRED_TO", source_node_id="N4", target_node_id="N5", lot_id="LTC-4471", case_count=8, is_sub_distribution=True),
+        CustodyEdge(edge_id="E5", edge_type="TRANSFERRED_TO", source_node_id="N1", target_node_id="N6", lot_id="LTC-4471", case_count=12, is_sub_distribution=False),
     ]
 
     result = reconcile_recall_graph(
@@ -36,27 +36,26 @@ def test_primary_canonical_multihop_graph_reconciliation():
 
 
 def test_secondary_altered_topology_graph_reconciliation():
-    # Second scenario with different Lot ID, transfer depth, agency layout, and case quantities
     nodes = [
-        CustodyNode("HUB-1", "CENTRAL_HUB", "Central Food Hub", 50),
-        CustodyNode("DEPOT-A", "REGIONAL_DEPOT", "North Depot", 40),
-        CustodyNode("AG-10", "AGENCY", "Community Pantry 10", 30),
-        CustodyNode("AG-11", "AGENCY", "Community Pantry 11", 20),
-        CustodyNode("SITE-99", "DISTRIBUTION_SITE", "Subsite 99", 10),
+        CustodyNode(node_id="HUB-1", node_type="WAREHOUSE", name="Central Food Hub", on_hand_cases=50),
+        CustodyNode(node_id="DEPOT-A", node_type="STAGING", name="North Depot", on_hand_cases=40),
+        CustodyNode(node_id="AG-10", node_type="AGENCY", name="Community Pantry 10", on_hand_cases=30),
+        CustodyNode(node_id="AG-11", node_type="AGENCY", name="Community Pantry 11", on_hand_cases=20),
+        CustodyNode(node_id="SITE-99", node_type="SUBSITE", name="Subsite 99", on_hand_cases=10),
     ]
 
     edges = [
-        CustodyEdge("EDGE-1", "TRANSFERRED_TO", "HUB-1", "DEPOT-A", 100, False),
-        CustodyEdge("EDGE-2", "TRANSFERRED_TO", "DEPOT-A", "AG-10", 40, False),
-        CustodyEdge("EDGE-3", "TRANSFERRED_TO", "DEPOT-A", "AG-11", 20, False),
-        CustodyEdge("EDGE-4", "SUB_DISTRIBUTED", "AG-10", "SITE-99", 10, True),
+        CustodyEdge(edge_id="EDGE-1", edge_type="TRANSFERRED_TO", source_node_id="HUB-1", target_node_id="DEPOT-A", lot_id="LTC-8899", case_count=100, is_sub_distribution=False),
+        CustodyEdge(edge_id="EDGE-2", edge_type="TRANSFERRED_TO", source_node_id="DEPOT-A", target_node_id="AG-10", lot_id="LTC-8899", case_count=40, is_sub_distribution=False),
+        CustodyEdge(edge_id="EDGE-3", edge_type="TRANSFERRED_TO", source_node_id="DEPOT-A", target_node_id="AG-11", lot_id="LTC-8899", case_count=20, is_sub_distribution=False),
+        CustodyEdge(edge_id="EDGE-4", edge_type="SUB_DISTRIBUTED", source_node_id="AG-10", target_node_id="SITE-99", lot_id="LTC-8899", case_count=10, is_sub_distribution=True),
     ]
 
     result = reconcile_recall_graph(
         nodes=nodes,
         edges=edges,
         recalled_lot_id="LTC-8899",
-        unconfirmed_subsite_ids=[]  # fully confirmed
+        unconfirmed_subsite_ids=[]
     )
 
     assert result.recalled_lot_id == "LTC-8899"

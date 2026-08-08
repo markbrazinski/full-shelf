@@ -1,12 +1,18 @@
-import pytest
+import sys
+import os
 import json
 from unittest.mock import patch, MagicMock
 from fastapi.testclient import TestClient
 
+orchestrator_src = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src"))
+if orchestrator_src not in sys.path:
+    sys.path.insert(0, orchestrator_src)
+
+import main as orchestrator_main
+
 
 def test_sse_stream_reads_committed_spanner_events():
-    from main import app
-    client = TestClient(app)
+    client = TestClient(orchestrator_main.app)
 
     mock_db = MagicMock()
     mock_snapshot = MagicMock()
@@ -18,7 +24,7 @@ def test_sse_stream_reads_committed_spanner_events():
     mock_snapshot.execute_sql.return_value = mock_receipts
     mock_db.snapshot.return_value.__enter__.return_value = mock_snapshot
 
-    with patch("main.get_spanner_database", return_value=mock_db):
+    with patch.object(orchestrator_main, "get_spanner_database", return_value=mock_db):
         response = client.get("/api/v1/projections/stream?tenant_id=east-bay-food-bank")
         assert response.status_code == 200
         assert "text/event-stream" in response.headers["content-type"]
@@ -28,8 +34,7 @@ def test_sse_stream_reads_committed_spanner_events():
 
 
 def test_sse_stream_supports_last_event_id_cursor():
-    from main import app
-    client = TestClient(app)
+    client = TestClient(orchestrator_main.app)
 
     mock_db = MagicMock()
     mock_snapshot = MagicMock()
@@ -41,10 +46,9 @@ def test_sse_stream_supports_last_event_id_cursor():
     mock_snapshot.execute_sql.return_value = mock_receipts
     mock_db.snapshot.return_value.__enter__.return_value = mock_snapshot
 
-    with patch("main.get_spanner_database", return_value=mock_db):
+    with patch.object(orchestrator_main, "get_spanner_database", return_value=mock_db):
         headers = {"Last-Event-ID": "evt-RCT-001"}
         response = client.get("/api/v1/projections/stream?tenant_id=east-bay-food-bank", headers=headers)
         assert response.status_code == 200
         body = response.text
-        # Event RCT-001 should be skipped due to Last-Event-ID
         assert "RCT-002" in body
