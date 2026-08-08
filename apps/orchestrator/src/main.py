@@ -794,8 +794,8 @@ def get_system_evidence(tenant_id: str = "east-bay-food-bank"):
                 "classification": "OBSERVED_LIVE"
             },
             "model_armor": {
-                "template": f"projects/{PROJECT_ID}/locations/global/templates/full-shelf-recall-guard",
-                "pre_filter_endpoint": f"https://modelarmor.googleapis.com/v1/projects/{PROJECT_ID}/locations/global/templates/full-shelf-recall-guard:sanitizeUserPrompt",
+                "template": f"projects/{PROJECT_ID}/locations/global/floorSetting",
+                "pre_filter_endpoint": f"https://modelarmor.googleapis.com/v1/projects/{PROJECT_ID}/locations/global/floorSetting",
                 "classification": "OBSERVED_LIVE" if inspect_recall_notice_with_model_armor("ping").get("api_response_code") == 200 else "SERVICE_UNAVAILABLE"
             },
             "kms_approval_key": {

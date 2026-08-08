@@ -7,5 +7,6 @@ setup(
     install_requires=[
         "pydantic>=2.0.0",
         "typing-extensions>=4.5.0",
+        "google-adk==2.6.3",
     ],
 )
