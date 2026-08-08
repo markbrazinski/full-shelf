@@ -954,21 +954,12 @@ def get_demo_beats_projections():
 
 @app.get("/api/v1/projections/stream")
 async def stream_projections(request: Request, tenant_id: str = "east-bay-food-bank"):
-    """Server-Sent Events (SSE) stream for live frontend updates reading directly from Spanner with Last-Event-ID cursor support."""
+    """Server-Sent Events (SSE) stream for live frontend updates reading directly from committed Spanner events with Last-Event-ID cursor support."""
     db = get_spanner_database()
-
-    last_event_header = request.headers.get("Last-Event-ID", "0")
-    start_idx = 0
-    try:
-        if last_event_header.startswith("evt-"):
-            start_idx = int(last_event_header.replace("evt-", ""))
-        else:
-            start_idx = int(last_event_header)
-    except Exception:
-        start_idx = 0
+    last_event_id = request.headers.get("Last-Event-ID", "").strip()
 
     async def event_generator():
-        spanner_receipts = []
+        spanner_events = []
         try:
             with db.snapshot() as snapshot:
                 rows = list(snapshot.execute_sql(
@@ -977,7 +968,9 @@ async def stream_projections(request: Request, tenant_id: str = "east-bay-food-b
                     param_types={"t": spanner.param_types.STRING}
                 ))
                 for r in rows:
-                    spanner_receipts.append({
+                    evt_id = f"evt-{r[0]}"
+                    spanner_events.append({
+                        "event_id": evt_id,
                         "receipt_id": r[0],
                         "action_id": r[1],
                         "plan_revision_id": r[2],
@@ -989,22 +982,24 @@ async def stream_projections(request: Request, tenant_id: str = "east-bay-food-b
         except Exception as e:
             print(f"SSE Spanner query note: {e}")
 
-        beats = get_demo_beats_projections()["beats"]
-        for idx in range(start_idx, len(beats)):
+        skip = bool(last_event_id)
+        for event in spanner_events:
             if await request.is_disconnected():
                 break
-            beat = beats[idx]
-            matched_receipt = spanner_receipts[idx] if idx < len(spanner_receipts) else None
+            if skip:
+                if event["event_id"] == last_event_id:
+                    skip = False
+                continue
 
             payload = {
-                "event_id": f"evt-{idx+1}",
-                "beat": beat,
-                "spanner_committed_receipt": matched_receipt,
-                "timestamp": datetime.now(timezone.utc).isoformat()
+                "event_id": event["event_id"],
+                "projection_type": "SPANNER_COMMITTED_RECEIPT",
+                "data": event,
+                "emitted_at": datetime.now(timezone.utc).isoformat()
             }
-            yield f"id: evt-{idx+1}\nevent: projection_update\ndata: {json.dumps(payload)}\n\n"
+            yield f"id: {event['event_id']}\nevent: projection_update\ndata: {json.dumps(payload)}\n\n"
             import asyncio
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.05)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
