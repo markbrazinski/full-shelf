@@ -222,7 +222,7 @@ def execute_action(
                 params={"tenant_id": req.tenant_id, "act_id": req.action_id},
                 param_types={"tenant_id": spanner.param_types.STRING, "act_id": spanner.param_types.STRING}
             ))
-            if existing_rows:
+            if existing_rows and existing_rows[0][2] == "SUCCESS":
                 row = existing_rows[0]
                 active_rev = get_active_plan_revision(req.tenant_id)
                 return Receipt(
@@ -301,16 +301,16 @@ def execute_action(
                 values=[[req.tenant_id, req.plan_id, "rev08", "ACTIVE", now]]
             )
 
-            transaction.execute_update(
-                "UPDATE Orders SET assigned_vehicle_id = 'TRUCK-02', revision = 'rev08' WHERE tenant_id = @tenant_id AND order_id = 'O202'",
-                params={"tenant_id": req.tenant_id},
-                param_types={"tenant_id": spanner.param_types.STRING}
-            )
-
-            transaction.execute_update(
-                "UPDATE Orders SET status = 'PARTNER_PICKUP_CONVERTED', revision = 'rev08' WHERE tenant_id = @tenant_id AND order_id = 'O203'",
-                params={"tenant_id": req.tenant_id},
-                param_types={"tenant_id": spanner.param_types.STRING}
+            transaction.insert(
+                table="Orders",
+                columns=["tenant_id", "plan_id", "revision", "order_id", "destination_agency_id", "destination_agency_name", "cases", "lot_id", "assigned_vehicle_id", "status"],
+                values=[
+                    [req.tenant_id, req.plan_id, "rev08", "O201", "AG01", "Agency 01", 18, "LTC-4471", "TRUCK-01", "SCHEDULED"],
+                    [req.tenant_id, req.plan_id, "rev08", "O202", "AG02", "Agency 02", 22, "LTC-4471", "TRUCK-02", "REROUTED"],
+                    [req.tenant_id, req.plan_id, "rev08", "O203", "AG03", "Agency 03", 20, "LTC-4471", "TRUCK-01", "PARTNER_PICKUP_CONVERTED"],
+                    [req.tenant_id, req.plan_id, "rev08", "O204", "AG04", "Agency 04", 15, "LTC-5090", "TRUCK-02", "SCHEDULED"],
+                    [req.tenant_id, req.plan_id, "rev08", "O205", "AG05", "Agency 05", 21, "LTC-5090", "TRUCK-02", "SCHEDULED"],
+                ]
             )
 
             transaction.insert(
@@ -319,10 +319,7 @@ def execute_action(
                 values=[[req.tenant_id, f"RCT-SUCCESS-{req.action_id}", req.action_id, "rev08", req.action_type, "SUCCESS", 2, "rev08 applied", trace_id_str, now]]
             )
 
-        try:
-            db.run_in_transaction(_apply_rev08_tx)
-        except Exception as e:
-            print(f"Spanner rev08 transaction note: {e}")
+        db.run_in_transaction(_apply_rev08_tx)
 
         return Receipt(
             receipt_id=f"RCT-SUCCESS-{req.action_id}",

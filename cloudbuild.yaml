@@ -1,0 +1,8 @@
+steps:
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['build', '-t', 'gcr.io/preflight-hackathon/full-shelf-orchestrator', '-f', 'apps/orchestrator/Dockerfile', '.']
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['build', '-t', 'gcr.io/preflight-hackathon/full-shelf-plan-ledger', '-f', 'apps/plan-ledger/Dockerfile', '.']
+images:
+- 'gcr.io/preflight-hackathon/full-shelf-orchestrator'
+- 'gcr.io/preflight-hackathon/full-shelf-plan-ledger'
