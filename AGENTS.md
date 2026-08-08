@@ -6,13 +6,17 @@ This document serves as the repository-level coding-agent constitution for Full 
 
 - **Product**: Full Shelf.
 - **Category**: Food-bank fulfillment control plane.
-- **Canonical product authority**: The Full Shelf Build Book.
-- **Core Thesis**: The product repairs ordinary distribution disruptions and later revises its own work when new safety evidence makes the prior plan false.
+- **Canonical product authority**: The Full Shelf Build Book v1.1.
+- **Core Thesis**: The product repairs ordinary distribution disruptions and later revises its own work when new safety evidence makes the prior plan false, carrying unresolved truth into tomorrow's governed draft.
 - **Authority Rule**: Do not silently modify the thesis, demo spine, architecture boundary, canonical quantities, IDs, or terminal state.
 - **Change Management**: Material changes require an explicit change request.
 
 ## 2. Canonical scenario
 
+- **Daily Plan Provenance**:
+  - Generated at 05:30;
+  - Human-approved at 06:45;
+  - Plan revision `rev07` activated at 07:30 (`GENERATED 05:30 · APPROVED 06:45 · ACTIVE rev07`).
 - **Recalled lot**: LTC-4471.
 - **Safe lot**: LTC-5090.
 - **Hazard**: E. coli O157:H7.
@@ -31,6 +35,23 @@ This document serves as the repository-level coding-agent constitution for Full 
 - **Shortfall**: Agency 03 ends with a 20-case shortfall.
 - **Terminal state**: PARTIALLY_CONTAINED.
 - **Unconfirmed Cases**: Site 01 remains unconfirmed with eight cases.
+
+## 2a. Continuous daily planning & next-day draft
+
+- **Continuous Planning Triggers**: Cloud Scheduler publishes `PLAN_DAY_REQUESTED` and `PLAN_NEXT_DAY_REQUESTED` through Pub/Sub.
+- **Day-Close Event**: The 17:00 day-close event creates the next operating day’s coordinator and `rev01` draft.
+- **Inherited Constraints**: Tomorrow’s draft must inherit:
+  - `LTC-4471` movement barrier;
+  - Agency 03’s 20-case recovery priority;
+  - Site 01’s eight-case acknowledgment hold;
+  - Only confirmed safe inventory and transportation capacity.
+- **Tomorrow's Exact Status**: `DRAFT_WITH_CONSTRAINTS — HUMAN APPROVAL REQUIRED`.
+- **Fleet Constraints**: The fleet must not:
+  - Fabricate the missing 20 cases;
+  - Activate an infeasible plan;
+  - Close the current recall;
+  - Transfer unresolved incidents to the next-day coordinator;
+  - Turn next-day planning into a third equal demo storyline.
 
 ## 3. Incident lifecycle
 
@@ -65,7 +86,8 @@ Incident creation must not immediately set a terminal state.
 - **Model Armor**: Model Armor screens untrusted recall input before Gemini.
 - **Spanner Authority**: Spanner is authoritative for plans, incidents, custody, approvals, commands, receipts, checkpoints, and work items.
 - **Spanner Graph**: Spanner Graph performs custody and dependency traversal.
-- **Pub/Sub**: Pub/Sub wakes the persisted coordinator.
+- **Pub/Sub**: Pub/Sub wakes the persisted coordinator and delivers continuous planning triggers (`PLAN_DAY_REQUESTED`, `PLAN_NEXT_DAY_REQUESTED`).
+- **Cloud Scheduler**: Emits `PLAN_DAY_REQUESTED` and `PLAN_NEXT_DAY_REQUESTED` through Pub/Sub.
 - **Cloud Tasks**: Cloud Tasks schedules durable acknowledgment escalation.
 - **Cloud KMS**: Cloud KMS signs and verifies complete approval envelopes.
 - **Cloud IAM**: Cloud IAM, service accounts, and OIDC enforce workload identity.
@@ -189,6 +211,12 @@ The backend hero loop is complete only when a deployed replay proves:
 → false-containment denial with zero mutations
 → Cloud Task scheduled
 → `PARTIALLY_CONTAINED`
+→ labeled 17:00 day-close trigger
+→ Cloud Scheduler / Pub/Sub planning event
+→ authoritative unresolved-state retrieval
+→ next-day `rev01` draft
+→ active barrier, shortfall, and acknowledgment hold preserved
+→ activation refused pending feasibility and human approval
 
 The same coordinator, incident, action, receipt, and real Cloud Trace identifiers must correlate across the path.
 
@@ -196,6 +224,8 @@ The same coordinator, incident, action, receipt, and real Cloud Trace identifier
 
 - Preserve the approved Claude Design visual system.
 - Frontend states must come from versioned backend projections.
+- Morning plan shows `GENERATED 05:30 · APPROVED 06:45 · ACTIVE rev07`.
+- Next-day draft is an 8–10 second continuity coda; time compression is visibly labeled; recall remains the primary climax.
 - Do not animate a completed result as though live work is still occurring.
 - Do not show managed proof badges before the corresponding evidence exists.
 - Never hide a secret in the browser.
@@ -211,6 +241,7 @@ The same coordinator, incident, action, receipt, and real Cloud Trace identifier
 - Invent managed-service evidence.
 - Expand scope merely because implementation is ahead of schedule.
 - Add `AGENTS.md` or `GEMINI.md` to any ignore file.
+- Fabricate missing cases, activate infeasible next-day plans, or close open recall incidents during next-day draft creation.
 
 ## PREFERENCES
 
