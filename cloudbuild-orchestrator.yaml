@@ -1,5 +1,16 @@
 steps:
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['build', '-t', 'us-central1-docker.pkg.dev/preflight-hackathon/full-shelf-repo/orchestrator:v1', '-f', 'apps/orchestrator/Dockerfile', '.']
+    args:
+      - 'build'
+      - '--label'
+      - 'org.opencontainers.image.revision=${_GIT_SHA}'
+      - '-t'
+      - 'us-central1-docker.pkg.dev/preflight-hackathon/full-shelf-repo/orchestrator:${_IMAGE_TAG}'
+      - '-f'
+      - 'apps/orchestrator/Dockerfile'
+      - '.'
 images:
-  - 'us-central1-docker.pkg.dev/preflight-hackathon/full-shelf-repo/orchestrator:v1'
+  - 'us-central1-docker.pkg.dev/preflight-hackathon/full-shelf-repo/orchestrator:${_IMAGE_TAG}'
+substitutions:
+  _GIT_SHA: 'UNBOUND'
+  _IMAGE_TAG: 'manual-unbound'
