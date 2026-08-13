@@ -8,17 +8,16 @@
     "principal_id": { "type": "string" },
     "incident_id": { "type": "string" },
     "plan_id": { "type": "string" },
-    "expected_revision": { "type": "string" },
-    "action_type": { "type": "string" },
-    "target_order_id": { "type": "string" },
-    "target_cases": { "type": "integer" },
-    "payload_hash": { "type": "string" },
+    "source_revision": { "type": "string" },
+    "proposed_revision": { "type": "string" },
+    "plan_diff": { "type": "object" },
+    "kms_key_version": { "type": "string" },
     "kms_signature": { "type": "string" },
     "expires_at": { "type": "string", "format": "date-time" }
   },
   "required": [
     "approval_id", "rev_id", "principal_id", "incident_id",
-    "plan_id", "expected_revision", "action_type", "target_order_id",
-    "target_cases", "payload_hash", "kms_signature", "expires_at"
+    "plan_id", "source_revision", "proposed_revision", "plan_diff",
+    "kms_key_version", "kms_signature", "expires_at"
   ]
 }

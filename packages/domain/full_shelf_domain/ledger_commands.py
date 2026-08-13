@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class LedgerCommandType(str, Enum):
     SAVE_PLAN_REVISION = "SAVE_PLAN_REVISION"
     APPLY_REPAIR_PLAN = "APPLY_REPAIR_PLAN"
+    APPROVE_REPAIR_PLAN = "APPROVE_REPAIR_PLAN"
     INVALIDATE_PLAN = "INVALIDATE_PLAN"
     ALLOCATE_SAFE_STOCK = "ALLOCATE_SAFE_STOCK"
     PERSIST_COORDINATOR = "PERSIST_COORDINATOR"
@@ -47,6 +48,20 @@ class ApplyRepairPlanPayload(StrictPayload):
     source_revision: str = Field(min_length=1, max_length=32)
     proposed_revision: str = Field(min_length=1, max_length=32)
     orders: list[PlanOrderPayload] = Field(min_length=1)
+
+
+class ApproveRepairPlanPayload(StrictPayload):
+    plan_id: str = Field(min_length=1, max_length=64)
+    source_revision: str = Field(min_length=1, max_length=32)
+    proposed_revision: str = Field(min_length=1, max_length=32)
+    approval_id: str = Field(min_length=1, max_length=64)
+    approver_subject: str = Field(min_length=1, max_length=128)
+    approver_email: str = Field(min_length=1, max_length=320)
+    oauth_audience: str = Field(min_length=1, max_length=256)
+    plan_diff_hash: str = Field(min_length=64, max_length=64)
+    kms_key_version: str = Field(min_length=1, max_length=512)
+    kms_signature: str = Field(min_length=1)
+    expires_at: str = Field(min_length=1, max_length=64)
 
 
 class InvalidatePlanPayload(StrictPayload):
@@ -125,6 +140,7 @@ class RecordRefusalPayload(StrictPayload):
 PAYLOAD_MODELS: Dict[LedgerCommandType, Type[StrictPayload]] = {
     LedgerCommandType.SAVE_PLAN_REVISION: SavePlanRevisionPayload,
     LedgerCommandType.APPLY_REPAIR_PLAN: ApplyRepairPlanPayload,
+    LedgerCommandType.APPROVE_REPAIR_PLAN: ApproveRepairPlanPayload,
     LedgerCommandType.INVALIDATE_PLAN: InvalidatePlanPayload,
     LedgerCommandType.ALLOCATE_SAFE_STOCK: AllocateSafeStockPayload,
     LedgerCommandType.PERSIST_COORDINATOR: PersistCoordinatorPayload,

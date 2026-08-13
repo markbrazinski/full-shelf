@@ -9,7 +9,9 @@ from full_shelf_domain.models import (
     Vehicle, Order, PlanRevision, ApprovalEnvelope, Receipt,
     CustodyNode, CustodyEdge, NodeType, PlanStatus, IncidentStatus, PlanDiff
 )
-from full_shelf_domain.kms import verify_kms_approval_envelope
+from full_shelf_domain.kms import (
+    KmsApprovalError, create_signed_approval_envelope, verify_kms_approval_envelope,
+)
 from full_shelf_domain.identity import (
     GoogleOidcVerifier,
     IdentityConfigurationError,
@@ -88,6 +90,91 @@ class SaveNextDayPlanRequest(BaseModel):
     next_day_plan: Dict[str, Any]
 
 
+class HumanApprovalRequest(BaseModel):
+    command_id: str
+    idempotency_key: str
+    tenant_id: str
+    incident_id: str
+    plan_id: str
+    source_revision: str
+    proposed_revision: str
+    approval_id: str
+    expires_at: str
+
+
+def verify_human_operator(token: Optional[str]) -> VerifiedGoogleIdentity:
+    try:
+        return GoogleOidcVerifier(
+            audience=os.getenv("OPERATOR_OAUTH_CLIENT_ID", ""),
+            allowed_subjects={os.getenv("ALLOWED_OPERATOR_SUBJECT", "")},
+            allowed_emails={os.getenv("ALLOWED_OPERATOR_EMAIL", "")},
+        ).verify_authorization(token)
+    except IdentityConfigurationError as exc:
+        raise HTTPException(503, "OPERATOR_IDENTITY_BOUNDARY_NOT_CONFIGURED") from exc
+    except MissingIdentityToken as exc:
+        raise HTTPException(401, "OPERATOR_GOOGLE_ID_TOKEN_REQUIRED") from exc
+    except InvalidIdentityToken as exc:
+        raise HTTPException(401, "OPERATOR_GOOGLE_ID_TOKEN_INVALID") from exc
+    except UnauthorizedIdentity as exc:
+        raise HTTPException(403, "OPERATOR_GOOGLE_IDENTITY_NOT_ALLOWED") from exc
+
+
+@app.post("/api/v1/approvals/approve-and-activate")
+def approve_and_activate(
+    req: HumanApprovalRequest,
+    caller: VerifiedGoogleIdentity = Depends(require_ledger_workload_identity),
+    operator_authorization: Optional[str] = Header(
+        None, alias="X-Full-Shelf-Operator-Authorization"
+    ),
+):
+    """Independently authenticate the human, KMS-sign, persist, and activate."""
+    operator = verify_human_operator(operator_authorization)
+    if req.source_revision != "rev07" or req.proposed_revision != "rev08":
+        raise HTTPException(409, "CANONICAL_REVISION_TRANSITION_REQUIRED")
+    try:
+        envelope = create_signed_approval_envelope(
+            approval_id=req.approval_id, rev_id=req.proposed_revision,
+            principal_id=operator.subject, incident_id=req.incident_id,
+            plan_id=req.plan_id, source_revision=req.source_revision,
+            proposed_revision=req.proposed_revision, reroute_order_id="O202",
+            reroute_cases=22, reroute_target_vehicle="TRUCK-02",
+            pickup_order_id="O203", pickup_cases=20, expires_at=req.expires_at,
+        )
+    except KmsApprovalError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    if not verify_kms_approval_envelope(envelope):
+        raise HTTPException(503, "MANAGED_KMS_VERIFICATION_FAILED")
+    command = LedgerCommand.model_validate({
+        "command_id": req.command_id,
+        "idempotency_key": req.idempotency_key,
+        "tenant_id": req.tenant_id,
+        "incident_id": req.incident_id,
+        "agent_role": "FULFILLMENT_RECOVERY_PLANNER",
+        "command_type": "APPROVE_REPAIR_PLAN",
+        "expected_plan_revision": req.source_revision,
+        "trace_id": generate_trace_id(),
+        "payload": {
+            "plan_id": req.plan_id,
+            "source_revision": req.source_revision,
+            "proposed_revision": req.proposed_revision,
+            "approval_id": req.approval_id,
+            "approver_subject": operator.subject,
+            "approver_email": operator.email,
+            "oauth_audience": operator.audience,
+            "plan_diff_hash": envelope.plan_diff.plan_diff_hash,
+            "kms_key_version": envelope.kms_key_version,
+            "kms_signature": envelope.kms_signature,
+            "expires_at": envelope.expires_at,
+        },
+    })
+    result = _execute_command(command, caller)
+    return {"receipt": result.receipt, "idempotent_replay": result.idempotent_replay,
+            "additional_mutations": result.additional_mutations,
+            "approval_id": envelope.approval_id,
+            "plan_diff_hash": envelope.plan_diff.plan_diff_hash,
+            "kms_key_version": envelope.kms_key_version}
+
+
 @app.post("/api/v1/commands/execute")
 def execute_ledger_command(
     command: LedgerCommand,
@@ -95,6 +182,8 @@ def execute_ledger_command(
 ):
     """Execute one authenticated authoritative command and receipt atomically."""
 
+    if command.command_type.value == "APPROVE_REPAIR_PLAN":
+        raise HTTPException(403, "USE_HUMAN_APPROVAL_ROUTE")
     try:
         result = _execute_command(command, caller)
     except PermissionError as exc:
@@ -226,6 +315,10 @@ def execute_action(
     full_shelf_trace_id: Optional[str] = Header(None, alias="X-Full-Shelf-Trace-Id"),
 ):
     """Compatibility route backed exclusively by the command executor."""
+    raise HTTPException(status_code=410, detail="USE_AUTHENTICATED_HUMAN_APPROVAL_ROUTE")
+
+    # Historical implementation below is unreachable and retained only until
+    # its response-model consumers migrate. It must never regain mutation use.
     extracted_trace_id = None
     if traceparent:
         parsed = parse_traceparent(traceparent)

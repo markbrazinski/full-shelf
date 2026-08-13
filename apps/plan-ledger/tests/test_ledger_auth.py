@@ -126,3 +126,36 @@ def test_every_ledger_api_route_has_workload_auth_dependency():
         if ledger_main.require_ledger_workload_identity not in dependency_calls:
             unprotected.append(route.path)
     assert unprotected == []
+
+
+def test_approval_route_requires_independent_human_token_before_kms(monkeypatch):
+    configure_boundary(monkeypatch)
+    monkeypatch.setenv("OPERATOR_OAUTH_CLIENT_ID", "client.apps.googleusercontent.com")
+    monkeypatch.setenv("ALLOWED_OPERATOR_SUBJECT", "operator-sub")
+    monkeypatch.setenv("ALLOWED_OPERATOR_EMAIL", "operator@example.com")
+    workload = VerifiedGoogleIdentity(
+        subject="105774551577568412756",
+        email="full-shelf-orchestrator-sa@example.iam.gserviceaccount.com",
+        audience="https://ledger.example.run.app",
+        issuer="https://accounts.google.com",
+        expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+    )
+    ledger_main.app.dependency_overrides[ledger_main.require_ledger_workload_identity] = lambda: workload
+    kms_called = False
+
+    def forbidden_kms(**kwargs):
+        nonlocal kms_called
+        kms_called = True
+        raise AssertionError("KMS ran without human identity")
+
+    monkeypatch.setattr(ledger_main, "create_signed_approval_envelope", forbidden_kms)
+    response = client.post("/api/v1/approvals/approve-and-activate", json={
+        "command_id": "CMD-ALT", "idempotency_key": "alt", "tenant_id": "audit-tenant",
+        "incident_id": "INC-ALT", "plan_id": "PLAN-ALT", "source_revision": "rev07",
+        "proposed_revision": "rev08", "approval_id": "APP-ALT",
+        "expires_at": "2099-01-01T00:00:00Z",
+    })
+    ledger_main.app.dependency_overrides.clear()
+    assert response.status_code == 401
+    assert response.json()["detail"] == "OPERATOR_GOOGLE_ID_TOKEN_REQUIRED"
+    assert kms_called is False

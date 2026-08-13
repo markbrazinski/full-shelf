@@ -61,6 +61,17 @@ Required inputs:
 The builder must not derive `sub` from an email or treat the judge API key as
 human authority.
 
+Resolved 2026-08-13: Google web client
+`620464070103-ablut31si4neq0r8ibdc7hhtla1klls2.apps.googleusercontent.com`
+was created, and the loopback helper cryptographically verified operator
+subject `108080450585792522893` with display email
+`markbrazinski@gmail.com`. The raw token was not retained. The package is no
+longer blocked; these identifiers are runtime configuration, not source
+defaults.
+
+The ledger runtime alone was granted `roles/cloudkms.signerVerifier` on the
+single `approval-signer` key. No project-wide KMS role was added.
+
 ## Operator bootstrap helper
 
 Classification: `DESIGNED`

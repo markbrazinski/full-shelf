@@ -13,6 +13,7 @@ from .identity import VerifiedGoogleIdentity
 from .ledger_commands import (
     AllocateSafeStockPayload,
     ApplyRepairPlanPayload,
+    ApproveRepairPlanPayload,
     ActivateMovementBarrierPayload,
     InvalidatePlanPayload,
     LedgerCommand,
@@ -41,6 +42,7 @@ class SpannerLedgerCommandExecutor:
     _ALLOWED_ROLES = {
         LedgerCommandType.SAVE_PLAN_REVISION: {"FULFILLMENT_RECOVERY_PLANNER"},
         LedgerCommandType.APPLY_REPAIR_PLAN: {"FULFILLMENT_RECOVERY_PLANNER"},
+        LedgerCommandType.APPROVE_REPAIR_PLAN: {"FULFILLMENT_RECOVERY_PLANNER"},
         LedgerCommandType.INVALIDATE_PLAN: {"INCIDENT_COORDINATOR"},
         LedgerCommandType.ALLOCATE_SAFE_STOCK: {"FULFILLMENT_RECOVERY_PLANNER"},
         LedgerCommandType.PERSIST_COORDINATOR: {"INCIDENT_COORDINATOR"},
@@ -238,11 +240,56 @@ class SpannerLedgerCommandExecutor:
             return 1
 
         if command.command_type is LedgerCommandType.APPLY_REPAIR_PLAN:
-            assert isinstance(payload, ApplyRepairPlanPayload)
+            raise ValueError("HUMAN_APPROVAL_REQUIRED")
+
+        if command.command_type is LedgerCommandType.APPROVE_REPAIR_PLAN:
+            assert isinstance(payload, ApproveRepairPlanPayload)
             if command.expected_plan_revision != payload.source_revision:
                 raise ValueError("REPAIR_SOURCE_REVISION_MISMATCH")
             if payload.source_revision == payload.proposed_revision:
                 raise ValueError("REPAIR_REVISION_MUST_ADVANCE")
+            source_orders = list(transaction.execute_sql(
+                "SELECT order_id, destination_agency_id, destination_agency_name, "
+                "cases, lot_id, assigned_vehicle_id, status FROM Orders "
+                "WHERE tenant_id = @tenant_id AND plan_id = @plan_id "
+                "AND revision = @source_revision ORDER BY order_id",
+                params={"tenant_id": command.tenant_id, "plan_id": payload.plan_id,
+                        "source_revision": payload.source_revision},
+                param_types={"tenant_id": spanner.param_types.STRING,
+                             "plan_id": spanner.param_types.STRING,
+                             "source_revision": spanner.param_types.STRING},
+            ))
+            if not {"O202", "O203"}.issubset({row[0] for row in source_orders}):
+                raise ValueError("SIGNED_REPAIR_TARGETS_NOT_FOUND")
+            repaired_orders = []
+            for source in source_orders:
+                order = list(source)
+                if order[0] == "O202":
+                    if order[3] != 22:
+                        raise ValueError("SIGNED_REROUTE_QUANTITY_MISMATCH")
+                    order[5], order[6] = "TRUCK-02", "REROUTED"
+                elif order[0] == "O203":
+                    if order[3] != 20:
+                        raise ValueError("SIGNED_PICKUP_QUANTITY_MISMATCH")
+                    order[5], order[6] = None, "PARTNER_PICKUP_CONVERTED"
+                repaired_orders.append(order)
+            transaction.insert(
+                table="Approvals",
+                columns=[
+                    "tenant_id", "approval_id", "incident_id", "plan_id",
+                    "source_revision", "proposed_revision", "approver_subject",
+                    "approver_email", "oauth_audience", "plan_diff_hash",
+                    "kms_key_version", "kms_signature", "expires_at",
+                    "verified_at", "trace_id",
+                ],
+                values=[[command.tenant_id, payload.approval_id, command.incident_id,
+                    payload.plan_id, payload.source_revision, payload.proposed_revision,
+                    payload.approver_subject, payload.approver_email,
+                    payload.oauth_audience, payload.plan_diff_hash,
+                    payload.kms_key_version, payload.kms_signature,
+                    datetime.fromisoformat(payload.expires_at.replace("Z", "+00:00")),
+                    spanner.COMMIT_TIMESTAMP, command.trace_id]],
+            )
             updated = transaction.execute_update(
                 "UPDATE PlanRevisions SET status = 'SUPERSEDED' "
                 "WHERE tenant_id = @tenant_id AND plan_id = @plan_id "
@@ -289,16 +336,10 @@ class SpannerLedgerCommandExecutor:
                     command.tenant_id,
                     payload.plan_id,
                     payload.proposed_revision,
-                    order.order_id,
-                    order.destination_agency_id,
-                    order.destination_agency_name,
-                    order.cases,
-                    order.lot_id,
-                    order.assigned_vehicle_id,
-                    order.status,
-                ] for order in payload.orders],
+                    order[0], order[1], order[2], order[3], order[4], order[5], order[6],
+                ] for order in repaired_orders],
             )
-            return 2
+            return 3
 
         if command.command_type is LedgerCommandType.INVALIDATE_PLAN:
             assert isinstance(payload, InvalidatePlanPayload)

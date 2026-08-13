@@ -13,8 +13,10 @@ from full_shelf_observability import (
     get_tracer,
     generate_trace_id,
 )
-from full_shelf_domain.kms import create_signed_approval_envelope, verify_kms_approval_envelope
-from full_shelf_domain.identity import IdentityConfigurationError, fetch_google_id_token
+from full_shelf_domain.identity import (
+    GoogleOidcVerifier, IdentityConfigurationError, InvalidIdentityToken,
+    MissingIdentityToken, UnauthorizedIdentity, fetch_google_id_token,
+)
 from full_shelf_domain.recall import (
     verify_gemini_35_availability,
     inspect_recall_notice_with_model_armor,
@@ -47,6 +49,7 @@ def post_to_plan_ledger(
     payload: Dict[str, Any],
     timeout: float = 15.0,
     trace_id: Optional[str] = None,
+    operator_authorization: Optional[str] = None,
 ) -> httpx.Response:
     """Invoke the private ledger with a Google-signed, audience-bound token."""
 
@@ -62,6 +65,8 @@ def post_to_plan_ledger(
     }
     if trace_id:
         headers["X-Full-Shelf-Trace-Id"] = trace_id
+    if operator_authorization:
+        headers["X-Full-Shelf-Operator-Authorization"] = operator_authorization
 
     response = httpx.post(
         f"{PLAN_LEDGER_URL.rstrip('/')}{path}",
@@ -113,6 +118,56 @@ def execute_ledger_command(
                 "message": receipt.get("message"),
             },
         )
+    return result
+
+
+class HumanApprovalProposal(BaseModel):
+    command_id: str
+    idempotency_key: str
+    tenant_id: str
+    incident_id: str
+    plan_id: str
+    source_revision: str
+    proposed_revision: str
+    approval_id: str
+    expires_at: str
+
+
+def _verify_operator(authorization: Optional[str]):
+    try:
+        return GoogleOidcVerifier(
+            audience=os.getenv("OPERATOR_OAUTH_CLIENT_ID", ""),
+            allowed_subjects={os.getenv("ALLOWED_OPERATOR_SUBJECT", "")},
+            allowed_emails={os.getenv("ALLOWED_OPERATOR_EMAIL", "")},
+        ).verify_authorization(authorization)
+    except IdentityConfigurationError as exc:
+        raise HTTPException(503, "OPERATOR_IDENTITY_BOUNDARY_NOT_CONFIGURED") from exc
+    except MissingIdentityToken as exc:
+        raise HTTPException(401, "OPERATOR_GOOGLE_ID_TOKEN_REQUIRED") from exc
+    except InvalidIdentityToken as exc:
+        raise HTTPException(401, "OPERATOR_GOOGLE_ID_TOKEN_INVALID") from exc
+    except UnauthorizedIdentity as exc:
+        raise HTTPException(403, "OPERATOR_GOOGLE_IDENTITY_NOT_ALLOWED") from exc
+
+
+@app.post("/api/v1/orchestrator/approvals/approve-and-activate")
+def approve_and_activate(
+    proposal: HumanApprovalProposal,
+    authorization: Optional[str] = Header(None),
+):
+    """Validate the human token, then preserve it for independent ledger verification."""
+    operator = _verify_operator(authorization)
+    if proposal.source_revision != "rev07" or proposal.proposed_revision != "rev08":
+        raise HTTPException(409, "CANONICAL_REVISION_TRANSITION_REQUIRED")
+    response = post_to_plan_ledger(
+        "/api/v1/approvals/approve-and-activate",
+        payload=proposal.model_dump(),
+        trace_id=generate_trace_id(),
+        operator_authorization=authorization,
+    )
+    result = response.json()
+    result["verified_operator_subject"] = operator.subject
+    result["verified_operator_email"] = operator.email
     return result
 
 
@@ -268,61 +323,7 @@ def s2s_dispatch(
     tamper_field: Optional[str] = Query(None),
     x_api_key: Optional[str] = Header(None, alias="X-Full-Shelf-API-Key")
 ):
-    """Mints OIDC identity token as full-shelf-orchestrator-sa, calls plan-ledger, and propagates trace context."""
-    verify_judge_key(x_api_key)
-    trace_id = generate_trace_id()
-
-    env = create_signed_approval_envelope(
-        approval_id="APP-008",
-        rev_id="rev08",
-        principal_id="operations-director@fullshelf.org",
-        incident_id="INC-TRUCK-01",
-        plan_id="PLAN-2026-08-07",
-        source_revision="rev07",
-        proposed_revision="rev08",
-        reroute_order_id="O202",
-        reroute_cases=22 if tamper_field != "reroute_cases" else 999,
-        reroute_target_vehicle="TRUCK-02",
-        pickup_order_id="O203",
-        pickup_cases=20 if tamper_field != "pickup_cases" else 999,
-        kms_key_version="projects/preflight-hackathon/locations/us-central1/keyRings/full-shelf-keyring/cryptoKeys/approval-signer/cryptoKeyVersions/1",
-        use_live_kms=True
-    )
-
-    payload = {
-        "action_id": "ACT-REV08-LIVE-001",
-        "tenant_id": "east-bay-food-bank",
-        "agent_role": "FULFILLMENT_RECOVERY_PLANNER",
-        "action_type": "APPLY_REPAIR_PLAN_REV08",
-        "plan_id": "PLAN-2026-08-07",
-        "expected_revision": "rev07",
-        "parameters": {
-            "reroute_cases": 22 if tamper_field != "reroute_cases" else 999,
-            "vehicle_from": "TRUCK-01",
-            "vehicle_to": "TRUCK-02",
-            "order_id": "O202",
-        },
-        "approval_envelope": env.dict(),
-        "idempotency_key": idempotency_key
-    }
-
-    res = post_to_plan_ledger(
-        "/api/v1/actions/execute",
-        payload=payload,
-        timeout=15.0,
-        trace_id=trace_id,
-    )
-
-    ledger_receipt = res.json() if res.status_code == 200 else {"status": "FAILED", "code": res.status_code}
-
-    return {
-        "status": "OIDC_S2S_DISPATCH_COMPLETE",
-        "caller_service_account": "full-shelf-orchestrator-sa@preflight-hackathon.iam.gserviceaccount.com",
-        "target_service": "full-shelf-plan-ledger",
-        "plan_ledger_response": ledger_receipt,
-        "tamper_detected": tamper_field is not None,
-        "cloud_trace_id": trace_id
-    }
+    raise HTTPException(410, "USE_AUTHENTICATED_HUMAN_APPROVAL_ROUTE")
 
 
 # -------------------------------------------------------------------

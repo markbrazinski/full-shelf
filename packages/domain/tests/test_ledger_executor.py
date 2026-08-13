@@ -20,10 +20,12 @@ class FakeTransaction:
         active_revision="rev42",
         existing_receipt=None,
         coordinator_children='["INC-TRUCK-ALT"]',
+        source_orders=None,
     ):
         self.active_revision = active_revision
         self.existing_receipt = existing_receipt
         self.coordinator_children = coordinator_children
+        self.source_orders = source_orders or []
         self.inserts = []
         self.upserts = []
         self.updates = []
@@ -37,6 +39,8 @@ class FakeTransaction:
             return []
         if "FROM Coordinators" in sql:
             return [(self.coordinator_children,)]
+        if "FROM Orders" in sql:
+            return self.source_orders
         raise AssertionError(f"Unexpected SQL: {sql}")
 
     def insert(self, **kwargs):
@@ -182,6 +186,54 @@ def test_open_recall_preserves_existing_coordinator_child_incident():
     assert transaction.updates[0][1]["children"] == (
         '["INC-TRUCK-ALT","INC-RECALL-ALT"]'
     )
+
+
+def test_unsigned_repair_command_cannot_activate():
+    command = coordinator_command(
+        command_type=LedgerCommandType.APPLY_REPAIR_PLAN,
+        agent_role="FULFILLMENT_RECOVERY_PLANNER",
+        payload={"plan_id": "PLAN-ALT", "source_revision": "rev42",
+                 "proposed_revision": "rev43", "orders": [{
+                     "order_id": "ALT", "destination_agency_id": "AG-ALT",
+                     "destination_agency_name": "Altered", "cases": 1,
+                     "lot_id": "LOT-ALT", "assigned_vehicle_id": None,
+                     "status": "PLANNED"}]},
+    )
+    transaction = FakeTransaction()
+    try:
+        SpannerLedgerCommandExecutor(FakeDatabase(transaction), allowed_tenant_ids={"audit-tenant"}).execute(command, IDENTITY)
+    except ValueError as exc:
+        assert str(exc) == "HUMAN_APPROVAL_REQUIRED"
+    else:
+        raise AssertionError("unsigned repair reached activation")
+    assert transaction.inserts == []
+    assert transaction.updates == []
+
+
+def test_approved_repair_derives_only_signed_changes_from_source_orders():
+    command = coordinator_command(
+        command_type=LedgerCommandType.APPROVE_REPAIR_PLAN,
+        agent_role="FULFILLMENT_RECOVERY_PLANNER",
+        payload={"plan_id": "PLAN-ALT", "source_revision": "rev42",
+                 "proposed_revision": "rev43", "approval_id": "APP-ALT",
+                 "approver_subject": "operator-sub", "approver_email": "operator@example.com",
+                 "oauth_audience": "client.apps.googleusercontent.com",
+                 "plan_diff_hash": "a" * 64, "kms_key_version": "projects/p/keys/k/versions/1",
+                 "kms_signature": "signature", "expires_at": "2099-01-01T00:00:00Z"},
+    )
+    source = [
+        ("O201", "AG1", "Agency 1", 18, "LOT-X", "TRUCK-01", "PLANNED"),
+        ("O202", "AG2", "Agency 2", 22, "LOT-X", "TRUCK-01", "PLANNED"),
+        ("O203", "AG3", "Agency 3", 20, "LOT-X", "TRUCK-01", "PLANNED"),
+    ]
+    transaction = FakeTransaction(source_orders=source)
+    result = SpannerLedgerCommandExecutor(FakeDatabase(transaction), allowed_tenant_ids={"audit-tenant"}).execute(command, IDENTITY)
+    assert result.additional_mutations == 3
+    assert [item["table"] for item in transaction.inserts] == ["Approvals", "PlanRevisions", "Orders", "Receipts"]
+    inserted = transaction.inserts[2]["values"]
+    assert inserted[0][-2:] == ["TRUCK-01", "PLANNED"]
+    assert inserted[1][-2:] == ["TRUCK-02", "REROUTED"]
+    assert inserted[2][-2:] == [None, "PARTNER_PICKUP_CONVERTED"]
 
 
 def test_incident_status_command_refuses_skipped_lifecycle_transition():

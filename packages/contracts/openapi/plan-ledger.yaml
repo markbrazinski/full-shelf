@@ -6,6 +6,20 @@ info:
 security:
   - googleOidc: []
 paths:
+  /api/v1/approvals/approve-and-activate:
+    post:
+      summary: Independently verify the human operator, KMS-sign, persist approval, and activate
+      parameters:
+        - name: X-Full-Shelf-Operator-Authorization
+          in: header
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Committed approval and activation receipt }
+        '401': { description: Human Google ID token missing or invalid }
+        '403': { description: Human operator not allowlisted }
+        '409': { description: Revision or authoritative-state precondition failed }
+        '503': { description: Identity or managed KMS failed closed }
   /api/v1/commands/execute:
     post:
       summary: Execute an authenticated, validated, idempotent ledger command
@@ -36,7 +50,7 @@ paths:
   /api/v1/actions/execute:
     post:
       deprecated: true
-      summary: Execute policy-governed operational action
+      summary: Retired legacy action route; use authenticated human approval route
       requestBody:
         required: true
         content:
@@ -54,8 +68,8 @@ paths:
                 approval_envelope: { type: object }
                 idempotency_key: { type: string }
       responses:
-        '200':
-          description: Action receipt (SUCCESS or DENIED)
+        '410':
+          description: Authenticated human approval route required
   /api/v1/incidents/recall:
     post:
       deprecated: true
