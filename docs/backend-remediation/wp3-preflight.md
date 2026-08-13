@@ -61,6 +61,34 @@ Required inputs:
 The builder must not derive `sub` from an email or treat the judge API key as
 human authority.
 
+## Operator bootstrap helper
+
+Classification: `DESIGNED`
+
+Google requires creation of the Google Identity Services **Web application**
+client in the Google Auth Platform Clients console. The similarly named
+`gcloud iam oauth-clients` command manages a different IAM OAuth facility and
+must not be used as a substitute.
+
+Create the web client in project `preflight-hackathon` with this authorized
+JavaScript origin:
+
+```text
+http://127.0.0.1:8787
+```
+
+No redirect URI is needed for the local JavaScript callback. Then run:
+
+```bash
+.venv/bin/python scripts/bootstrap_wp3_operator.py \
+  --client-id 'YOUR_CLIENT_ID.apps.googleusercontent.com'
+```
+
+The helper binds only to loopback, opens the Google Identity Services sign-in
+page, verifies the returned token through the official Google authentication
+library against the exact client ID, prints only the verified `sub` and email,
+and shuts down. It never logs, prints, or persists the raw ID token.
+
 ## TODO after identity configuration
 
 Classification: `DESIGNED`
