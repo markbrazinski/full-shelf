@@ -1,0 +1,52 @@
+{
+  "schema_version": "1.0",
+  "recorded_at": "2026-08-13T21:01:33Z",
+  "builder_acceptance_authority": false,
+  "branch": "repair/backend-acceptance-20260813",
+  "baseline_commit": "bfd1e1040824da379d69add8755682bc8eafebd6",
+  "topology": {
+    "cloud_run_service_count": 2,
+    "third_service_proposed": false
+  },
+  "resources": {
+    "project_id": "preflight-hackathon",
+    "region": "us-central1",
+    "spanner_instance": "fef-smoke-spanner",
+    "spanner_database": "full-shelf-main",
+    "pubsub_topic": "projects/preflight-hackathon/topics/full-shelf-incidents",
+    "pubsub_subscription": "projects/preflight-hackathon/subscriptions/full-shelf-incidents-sub",
+    "tasks_queue": "projects/preflight-hackathon/locations/us-central1/queues/full-shelf-deadlines",
+    "kms_key": "projects/preflight-hackathon/locations/us-central1/keyRings/full-shelf-keyring/cryptoKeys/approval-signer"
+  },
+  "baseline_revisions": {
+    "orchestrator": {
+      "revision": "full-shelf-orchestrator-00022-l9w",
+      "image_digest": "sha256:211d5b47e0700607f79c2fe73859831f035d71d157570ff1623b0184acc35198",
+      "runtime_service_account": "full-shelf-orchestrator-sa@preflight-hackathon.iam.gserviceaccount.com"
+    },
+    "plan_ledger": {
+      "revision": "full-shelf-plan-ledger-00014-q6l",
+      "image_digest": "sha256:1b6d17658e5fc7f92b2a12357a7cbe979197bf230fcaab47c3f379e8b3bf4614",
+      "runtime_service_account": "full-shelf-orchestrator-sa@preflight-hackathon.iam.gserviceaccount.com"
+    }
+  },
+  "workload_identities": {
+    "orchestrator": {
+      "email": "full-shelf-orchestrator-sa@preflight-hackathon.iam.gserviceaccount.com",
+      "subject": "105774551577568412756"
+    },
+    "plan_ledger": {
+      "email": "full-shelf-ledger-sa@preflight-hackathon.iam.gserviceaccount.com",
+      "subject": "101789932459049570050"
+    }
+  },
+  "executions": [],
+  "claims": [
+    {
+      "capability": "WP0 baseline and repair map",
+      "classification": "STRUCTURALLY_VERIFIED",
+      "observed_at": "2026-08-13T21:01:33Z",
+      "limitation": "Read-only configuration and repository inspection; no successful managed path is inferred."
+    }
+  ]
+}
