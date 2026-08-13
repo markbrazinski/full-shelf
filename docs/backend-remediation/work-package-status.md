@@ -7,7 +7,7 @@ Builder verdict authority: none; final acceptance requires a fresh independent a
 | Package | Commit | Local tests | Deployed verification | Status | Blocker |
 |---|---|---|---|---|---|
 | WP0 — Baseline and repair map | `90dcb4a` | Read-only repository and resource inspection | Audited revisions and current resource state reconfirmed | LOCALLY VERIFIED | None |
-| WP1 — Identity and ledger perimeter | — | — | — | IN PROGRESS | None |
+| WP1 — Identity and ledger perimeter | `ea462c0`, `833c478`, `4763392` | 28 targeted tests passed | Revisions `orchestrator-00023-frt` / `plan-ledger-00016-x4j`; all acceptance outcomes observed | DEPLOYED OBSERVED | None |
 | WP2 — Deterministic mutation boundary | — | — | — | NOT STARTED | WP1 gate |
 | WP3 — Human approval and KMS | — | — | — | NOT STARTED | WP2 gate |
 | WP4 — Managed Model Armor | — | — | — | NOT STARTED | WP3 gate |
