@@ -133,6 +133,10 @@ class HumanApprovalProposal(BaseModel):
     expires_at: str
 
 
+class RecallArmorPreflightRequest(BaseModel):
+    notice_text: str
+
+
 def _verify_operator(authorization: Optional[str]):
     try:
         return GoogleOidcVerifier(
@@ -784,6 +788,50 @@ def execute_hero_loop(
     }
 
 
+@app.post("/api/v1/orchestrator/recall/model-armor-preflight")
+def model_armor_preflight(
+    request: RecallArmorPreflightRequest,
+    x_api_key: Optional[str] = Header(None, alias="X-Full-Shelf-API-Key"),
+):
+    """Exercise only the deployed untrusted-input boundary; never call Gemini or ledger."""
+    verify_judge_key(x_api_key)
+    request_correlation_id = generate_trace_id()
+    screening = inspect_recall_notice_with_model_armor(
+        request.notice_text,
+        correlation_id=request_correlation_id,
+    )
+
+    if screening.get("status") == "APPROVED" and screening.get("safety_verdict") == "PASSED":
+        status = "READY_FOR_GEMINI_ADK_EXTRACTION"
+        next_authorized_stage = "GEMINI_ADK_EXTRACTION"
+    elif screening.get("status") == "BLOCKED":
+        status = "REJECTED_BY_MODEL_ARMOR"
+        next_authorized_stage = None
+    else:
+        status = "HALTED_BY_MODEL_ARMOR_SERVICE_FAILURE"
+        next_authorized_stage = None
+
+    evidence = {
+        "event": "MODEL_ARMOR_PREFLIGHT_COMPLETED",
+        "request_correlation_id": request_correlation_id,
+        "status": status,
+        "managed_operation": screening.get("managed_operation"),
+        "managed_template": screening.get("model_armor_template"),
+        "filter_match_state": screening.get("filter_match_state"),
+        "gemini_adk_invoked": False,
+        "ledger_mutation_attempted": False,
+    }
+    print(json.dumps(evidence, sort_keys=True))
+    return {
+        "preflight_status": status,
+        "request_correlation_id": request_correlation_id,
+        "model_armor_screening": screening,
+        "next_authorized_stage": next_authorized_stage,
+        "gemini_adk_invoked": False,
+        "ledger_mutation_attempted": False,
+    }
+
+
 @app.post("/api/v1/orchestrator/recall/trigger")
 def trigger_recall_hero_loop(
     x_api_key: Optional[str] = Header(None, alias="X-Full-Shelf-API-Key"),
@@ -1001,9 +1049,9 @@ def get_system_evidence(tenant_id: str = "east-bay-food-bank"):
                 "classification": "OBSERVED_LIVE"
             },
             "model_armor": {
-                "template": f"projects/{PROJECT_ID}/locations/global/floorSetting",
-                "pre_filter_endpoint": f"https://modelarmor.googleapis.com/v1/projects/{PROJECT_ID}/locations/global/floorSetting",
-                "classification": "OBSERVED_LIVE" if inspect_recall_notice_with_model_armor("ping").get("api_response_code") == 200 else "SERVICE_UNAVAILABLE"
+                "template": f"projects/{PROJECT_ID}/locations/us-central1/templates/full-shelf-recall-input-v1",
+                "operation": "sanitizeUserPrompt",
+                "classification": "STRUCTURALLY_VERIFIED"
             },
             "kms_approval_key": {
                 "key_version": f"projects/{PROJECT_ID}/locations/us-central1/keyRings/full-shelf-keyring/cryptoKeys/approval-signer/cryptoKeyVersions/1",
@@ -1098,7 +1146,7 @@ def get_demo_beats_projections():
                 "title": "Pub/Sub Recall Event & Model Armor Inspection",
                 "time": "1:40–1:52",
                 "notice_label": "REPRESENTATIVE DEMO NOTICE",
-                "model_armor_status": "PASSED"
+                "model_armor_status": "REQUIRES_CORRELATED_LIVE_EXECUTION"
             },
             {
                 "beat_id": "BEAT_08_RECALL_SCOPING",

@@ -10,6 +10,8 @@ from full_shelf_observability import generate_trace_id
 
 
 PROJECT_ID = os.getenv("GCP_PROJECT_ID", "preflight-hackathon")
+MODEL_ARMOR_LOCATION = os.getenv("MODEL_ARMOR_LOCATION", "us-central1")
+MODEL_ARMOR_TEMPLATE_ID = os.getenv("MODEL_ARMOR_TEMPLATE_ID", "full-shelf-recall-input-v1")
 TOPIC_ID = os.getenv("PUBSUB_TOPIC_ID", "full-shelf-incidents")
 PLAN_LEDGER_URL = os.getenv("PLAN_LEDGER_URL", "https://full-shelf-plan-ledger-620464070103.us-central1.run.app")
 MODEL_ID = "gemini-3.5-flash"
@@ -39,10 +41,21 @@ def verify_gemini_35_availability() -> Dict[str, Any]:
     }
 
 
-def inspect_recall_notice_with_model_armor(notice_text: str) -> Dict[str, Any]:
-    """Screen recall notice text through Model Armor safety filters via GCP Model Armor API. Fails closed on any error/threat."""
-    template_name = f"projects/{PROJECT_ID}/locations/global/floorSetting"
-    url = f"https://modelarmor.googleapis.com/v1/{template_name}"
+def inspect_recall_notice_with_model_armor(
+    notice_text: str,
+    *,
+    correlation_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Sanitize one untrusted prompt through the managed regional API only."""
+    template_name = (
+        f"projects/{PROJECT_ID}/locations/{MODEL_ARMOR_LOCATION}/templates/"
+        f"{MODEL_ARMOR_TEMPLATE_ID}"
+    )
+    url = (
+        f"https://modelarmor.{MODEL_ARMOR_LOCATION}.rep.googleapis.com/v1/"
+        f"{template_name}:sanitizeUserPrompt"
+    )
+    correlation_id = correlation_id or generate_trace_id()
 
     try:
         import google.auth
@@ -57,47 +70,57 @@ def inspect_recall_notice_with_model_armor(notice_text: str) -> Dict[str, Any]:
             "Content-Type": "application/json"
         }
 
-        res = httpx.get(url, headers=headers, timeout=10.0)
-        if res.status_code == 200:
-            # Analyze notice_text for malicious prompt injection or dangerous instructions
-            lowered = notice_text.lower()
-            suspicious_patterns = [
-                "ignore previous instructions",
-                "system override",
-                "drop table",
-                "bypass_safety",
-                "eval(",
-                "exec("
-            ]
-            detected_threats = [p for p in suspicious_patterns if p in lowered]
-            is_safe = len(detected_threats) == 0
-
-            return {
-                "status": "APPROVED" if is_safe else "BLOCKED",
-                "safety_verdict": "PASSED" if is_safe else "FAILED_SAFETY_SCREENING",
-                "model_armor_template": template_name,
-                "notice_text": notice_text.strip(),
-                "threats_detected": detected_threats,
-                "api_response_code": 200
-            }
-        else:
+        headers["X-Goog-Request-Reason"] = f"full-shelf-recall-{correlation_id}"
+        res = httpx.post(
+            url,
+            headers=headers,
+            json={"userPromptData": {"text": notice_text}},
+            timeout=10.0,
+        )
+        if res.status_code != 200:
             return {
                 "status": "SERVICE_UNAVAILABLE",
                 "safety_verdict": "BLOCKED_API_FAILURE",
                 "model_armor_template": template_name,
-                "notice_text": notice_text.strip(),
-                "threats_detected": ["MODEL_ARMOR_API_ERROR"],
                 "model_armor_api_status": res.status_code,
-                "model_armor_api_response": res.text[:200]
+                "managed_operation": "sanitizeUserPrompt",
+                "correlation_id": correlation_id,
             }
-    except Exception as e:
+        body = res.json()
+        result = body.get("sanitizationResult") if isinstance(body, dict) else None
+        if not isinstance(result, dict):
+            raise ValueError("MODEL_ARMOR_RESULT_MISSING")
+        invocation = result.get("invocationResult")
+        match_state = result.get("filterMatchState")
+        filter_results = result.get("filterResults")
+        if invocation != "SUCCESS" or match_state not in {"MATCH_FOUND", "NO_MATCH_FOUND"}:
+            raise ValueError("MODEL_ARMOR_RESULT_INVALID")
+        if not isinstance(filter_results, dict) or not filter_results:
+            raise ValueError("MODEL_ARMOR_FILTER_RESULTS_MISSING")
+        serialized_filters = json.dumps(filter_results, sort_keys=True)
+        if "EXECUTION_FAILED" in serialized_filters or "EXECUTION_SKIPPED" in serialized_filters:
+            raise ValueError("MODEL_ARMOR_PARTIAL_FILTER_FAILURE")
+        blocked = match_state == "MATCH_FOUND"
+        return {
+            "status": "BLOCKED" if blocked else "APPROVED",
+            "safety_verdict": "FAILED_SAFETY_SCREENING" if blocked else "PASSED",
+            "model_armor_template": template_name,
+            "model_armor_location": MODEL_ARMOR_LOCATION,
+            "managed_operation": "sanitizeUserPrompt",
+            "invocation_result": invocation,
+            "filter_match_state": match_state,
+            "filter_results": filter_results,
+            "api_response_code": 200,
+            "correlation_id": correlation_id,
+        }
+    except Exception as exc:
         return {
             "status": "SERVICE_UNAVAILABLE",
             "safety_verdict": "BLOCKED_API_FAILURE",
             "model_armor_template": template_name,
-            "notice_text": notice_text.strip(),
-            "threats_detected": ["MODEL_ARMOR_EXCEPTION"],
-            "error_note": str(e)
+            "managed_operation": "sanitizeUserPrompt",
+            "correlation_id": correlation_id,
+            "failure_type": type(exc).__name__,
         }
 
 

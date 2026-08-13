@@ -3,8 +3,8 @@
 **Full Shelf** is a production-minded food-bank fulfillment control plane built for Google's All Things Agentic Hackathon (Fortified Enterprise Fleet track).
 
 ## Architecture Highlights
-- **ADK / Gemini Orchestrator (`apps/orchestrator`)**: Read-only agent fleet reasoning over operational state; invokes `plan-ledger` via policy tools.
-- **Deterministic Plan Ledger (`apps/plan-ledger`)**: Authoritative, policy-checked mutation engine with Spanner R/W, KMS signature verification, and Model Armor input filtering.
+- **ADK / Gemini Orchestrator (`apps/orchestrator`)**: Read-only coordination with the managed Model Armor input boundary and advisory agent reasoning; invokes `plan-ledger` via policy tools.
+- **Deterministic Plan Ledger (`apps/plan-ledger`)**: Authoritative, policy-checked mutation engine with Spanner R/W and KMS signature verification.
 - **Cloud Spanner & Spanner Graph**: Relational operational state and graph custody traversal across warehouse, trucks, staging, agencies, and sub-distributed sites (96 physical cases).
 - **React Frontend API Boundary (`apps/web`)**: Strongly typed TypeScript client boundary, routing shell, and environment contract reserved for UI integration.
 
