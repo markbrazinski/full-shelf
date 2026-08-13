@@ -14,6 +14,7 @@ from full_shelf_observability import (
     generate_trace_id,
 )
 from full_shelf_domain.kms import create_signed_approval_envelope, verify_kms_approval_envelope
+from full_shelf_domain.identity import IdentityConfigurationError, fetch_google_id_token
 from full_shelf_domain.recall import (
     verify_gemini_35_availability,
     inspect_recall_notice_with_model_armor,
@@ -36,7 +37,40 @@ tracer = get_tracer("orchestrator")
 PROJECT_ID = os.getenv("GCP_PROJECT_ID", "preflight-hackathon")
 SPANNER_INSTANCE = os.getenv("SPANNER_INSTANCE_ID", "fef-smoke-spanner")
 SPANNER_DATABASE = os.getenv("SPANNER_DATABASE_ID", "full-shelf-main")
-PLAN_LEDGER_URL = os.getenv("PLAN_LEDGER_URL", "https://full-shelf-plan-ledger-620464070103.us-central1.run.app")
+PLAN_LEDGER_URL = os.getenv("PLAN_LEDGER_URL", "")
+PLAN_LEDGER_AUDIENCE = os.getenv("PLAN_LEDGER_AUDIENCE", "")
+
+
+def post_to_plan_ledger(
+    path: str,
+    *,
+    payload: Dict[str, Any],
+    timeout: float = 15.0,
+    trace_id: Optional[str] = None,
+) -> httpx.Response:
+    """Invoke the private ledger with a Google-signed, audience-bound token."""
+
+    if not PLAN_LEDGER_URL or not PLAN_LEDGER_AUDIENCE:
+        raise IdentityConfigurationError("PLAN_LEDGER_URL and PLAN_LEDGER_AUDIENCE are required")
+    if not path.startswith("/"):
+        raise ValueError("Ledger path must start with '/'")
+
+    token = fetch_google_id_token(PLAN_LEDGER_AUDIENCE)
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+    if trace_id:
+        headers["X-Full-Shelf-Trace-Id"] = trace_id
+
+    response = httpx.post(
+        f"{PLAN_LEDGER_URL.rstrip('/')}{path}",
+        json=payload,
+        headers=headers,
+        timeout=timeout,
+    )
+    response.raise_for_status()
+    return response
 
 
 def get_spanner_database():
@@ -72,6 +106,8 @@ def verify_judge_key(x_api_key: Optional[str] = Header(None, alias="X-Full-Shelf
 @app.on_event("startup")
 def startup_checks():
     """Startup check asserts Gemini 3.5+ availability on Vertex AI."""
+    if not PLAN_LEDGER_URL or not PLAN_LEDGER_AUDIENCE:
+        raise RuntimeError("PLAN_LEDGER_URL and PLAN_LEDGER_AUDIENCE must be configured")
     print(f"Orchestrator container started. Model configured: {MODEL_ID}, Location: {VERTEX_LOCATION}")
     try:
         if "3.5" not in MODEL_ID and "4" not in MODEL_ID and "flash" not in MODEL_ID:
@@ -157,7 +193,12 @@ def generate_daily_morning_plan(
 
     # Save to Ledger
     try:
-        httpx.post(f"{PLAN_LEDGER_URL}/api/v1/plans/daily-plan/save", json={"tenant_id": tenant_id, "plan_details": plan_details}, timeout=10.0)
+        post_to_plan_ledger(
+            "/api/v1/plans/daily-plan/save",
+            payload={"tenant_id": tenant_id, "plan_details": plan_details},
+            timeout=10.0,
+            trace_id=trace_id,
+        )
     except Exception as e:
         print(f"Plan Ledger daily plan save note: {e}")
 
@@ -218,19 +259,12 @@ def s2s_dispatch(
         "idempotency_key": idempotency_key
     }
 
-    token = None
-    try:
-        req = httpx.get("http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity?audience=" + PLAN_LEDGER_URL, headers={"Metadata-Flavor": "Google"})
-        if req.status_code == 200:
-            token = req.text.strip()
-    except Exception:
-        pass
-
-    headers = {"Content-Type": "application/json"}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-
-    res = httpx.post(f"{PLAN_LEDGER_URL}/api/v1/actions/execute", json=payload, headers=headers, timeout=15.0)
+    res = post_to_plan_ledger(
+        "/api/v1/actions/execute",
+        payload=payload,
+        timeout=15.0,
+        trace_id=trace_id,
+    )
 
     ledger_receipt = res.json() if res.status_code == 200 else {"status": "FAILED", "code": res.status_code}
 
@@ -511,10 +545,18 @@ def execute_hero_loop(
     IncidentLifecycleManager.validate_transition("SCOPING", "CONTAINMENT_IN_PROGRESS")
 
     # Step 5: Invalidate rev08 and allocate safe stock LTC-5090
-    httpx.post(f"{PLAN_LEDGER_URL}/api/v1/plans/allocate-safe-stock", json={"tenant_id": tenant_id, "trace_id": trace_id})
+    post_to_plan_ledger(
+        "/api/v1/plans/allocate-safe-stock",
+        payload={"tenant_id": tenant_id, "trace_id": trace_id},
+        trace_id=trace_id,
+    )
 
     # Step 6: Attempt Site 01 containment -> DENIED (DOWNSTREAM_CUSTODY_UNCONFIRMED)
-    res_site01 = httpx.post(f"{PLAN_LEDGER_URL}/api/v1/incidents/site01-containment-attempt", json={"tenant_id": tenant_id}).json()
+    res_site01 = post_to_plan_ledger(
+        "/api/v1/incidents/site01-containment-attempt",
+        payload={"tenant_id": tenant_id},
+        trace_id=trace_id,
+    ).json()
 
     # Step 7: Schedule Cloud Task for Site 01 deadline
     task_res = schedule_site01_deadline_task("INC-RECALL-01")
@@ -701,7 +743,12 @@ def generate_next_day_plan(
 
     # Save to Ledger
     try:
-        httpx.post(f"{PLAN_LEDGER_URL}/api/v1/plans/next-day-plan/save", json={"tenant_id": tenant_id, "next_day_plan": next_day_plan}, timeout=10.0)
+        post_to_plan_ledger(
+            "/api/v1/plans/next-day-plan/save",
+            payload={"tenant_id": tenant_id, "next_day_plan": next_day_plan},
+            timeout=10.0,
+            trace_id=trace_id,
+        )
     except Exception as e:
         print(f"Plan Ledger next-day plan save note: {e}")
 

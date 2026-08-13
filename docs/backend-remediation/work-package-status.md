@@ -6,7 +6,7 @@ Builder verdict authority: none; final acceptance requires a fresh independent a
 
 | Package | Commit | Local tests | Deployed verification | Status | Blocker |
 |---|---|---|---|---|---|
-| WP0 — Baseline and repair map | Pending WP0 record commit | Read-only repository and resource inspection | Audited revisions and current resource state reconfirmed | LOCALLY VERIFIED | None |
+| WP0 — Baseline and repair map | `90dcb4a` | Read-only repository and resource inspection | Audited revisions and current resource state reconfirmed | LOCALLY VERIFIED | None |
 | WP1 — Identity and ledger perimeter | — | — | — | IN PROGRESS | None |
 | WP2 — Deterministic mutation boundary | — | — | — | NOT STARTED | WP1 gate |
 | WP3 — Human approval and KMS | — | — | — | NOT STARTED | WP2 gate |

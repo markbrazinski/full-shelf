@@ -1,9 +1,7 @@
-from fastapi import FastAPI, HTTPException, Query, Header, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Header, Request
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, List
-import json
 import os
-import base64
 from datetime import datetime, timezone
 
 from google.cloud import spanner
@@ -12,6 +10,14 @@ from full_shelf_domain.models import (
     CustodyNode, CustodyEdge, NodeType, PlanStatus, IncidentStatus, PlanDiff
 )
 from full_shelf_domain.kms import verify_kms_approval_envelope
+from full_shelf_domain.identity import (
+    GoogleOidcVerifier,
+    IdentityConfigurationError,
+    InvalidIdentityToken,
+    MissingIdentityToken,
+    UnauthorizedIdentity,
+    VerifiedGoogleIdentity,
+)
 from full_shelf_domain.reconciliation import reconcile_recall_graph
 from full_shelf_domain.spanner import (
     get_spanner_database, seed_initial_spanner_data, get_active_plan_revision
@@ -32,28 +38,40 @@ async def on_startup():
         print(f"Startup Spanner seed note: {e}")
 
 
-def decode_caller_identity(authorization: Optional[str], x_serverless_auth: Optional[str] = None) -> str:
-    """Extracts caller email claim from OIDC identity token payload."""
-    token = None
-    if authorization and authorization.startswith("Bearer "):
-        token = authorization.split("Bearer ")[1]
-    elif x_serverless_auth and x_serverless_auth.startswith("Bearer "):
-        token = x_serverless_auth.split("Bearer ")[1]
+def require_ledger_workload_identity(
+    authorization: Optional[str] = Header(None),
+) -> VerifiedGoogleIdentity:
+    """Authenticate the exact orchestrator workload before ledger route logic.
 
-    if not token:
-        return "unauthenticated-client"
+    Full Shelf sends its workload token in ``Authorization``. Cloud Run's
+    ``X-Serverless-Authorization`` mode strips the signature before forwarding
+    the token to the container, so it cannot satisfy this application-level
+    cryptographic verification boundary.
+    """
 
     try:
-        parts = token.split(".")
-        if len(parts) >= 2:
-            payload_b64 = parts[1] + "=="
-            decoded_json = base64.b64decode(payload_b64).decode("utf-8")
-            payload = json.loads(decoded_json)
-            email = payload.get("email") or payload.get("sub") or "authenticated-oidc-user"
-            return email
-    except Exception:
-        pass
-    return "authenticated-oidc-caller"
+        verifier = GoogleOidcVerifier(
+            audience=os.getenv("PLAN_LEDGER_AUDIENCE", ""),
+            allowed_subjects={os.getenv("ORCHESTRATOR_SERVICE_ACCOUNT_SUBJECT", "")},
+            allowed_emails={os.getenv("ORCHESTRATOR_SERVICE_ACCOUNT_EMAIL", "")},
+        )
+        return verifier.verify_authorization(authorization)
+    except IdentityConfigurationError as exc:
+        raise HTTPException(status_code=503, detail="LEDGER_IDENTITY_BOUNDARY_NOT_CONFIGURED") from exc
+    except MissingIdentityToken as exc:
+        raise HTTPException(
+            status_code=401,
+            detail="GOOGLE_ID_TOKEN_REQUIRED",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
+    except InvalidIdentityToken as exc:
+        raise HTTPException(
+            status_code=401,
+            detail="GOOGLE_ID_TOKEN_INVALID",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
+    except UnauthorizedIdentity as exc:
+        raise HTTPException(status_code=403, detail="GOOGLE_IDENTITY_NOT_ALLOWED") from exc
 
 
 class ExecuteActionRequest(BaseModel):
@@ -87,11 +105,9 @@ def health_check():
 def get_morning_plan_preview(
     request: Request,
     tenant_id: str = Query("east-bay-food-bank"),
-    authorization: Optional[str] = Header(None),
-    x_serverless_authorization: Optional[str] = Header(None)
+    caller: VerifiedGoogleIdentity = Depends(require_ledger_workload_identity),
 ):
     """Returns Morning Plan preview from Spanner database."""
-    caller_email = decode_caller_identity(authorization, x_serverless_authorization)
     active_rev = get_active_plan_revision(tenant_id)
 
     db = get_spanner_database()
@@ -144,11 +160,14 @@ def get_morning_plan_preview(
         "trucks": trucks,
         "deliveries": deliveries,
         "status": "HEALTHY" if active_rev in ["rev07", "rev08"] else "INVALIDATED_RECALL",
-        "authenticated_caller": caller_email,
+        "authenticated_caller": caller.email,
     }
 
 
-@app.post("/api/v1/plans/daily-plan/save")
+@app.post(
+    "/api/v1/plans/daily-plan/save",
+    dependencies=[Depends(require_ledger_workload_identity)],
+)
 def save_daily_plan(req: SaveDailyPlanRequest):
     """Saves daily morning plan rev07 in Spanner."""
     db = get_spanner_database()
@@ -168,7 +187,10 @@ def save_daily_plan(req: SaveDailyPlanRequest):
     return {"status": "DAILY_PLAN_SAVED", "revision": "rev07", "tenant_id": req.tenant_id}
 
 
-@app.post("/api/v1/plans/next-day-plan/save")
+@app.post(
+    "/api/v1/plans/next-day-plan/save",
+    dependencies=[Depends(require_ledger_workload_identity)],
+)
 def save_next_day_plan(req: SaveNextDayPlanRequest):
     """Saves next-day draft plan rev01 in Spanner with status DRAFT_WITH_CONSTRAINTS."""
     db = get_spanner_database()
@@ -197,12 +219,11 @@ def save_next_day_plan(req: SaveNextDayPlanRequest):
 def execute_action(
     req: ExecuteActionRequest,
     request: Request,
-    authorization: Optional[str] = Header(None),
-    x_serverless_authorization: Optional[str] = Header(None),
-    traceparent: Optional[str] = Header(None)
+    caller: VerifiedGoogleIdentity = Depends(require_ledger_workload_identity),
+    traceparent: Optional[str] = Header(None),
 ):
     """Evaluates policies and executes deterministic mutations in Spanner database."""
-    caller_email = decode_caller_identity(authorization, x_serverless_authorization)
+    caller_email = caller.email
 
     extracted_trace_id = None
     if traceparent:
@@ -348,7 +369,10 @@ def execute_action(
     )
 
 
-@app.post("/api/v1/incidents/recall")
+@app.post(
+    "/api/v1/incidents/recall",
+    dependencies=[Depends(require_ledger_workload_identity)],
+)
 def trigger_recall_endpoint(payload: Dict[str, Any]):
     """Triggers recall barrier and reconciliation on plan ledger."""
     db = get_spanner_database()
@@ -378,7 +402,10 @@ def trigger_recall_endpoint(payload: Dict[str, Any]):
     }
 
 
-@app.get("/api/v1/evidence/system")
+@app.get(
+    "/api/v1/evidence/system",
+    dependencies=[Depends(require_ledger_workload_identity)],
+)
 def get_system_evidence():
     return {
         "gcp_project_id": "preflight-hackathon",
@@ -388,7 +415,10 @@ def get_system_evidence():
     }
 
 
-@app.post("/api/v1/incidents/site01-containment-attempt")
+@app.post(
+    "/api/v1/incidents/site01-containment-attempt",
+    dependencies=[Depends(require_ledger_workload_identity)],
+)
 def site01_containment_attempt(payload: Dict[str, Any]):
     """Attempts to mark Site 01 contained before downstream acknowledgment. Returns explicit DENIED."""
     return {
@@ -401,7 +431,10 @@ def site01_containment_attempt(payload: Dict[str, Any]):
     }
 
 
-@app.post("/api/v1/plans/allocate-safe-stock")
+@app.post(
+    "/api/v1/plans/allocate-safe-stock",
+    dependencies=[Depends(require_ledger_workload_identity)],
+)
 def allocate_safe_stock_endpoint(payload: Dict[str, Any]):
     """Allocates LTC-5090 safe stock: 18 cases to Agency 01, 22 cases to Agency 02, leaving Agency 03 short by 20 cases."""
     db = get_spanner_database()
@@ -442,7 +475,10 @@ def allocate_safe_stock_endpoint(payload: Dict[str, Any]):
     }
 
 
-@app.post("/api/v1/incidents/site01-deadline")
+@app.post(
+    "/api/v1/incidents/site01-deadline",
+    dependencies=[Depends(require_ledger_workload_identity)],
+)
 def site01_deadline_callback(payload: Dict[str, Any]):
     """Cloud Tasks deadline callback endpoint."""
     return {
@@ -453,7 +489,10 @@ def site01_deadline_callback(payload: Dict[str, Any]):
     }
 
 
-@app.get("/api/v1/evidence/spanner-reconciliation")
+@app.get(
+    "/api/v1/evidence/spanner-reconciliation",
+    dependencies=[Depends(require_ledger_workload_identity)],
+)
 def spanner_reconciliation_endpoint(tenant_id: str = Query("east-bay-food-bank")):
     db = get_spanner_database()
     active_rev = get_active_plan_revision(tenant_id)
