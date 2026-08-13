@@ -47,7 +47,3 @@ dist/
 .env.local
 *.pem
 *.key
-
-# Local Agent Overrides
-AGENTS.local.md
-GEMINI.local.md

@@ -1,5 +1,6 @@
-# Full Shelf Control Plane
+Read the root `AGENTS.md` completely before acting. `AGENTS.md` is the canonical tool-neutral implementation constitution. If this file conflicts with it, `AGENTS.md` controls.
 
-Full Shelf is a production-minded food-bank fulfillment control plane built for Google's All Things Agentic Hackathon (Fortified Enterprise Fleet track). It repairs ordinary distribution disruptions and later revises its own work when new safety evidence makes a prior plan false.
-
-@./AGENTS.md
+For Gemini or Antigravity sessions, inspect the current work-package record and
+git status before proposing edits. Keep tool-specific scratch plans temporary;
+record durable implementation and evidence decisions in the repository's
+tool-neutral documentation.
