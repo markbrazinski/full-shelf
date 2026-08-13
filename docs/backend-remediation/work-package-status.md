@@ -10,8 +10,8 @@ Builder verdict authority: none; final acceptance requires a fresh independent a
 | WP0.5 — Canonical agent constitution | `3994a87` | Instruction inventory and contradiction review | Not applicable; documentation-only package | STRUCTURALLY_VERIFIED | None |
 | WP1 — Identity and ledger perimeter | `ea462c0`, `833c478`, `4763392` | 28 targeted tests passed | Revisions `orchestrator-00023-frt` / `plan-ledger-00016-x4j`; all acceptance outcomes observed | DEPLOYED OBSERVED | None |
 | WP2 — Deterministic mutation boundary | `22d86f9` | 69 safe tests passed; 87 collected | Revisions `orchestrator-00024-kwm` / `plan-ledger-00017-7mh`; isolated replay and deployed zero-mutation tenant denial observed | DEPLOYED OBSERVED | None; orchestrator URL anomaly carried to end-to-end replay |
-| WP3 — Human approval and KMS | Working tree | 52 focused tests passed | Real operator verified; ledger-only KMS IAM applied | IN PROGRESS | Isolated managed replay and deployment pending |
-| WP4 — Managed Model Armor | — | — | — | NOT STARTED | WP3 gate |
+| WP3 — Human approval and KMS | `3de6e36` | 88 safe tests passed; 88 collected | Revisions `orchestrator-00025-lhf` / `plan-ledger-00018-vpg`; real operator, isolated KMS/Spanner replay, ledger-runtime KMS sign, and deployed zero-mutation denials observed | DEPLOYED OBSERVED | None; successful canonical activation deliberately not used as a test |
+| WP4 — Managed Model Armor | — | — | — | NOT STARTED | None; next package |
 | WP5 — Gemini 3.5 through ADK | — | — | — | NOT STARTED | WP4 gate |
 | WP6 — Scheduler, Pub/Sub, continuity | — | — | — | NOT STARTED | WP5 gate |
 | WP7 — Cloud Tasks escalation | — | — | — | NOT STARTED | WP6 gate |
