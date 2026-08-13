@@ -8,6 +8,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import httpx
 
+from google.api_core.exceptions import PermissionDenied
 from google.cloud import spanner
 from full_shelf_observability import (
     get_tracer,
@@ -280,25 +281,43 @@ def s2s_dispatch(
 
 @app.get("/api/v1/orchestrator/spanner-auth-proof")
 def spanner_auth_proof():
-    """Attempts negative Spanner mutation directly from Orchestrator identity and catches PERMISSION_DENIED."""
+    """Prove the runtime cannot execute DML without risking canonical changes."""
     db = get_spanner_database()
     try:
         def _fail_tx(transaction):
             transaction.execute_update(
-                "INSERT INTO Receipts (tenant_id, receipt_id, action_id, action_type, idempotency_key, status, mutations_applied, trace_id, timestamp) "
-                "VALUES ('east-bay-food-bank', 'RCT-UNAUTH-001', 'ACT-UNAUTH', 'UNAUTHORIZED_MUTATION', 'KEY-UNAUTH', 'FAIL', 0, '00000000000000000000000000000000', PENDING_COMMIT_TIMESTAMP())"
+                "UPDATE PlanRevisions SET status = status "
+                "WHERE tenant_id = @tenant_id AND plan_id = @probe_plan_id",
+                params={
+                    "tenant_id": "__wp1_authorization_probe__",
+                    "probe_plan_id": "__never_matches__",
+                },
+                param_types={
+                    "tenant_id": spanner.param_types.STRING,
+                    "probe_plan_id": spanner.param_types.STRING,
+                },
             )
         db.run_in_transaction(_fail_tx)
-        return {"status": "UNEXPECTED_MUTATION_SUCCESS", "note": "Orchestrator should not have direct Spanner write access."}
-    except Exception as e:
-        err_msg = str(e)
+        return {
+            "status": "AUTHORIZATION_PROOF_FAILED",
+            "result": "DML_WAS_AUTHORIZED",
+            "note": "The probe matched no rows, but the orchestrator must not be permitted to execute DML.",
+        }
+    except PermissionDenied as exc:
         return {
             "status": "NEGATIVE_AUTHORIZATION_PROVED",
             "caller_identity": "full-shelf-orchestrator-sa@preflight-hackathon.iam.gserviceaccount.com",
-            "attempted_operation": "DIRECT_SPANNER_TABLE_INSERT",
+            "attempted_operation": "ZERO_MATCH_DIRECT_SPANNER_DML",
             "result": "DENIED",
-            "exact_error": err_msg,
+            "error_type": type(exc).__name__,
+            "error_code": "PERMISSION_DENIED",
             "proof": "PERMISSION_DENIED caught cleanly as expected under least-privilege architecture."
+        }
+    except Exception as exc:
+        return {
+            "status": "AUTHORIZATION_PROOF_INCONCLUSIVE",
+            "result": "NON_IAM_ERROR",
+            "error_type": type(exc).__name__,
         }
 
 
