@@ -17,11 +17,11 @@ class PlanRevisionStateMachine:
 class IncidentStateMachine:
     VALID_TRANSITIONS = {
         ("TRUCK_BREAKDOWN", IncidentStatus.ACTIVE): [IncidentStatus.RESOLVED],
-        ("FOOD_SAFETY_RECALL", IncidentStatus.ACTIVE): [
-            IncidentStatus.PARTIALLY_CONTAINED,
-            IncidentStatus.CONTAINED,
-        ],
+        ("FOOD_SAFETY_RECALL", IncidentStatus.DETECTED): [IncidentStatus.SCOPING],
+        ("FOOD_SAFETY_RECALL", IncidentStatus.SCOPING): [IncidentStatus.CONTAINMENT_IN_PROGRESS],
+        ("FOOD_SAFETY_RECALL", IncidentStatus.CONTAINMENT_IN_PROGRESS): [IncidentStatus.PARTIALLY_CONTAINED],
         ("FOOD_SAFETY_RECALL", IncidentStatus.PARTIALLY_CONTAINED): [IncidentStatus.CONTAINED],
+        ("FOOD_SAFETY_RECALL", IncidentStatus.CONTAINED): [IncidentStatus.CLOSED],
     }
 
     @classmethod

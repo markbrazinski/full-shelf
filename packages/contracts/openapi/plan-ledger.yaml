@@ -3,7 +3,23 @@ info:
   title: Full Shelf Plan Ledger API
   version: 1.0.0
   description: Deterministic mutation service, policy engine, and Spanner authority for Full Shelf.
+security:
+  - googleOidc: []
 paths:
+  /api/v1/commands/execute:
+    post:
+      summary: Execute an authenticated, validated, idempotent ledger command
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: ../schemas/ledger_command.json
+      responses:
+        '200':
+          description: Stable transactional command receipt and replay metadata
+        '409':
+          description: Deterministic policy or state precondition rejected the command
   /api/v1/plans/preview:
     get:
       summary: Get morning distribution plan preview
@@ -19,6 +35,7 @@ paths:
           description: Plan preview response
   /api/v1/actions/execute:
     post:
+      deprecated: true
       summary: Execute policy-governed operational action
       requestBody:
         required: true
@@ -41,7 +58,8 @@ paths:
           description: Action receipt (SUCCESS or DENIED)
   /api/v1/incidents/recall:
     post:
-      summary: Trigger food safety recall barrier and plan invalidation
+      deprecated: true
+      summary: Legacy recall route; use the command endpoint
       requestBody:
         required: true
         content:
@@ -53,8 +71,8 @@ paths:
                 hazard: { type: string }
                 substitute_lot_id: { type: string }
       responses:
-        '200':
-          description: Recall reconciliation and barrier receipt
+        '410':
+          description: Complete deterministic command envelope required
   /api/v1/evidence/system:
     get:
       summary: Get System Evidence report for auditability
@@ -67,3 +85,9 @@ paths:
       responses:
         '200':
           description: System Evidence drawer report
+components:
+  securitySchemes:
+    googleOidc:
+      type: http
+      scheme: bearer
+      bearerFormat: Google-signed OIDC ID token

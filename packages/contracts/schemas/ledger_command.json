@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "FullShelfLedgerCommand",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "command_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "idempotency_key": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "tenant_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "incident_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "agent_role": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "command_type": {
+      "type": "string",
+      "enum": [
+        "SAVE_PLAN_REVISION",
+        "APPLY_REPAIR_PLAN",
+        "INVALIDATE_PLAN",
+        "ALLOCATE_SAFE_STOCK",
+        "PERSIST_COORDINATOR",
+        "OPEN_RECALL_INCIDENT",
+        "RECORD_ACKNOWLEDGMENT_HOLD",
+        "SET_INCIDENT_STATUS",
+        "ACTIVATE_MOVEMENT_BARRIER",
+        "RECORD_REFUSAL"
+      ]
+    },
+    "expected_plan_revision": { "type": ["string", "null"], "maxLength": 32 },
+    "trace_id": { "type": "string", "minLength": 16, "maxLength": 128 },
+    "payload": { "type": "object" }
+  },
+  "required": [
+    "command_id",
+    "idempotency_key",
+    "tenant_id",
+    "incident_id",
+    "agent_role",
+    "command_type",
+    "trace_id",
+    "payload"
+  ]
+}

@@ -2,6 +2,7 @@ import importlib.util
 import os
 
 import pytest
+from fastapi import HTTPException
 
 from full_shelf_domain.identity import IdentityConfigurationError
 
@@ -17,6 +18,22 @@ class FakeResponse:
 
     def raise_for_status(self):
         return None
+
+
+class FakeCommandResponse(FakeResponse):
+    def __init__(self, status):
+        self._status = status
+
+    def json(self):
+        return {
+            "receipt": {
+                "receipt_id": "RCT-ALT-DENIAL",
+                "status": self._status,
+                "message": "altered deterministic refusal",
+            },
+            "idempotent_replay": False,
+            "additional_mutations": 0,
+        }
 
 
 def test_ledger_call_requires_explicit_url_and_audience(monkeypatch):
@@ -56,3 +73,55 @@ def test_ledger_call_mints_exact_audience_token_and_uses_authorization(monkeypat
     assert observed["headers"]["Authorization"] == "Bearer google-signed-token"
     assert "X-Serverless-Authorization" not in observed["headers"]
     assert observed["headers"]["X-Full-Shelf-Trace-Id"] == "trace-123"
+
+
+def test_denied_mutation_command_stops_orchestrator_processing(monkeypatch):
+    monkeypatch.setattr(
+        orchestrator_main,
+        "post_to_plan_ledger",
+        lambda *args, **kwargs: FakeCommandResponse("DENIED"),
+    )
+    with pytest.raises(HTTPException) as exc:
+        orchestrator_main.execute_ledger_command(
+            command_id="CMD-ALT-DENIED",
+            idempotency_key="alt:denied",
+            tenant_id="audit-tenant",
+            incident_id="INC-ALT",
+            agent_role="INCIDENT_COORDINATOR",
+            command_type="SET_INCIDENT_STATUS",
+            expected_plan_revision="rev42",
+            trace_id="0123456789abcdef0123456789abcdef",
+            payload={
+                "incident_id": "INC-ALT",
+                "expected_status": "DETECTED",
+                "new_status": "SCOPING",
+                "terminal_state": "NONE",
+            },
+        )
+    assert exc.value.status_code == 409
+
+
+def test_explicit_refusal_command_can_return_denial_receipt(monkeypatch):
+    monkeypatch.setattr(
+        orchestrator_main,
+        "post_to_plan_ledger",
+        lambda *args, **kwargs: FakeCommandResponse("DENIED"),
+    )
+    result = orchestrator_main.execute_ledger_command(
+        command_id="CMD-ALT-REFUSAL",
+        idempotency_key="alt:refusal",
+        tenant_id="audit-tenant",
+        incident_id="INC-ALT",
+        agent_role="INCIDENT_COORDINATOR",
+        command_type="RECORD_REFUSAL",
+        expected_plan_revision="rev42",
+        trace_id="0123456789abcdef0123456789abcdef",
+        payload={
+            "incident_id": "INC-ALT",
+            "subject_id": "SITE-ALT",
+            "reason": "ALTERED_UNCONFIRMED",
+            "affected_cases": 2,
+        },
+        allow_denied=True,
+    )
+    assert result["receipt"]["status"] == "DENIED"

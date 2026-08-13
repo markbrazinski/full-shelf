@@ -6,6 +6,17 @@ CREATE TABLE Tenants (
   created_at TIMESTAMP NOT NULL OPTIONS (allow_commit_timestamp=true)
 ) PRIMARY KEY (tenant_id);
 
+CREATE TABLE Coordinators (
+  tenant_id STRING(64) NOT NULL,
+  coordinator_id STRING(64) NOT NULL,
+  state STRING(64) NOT NULL,
+  checkpoint STRING(64) NOT NULL,
+  active_plan_revision STRING(32) NOT NULL,
+  child_incidents STRING(MAX),
+  updated_at TIMESTAMP NOT NULL OPTIONS (allow_commit_timestamp=true)
+) PRIMARY KEY (tenant_id, coordinator_id),
+  INTERLEAVE IN PARENT Tenants ON DELETE CASCADE;
+
 CREATE TABLE Lots (
   lot_id STRING(64) NOT NULL,
   tenant_id STRING(64) NOT NULL,
@@ -58,7 +69,9 @@ CREATE TABLE Incidents (
   status STRING(64) NOT NULL,
   affected_lot_id STRING(64),
   created_at TIMESTAMP NOT NULL OPTIONS (allow_commit_timestamp=true),
-  resolved_at TIMESTAMP
+  resolved_at TIMESTAMP,
+  details STRING(MAX),
+  terminal_state STRING(64)
 ) PRIMARY KEY (tenant_id, incident_id),
   INTERLEAVE IN PARENT Tenants ON DELETE CASCADE;
 
@@ -72,9 +85,75 @@ CREATE TABLE Receipts (
   mutations_applied INT64 NOT NULL,
   message STRING(MAX) NOT NULL,
   trace_id STRING(128) NOT NULL,
+  idempotency_key STRING(128),
+  caller_subject STRING(128),
+  caller_email STRING(320),
+  agent_role STRING(64),
   timestamp TIMESTAMP NOT NULL OPTIONS (allow_commit_timestamp=true)
 ) PRIMARY KEY (tenant_id, receipt_id),
   INTERLEAVE IN PARENT Tenants ON DELETE CASCADE;
+
+CREATE UNIQUE NULL_FILTERED INDEX ReceiptsByIdempotencyKey
+ON Receipts(tenant_id, idempotency_key);
+
+CREATE TABLE MovementBarriers (
+  tenant_id STRING(64) NOT NULL,
+  barrier_id STRING(64) NOT NULL,
+  incident_id STRING(64) NOT NULL,
+  lot_id STRING(64) NOT NULL,
+  status STRING(32) NOT NULL,
+  reason STRING(MAX) NOT NULL,
+  created_at TIMESTAMP NOT NULL OPTIONS (allow_commit_timestamp=true),
+  released_at TIMESTAMP
+) PRIMARY KEY (tenant_id, barrier_id),
+  INTERLEAVE IN PARENT Tenants ON DELETE CASCADE;
+
+CREATE INDEX ActiveMovementBarriersByLot
+ON MovementBarriers(tenant_id, lot_id, status);
+
+CREATE TABLE RecoveryAllocations (
+  tenant_id STRING(64) NOT NULL,
+  allocation_id STRING(64) NOT NULL,
+  incident_id STRING(64) NOT NULL,
+  agency_id STRING(64) NOT NULL,
+  lot_id STRING(64) NOT NULL,
+  cases INT64 NOT NULL,
+  status STRING(32) NOT NULL,
+  created_at TIMESTAMP NOT NULL OPTIONS (allow_commit_timestamp=true)
+) PRIMARY KEY (tenant_id, allocation_id),
+  INTERLEAVE IN PARENT Tenants ON DELETE CASCADE;
+
+CREATE INDEX RecoveryAllocationsByIncident
+ON RecoveryAllocations(tenant_id, incident_id, status);
+
+CREATE TABLE RecoveryShortfalls (
+  tenant_id STRING(64) NOT NULL,
+  shortfall_id STRING(64) NOT NULL,
+  incident_id STRING(64) NOT NULL,
+  agency_id STRING(64) NOT NULL,
+  cases INT64 NOT NULL,
+  status STRING(32) NOT NULL,
+  created_at TIMESTAMP NOT NULL OPTIONS (allow_commit_timestamp=true)
+) PRIMARY KEY (tenant_id, shortfall_id),
+  INTERLEAVE IN PARENT Tenants ON DELETE CASCADE;
+
+CREATE INDEX RecoveryShortfallsByIncident
+ON RecoveryShortfalls(tenant_id, incident_id, status);
+
+CREATE TABLE WorkItems (
+  tenant_id STRING(64) NOT NULL,
+  work_item_id STRING(64) NOT NULL,
+  incident_id STRING(64) NOT NULL,
+  work_type STRING(64) NOT NULL,
+  status STRING(32) NOT NULL,
+  details STRING(MAX),
+  created_at TIMESTAMP NOT NULL OPTIONS (allow_commit_timestamp=true),
+  completed_at TIMESTAMP
+) PRIMARY KEY (tenant_id, work_item_id),
+  INTERLEAVE IN PARENT Tenants ON DELETE CASCADE;
+
+CREATE INDEX WorkItemsByIncident
+ON WorkItems(tenant_id, incident_id, status);
 
 CREATE TABLE CustodyNodes (
   tenant_id STRING(64) NOT NULL,
@@ -112,4 +191,3 @@ CREATE OR REPLACE PROPERTY GRAPH CustodyGraph
       LABEL TRANSFERRED_TO
       PROPERTIES (tenant_id, edge_id, lot_id, case_count, is_sub_distribution)
   );
-

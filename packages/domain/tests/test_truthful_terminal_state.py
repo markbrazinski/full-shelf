@@ -1,4 +1,3 @@
-import pytest
 from full_shelf_domain.models import Incident, IncidentStatus
 from full_shelf_domain.state_machines import IncidentStateMachine
 
@@ -13,21 +12,24 @@ def test_truthful_unresolved_terminal_state():
         parent_coordinator_id="day-coord-2026-08-07",
         tenant_id="east-bay-food-bank",
         incident_type="FOOD_SAFETY_RECALL",
-        status=IncidentStatus.ACTIVE,
+        status=IncidentStatus.DETECTED,
         affected_lot_id="LTC-4471",
         created_at="2026-08-07T09:35:00Z",
     )
 
-    # Initial state is ACTIVE
-    assert recall_incident.status == IncidentStatus.ACTIVE
+    assert recall_incident.status == IncidentStatus.DETECTED
 
-    # Transition to PARTIALLY_CONTAINED is allowed
-    can_partial = IncidentStateMachine.can_transition(
-        recall_incident.incident_type,
-        recall_incident.status,
+    for next_status in (
+        IncidentStatus.SCOPING,
+        IncidentStatus.CONTAINMENT_IN_PROGRESS,
         IncidentStatus.PARTIALLY_CONTAINED,
-    )
-    assert can_partial is True
+    ):
+        assert IncidentStateMachine.can_transition(
+            recall_incident.incident_type,
+            recall_incident.status,
+            next_status,
+        )
+        recall_incident.status = next_status
 
     # Attempting premature transition directly to RESOLVED without containment is invalid
     can_resolve = IncidentStateMachine.can_transition(
@@ -37,6 +39,4 @@ def test_truthful_unresolved_terminal_state():
     )
     assert can_resolve is False
 
-    # Set status to PARTIALLY_CONTAINED
-    recall_incident.status = IncidentStatus.PARTIALLY_CONTAINED
     assert recall_incident.status == IncidentStatus.PARTIALLY_CONTAINED

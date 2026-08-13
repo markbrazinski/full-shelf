@@ -8,7 +8,6 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import httpx
 
-from google.api_core.exceptions import PermissionDenied
 from google.cloud import spanner
 from full_shelf_observability import (
     get_tracer,
@@ -74,6 +73,49 @@ def post_to_plan_ledger(
     return response
 
 
+def execute_ledger_command(
+    *,
+    command_id: str,
+    idempotency_key: str,
+    tenant_id: str,
+    incident_id: str,
+    agent_role: str,
+    command_type: str,
+    trace_id: str,
+    payload: Dict[str, Any],
+    expected_plan_revision: Optional[str] = None,
+    allow_denied: bool = False,
+) -> Dict[str, Any]:
+    response = post_to_plan_ledger(
+        "/api/v1/commands/execute",
+        payload={
+            "command_id": command_id,
+            "idempotency_key": idempotency_key,
+            "tenant_id": tenant_id,
+            "incident_id": incident_id,
+            "agent_role": agent_role,
+            "command_type": command_type,
+            "expected_plan_revision": expected_plan_revision,
+            "trace_id": trace_id,
+            "payload": payload,
+        },
+        trace_id=trace_id,
+    )
+    result = response.json()
+    receipt = result.get("receipt") or {}
+    if receipt.get("status") != "SUCCESS" and not allow_denied:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "LEDGER_COMMAND_NOT_COMMITTED",
+                "receipt_id": receipt.get("receipt_id"),
+                "status": receipt.get("status"),
+                "message": receipt.get("message"),
+            },
+        )
+    return result
+
+
 def get_spanner_database():
     spanner_client = spanner.Client(project=PROJECT_ID)
     instance = spanner_client.instance(SPANNER_INSTANCE)
@@ -97,6 +139,8 @@ def get_judge_api_key() -> str:
 
 def verify_judge_key(x_api_key: Optional[str] = Header(None, alias="X-Full-Shelf-API-Key")):
     expected_key = get_judge_api_key()
+    if not expected_key:
+        raise HTTPException(status_code=503, detail="JUDGE_AUTHENTICATION_NOT_CONFIGURED")
     if expected_key and x_api_key != expected_key:
         raise HTTPException(
             status_code=401,
@@ -183,31 +227,33 @@ def generate_daily_morning_plan(
         ]
     }
 
-    if existing_rev:
-        return {
-            "status": "DAILY_PLAN_EXISTS_IDEMPOTENT",
-            "revision": "rev07",
-            "plan_details": plan_details,
-            "idempotent_replay": True,
-            "trace_id": trace_id
-        }
-
-    # Save to Ledger
+    # Commit or reconcile the existing revision through the ledger so every
+    # accepted planning trigger has a stable transactional receipt.
     try:
-        post_to_plan_ledger(
-            "/api/v1/plans/daily-plan/save",
-            payload={"tenant_id": tenant_id, "plan_details": plan_details},
-            timeout=10.0,
+        ledger_result = execute_ledger_command(
+            command_id="CMD-DAILY-PLAN-2026-08-07-REV07",
+            idempotency_key=f"{tenant_id}:PLAN-2026-08-07:rev07:create",
+            tenant_id=tenant_id,
+            incident_id="INC-DAILY-PLAN-2026-08-07",
+            agent_role="FULFILLMENT_RECOVERY_PLANNER",
+            command_type="SAVE_PLAN_REVISION",
+            expected_plan_revision="rev07",
             trace_id=trace_id,
+            payload={
+                "plan_id": "PLAN-2026-08-07",
+                "revision": "rev07",
+                "status": "ACTIVE",
+            },
         )
-    except Exception as e:
-        print(f"Plan Ledger daily plan save note: {e}")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="PLAN_LEDGER_DAILY_PLAN_COMMIT_FAILED") from exc
 
     return {
-        "status": "DAILY_PLAN_GENERATED_REV07",
+        "status": "DAILY_PLAN_EXISTS_IDEMPOTENT" if existing_rev else "DAILY_PLAN_GENERATED_REV07",
         "revision": "rev07",
         "plan_details": plan_details,
-        "idempotent_replay": False,
+        "idempotent_replay": ledger_result["idempotent_replay"],
+        "ledger_receipt": ledger_result["receipt"],
         "trace_id": trace_id
     }
 
@@ -246,7 +292,7 @@ def s2s_dispatch(
     payload = {
         "action_id": "ACT-REV08-LIVE-001",
         "tenant_id": "east-bay-food-bank",
-        "agent_role": "LOGISTICS_DISPATCH_AGENT",
+        "agent_role": "FULFILLMENT_RECOVERY_PLANNER",
         "action_type": "APPLY_REPAIR_PLAN_REV08",
         "plan_id": "PLAN-2026-08-07",
         "expected_revision": "rev07",
@@ -279,48 +325,6 @@ def s2s_dispatch(
     }
 
 
-@app.get("/api/v1/orchestrator/spanner-auth-proof")
-def spanner_auth_proof():
-    """Prove the runtime cannot execute DML without risking canonical changes."""
-    db = get_spanner_database()
-    try:
-        def _fail_tx(transaction):
-            transaction.execute_update(
-                "UPDATE PlanRevisions SET status = status "
-                "WHERE tenant_id = @tenant_id AND plan_id = @probe_plan_id",
-                params={
-                    "tenant_id": "__wp1_authorization_probe__",
-                    "probe_plan_id": "__never_matches__",
-                },
-                param_types={
-                    "tenant_id": spanner.param_types.STRING,
-                    "probe_plan_id": spanner.param_types.STRING,
-                },
-            )
-        db.run_in_transaction(_fail_tx)
-        return {
-            "status": "AUTHORIZATION_PROOF_FAILED",
-            "result": "DML_WAS_AUTHORIZED",
-            "note": "The probe matched no rows, but the orchestrator must not be permitted to execute DML.",
-        }
-    except PermissionDenied as exc:
-        return {
-            "status": "NEGATIVE_AUTHORIZATION_PROVED",
-            "caller_identity": "full-shelf-orchestrator-sa@preflight-hackathon.iam.gserviceaccount.com",
-            "attempted_operation": "ZERO_MATCH_DIRECT_SPANNER_DML",
-            "result": "DENIED",
-            "error_type": type(exc).__name__,
-            "error_code": "PERMISSION_DENIED",
-            "proof": "PERMISSION_DENIED caught cleanly as expected under least-privilege architecture."
-        }
-    except Exception as exc:
-        return {
-            "status": "AUTHORIZATION_PROOF_INCONCLUSIVE",
-            "result": "NON_IAM_ERROR",
-            "error_type": type(exc).__name__,
-        }
-
-
 # -------------------------------------------------------------------
 # GATE D — DURABLE WAIT & PUB/SUB RESUME
 # -------------------------------------------------------------------
@@ -328,29 +332,29 @@ def spanner_auth_proof():
 @app.post("/api/v1/orchestrator/coordinator/persist-waiting")
 def persist_coordinator_waiting(tenant_id: str = "east-bay-food-bank"):
     """Persists day coordinator in WAITING_FOR_EVENTS state in Spanner after rev08."""
-    db = get_spanner_database()
     now = datetime.now(timezone.utc)
+    trace_id = generate_trace_id()
     coord_id = "COORD-2026-0807"
     checkpoint = "CHK-REV08-WAIT"
     active_rev = "rev08"
 
-    def _tx(transaction):
-        transaction.execute_update(
-            "INSERT OR UPDATE INTO Coordinators (tenant_id, coordinator_id, state, checkpoint, active_plan_revision, child_incidents, updated_at) "
-            "VALUES (@t, @cid, 'WAITING_FOR_EVENTS', @chk, @rev, '[]', PENDING_COMMIT_TIMESTAMP())",
-            params={"t": tenant_id, "cid": coord_id, "chk": checkpoint, "rev": active_rev},
-            param_types={
-                "t": spanner.param_types.STRING,
-                "cid": spanner.param_types.STRING,
-                "chk": spanner.param_types.STRING,
-                "rev": spanner.param_types.STRING,
-            }
-        )
-
-    try:
-        db.run_in_transaction(_tx)
-    except Exception as e:
-        print(f"Spanner coordinator write note (least privilege SA): {e}")
+    ledger_result = execute_ledger_command(
+        command_id=f"CMD-{coord_id}-WAITING",
+        idempotency_key=f"{tenant_id}:{coord_id}:waiting:{checkpoint}",
+        tenant_id=tenant_id,
+        incident_id="INC-TRUCK-01",
+        agent_role="INCIDENT_COORDINATOR",
+        command_type="PERSIST_COORDINATOR",
+        expected_plan_revision=active_rev,
+        trace_id=trace_id,
+        payload={
+            "coordinator_id": coord_id,
+            "state": "WAITING_FOR_EVENTS",
+            "checkpoint": checkpoint,
+            "active_plan_revision": active_rev,
+            "child_incident_ids": ["INC-TRUCK-01"],
+        },
+    )
 
     return {
         "status": "COORDINATOR_PERSISTED",
@@ -358,7 +362,8 @@ def persist_coordinator_waiting(tenant_id: str = "east-bay-food-bank"):
         "state": "WAITING_FOR_EVENTS",
         "checkpoint": checkpoint,
         "active_plan_revision": active_rev,
-        "updated_at": now.isoformat()
+        "updated_at": now.isoformat(),
+        "ledger_receipt": ledger_result["receipt"],
     }
 
 
@@ -378,21 +383,26 @@ def handle_site01_deadline_callback(
     site_id = (payload or {}).get("site_id", "SITE-01")
     tenant_id = (payload or {}).get("tenant_id", "east-bay-food-bank")
 
-    db = get_spanner_database()
     now = datetime.now(timezone.utc).isoformat()
-
-    def _tx(transaction):
-        transaction.execute_update(
-            "INSERT OR UPDATE INTO Incidents (tenant_id, incident_id, parent_coordinator_id, incident_type, status, affected_lot_id, details, terminal_state, created_at) "
-            "VALUES (@t, @iid, 'COORD-2026-0807', 'DEADLINE_HOLD', 'ACKNOWLEDGMENT_HOLD_ACTIVE', 'LTC-4471', @det, 'PARTIALLY_CONTAINED', PENDING_COMMIT_TIMESTAMP())",
-            params={"t": tenant_id, "iid": f"{incident_id}-HOLD-SITE01", "det": json.dumps({"site_id": site_id, "unconfirmed_cases": 8, "task_name": task_name})},
-            param_types={"t": spanner.param_types.STRING, "iid": spanner.param_types.STRING, "det": spanner.param_types.STRING}
-        )
-
-    try:
-        db.run_in_transaction(_tx)
-    except Exception as e:
-        print(f"Spanner deadline hold transaction note: {e}")
+    trace_id = generate_trace_id()
+    ledger_result = execute_ledger_command(
+        command_id=f"CMD-{incident_id}-SITE01-HOLD",
+        idempotency_key=task_name or f"{tenant_id}:{incident_id}:site01-hold",
+        tenant_id=tenant_id,
+        incident_id=incident_id,
+        agent_role="PARTNER_OPERATIONS_AGENT",
+        command_type="RECORD_ACKNOWLEDGMENT_HOLD",
+        trace_id=trace_id,
+        payload={
+            "incident_id": incident_id,
+            "hold_incident_id": f"{incident_id}-HOLD-SITE01",
+            "coordinator_id": "COORD-2026-0807",
+            "lot_id": "LTC-4471",
+            "site_id": site_id,
+            "affected_cases": 8,
+            "task_name": task_name or "UNVERIFIED_DIRECT_CALLBACK",
+        },
+    )
 
     return {
         "status": "DEADLINE_ACK_HOLD_PERSISTED",
@@ -400,7 +410,8 @@ def handle_site01_deadline_callback(
         "incident_id": incident_id,
         "unconfirmed_cases": 8,
         "authenticated_task": task_name is not None or authorization is not None,
-        "timestamp": now
+        "timestamp": now,
+        "ledger_receipt": ledger_result["receipt"],
     }
 
 
@@ -417,13 +428,8 @@ def handle_pubsub_push(payload: Dict[str, Any]):
     try:
         raw_str = base64.b64decode(data_b64).decode("utf-8")
         event_data = json.loads(raw_str)
-    except Exception:
-        event_data = {
-            "lot_id": "LTC-4471",
-            "hazard": "E. coli O157:H7",
-            "action_required": "PAUSE_DISPATCH_AND_QUARANTINE",
-            "source_anchor": "FDA Enforcement Report #2026-0807-L4"
-        }
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="INVALID_PUBSUB_EVENT_DATA") from exc
 
     event_type = event_data.get("event_type", "") or message.get("attributes", {}).get("event_type", "")
 
@@ -448,8 +454,8 @@ def handle_pubsub_push(payload: Dict[str, Any]):
         }
 
     coord_id = "COORD-2026-0807"
-    coord_state = "WAITING_FOR_EVENTS"
-    active_rev = "rev08"
+    coord_state = None
+    active_rev = None
 
     try:
         with db.snapshot() as snapshot:
@@ -460,8 +466,10 @@ def handle_pubsub_push(payload: Dict[str, Any]):
             )
             for row in results:
                 coord_state, chk, active_rev = row[0], row[1], row[2]
-    except Exception as e:
-        print(f"Spanner coordinator read note: {e}")
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="AUTHORITATIVE_COORDINATOR_READ_UNAVAILABLE") from exc
+    if coord_state is None or active_rev is None:
+        raise HTTPException(status_code=409, detail="WAITING_COORDINATOR_NOT_FOUND")
 
     incident_exists = False
     try:
@@ -471,26 +479,28 @@ def handle_pubsub_push(payload: Dict[str, Any]):
             )
             for row in res:
                 incident_exists = True
-    except Exception as e:
-        print(f"Spanner incident read note: {e}")
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="AUTHORITATIVE_INCIDENT_READ_UNAVAILABLE") from exc
 
     if not incident_exists:
-        def _tx(transaction):
-            transaction.execute_update(
-                "INSERT OR UPDATE INTO Incidents (tenant_id, incident_id, parent_coordinator_id, incident_type, status, affected_lot_id, details, terminal_state, created_at) "
-                "VALUES ('east-bay-food-bank', 'INC-RECALL-01', @cid, 'FOOD_SAFETY_RECALL', 'DETECTED', 'LTC-4471', @det, 'NONE', PENDING_COMMIT_TIMESTAMP())",
-                params={"cid": coord_id, "det": json.dumps(event_data)},
-                param_types={"cid": spanner.param_types.STRING, "det": spanner.param_types.STRING}
-            )
-            transaction.execute_update(
-                "UPDATE Coordinators SET state = 'RECALL_WOKEN_DETECTED', child_incidents = '[\"INC-RECALL-01\"]' WHERE tenant_id = 'east-bay-food-bank' AND coordinator_id = @cid",
-                params={"cid": coord_id},
-                param_types={"cid": spanner.param_types.STRING}
-            )
-        try:
-            db.run_in_transaction(_tx)
-        except Exception as e:
-            print(f"Spanner pubsub write note (least privilege SA): {e}")
+        ledger_result = execute_ledger_command(
+            command_id=f"CMD-PUBSUB-{message_id}",
+            idempotency_key=f"pubsub:{message_id}:open-recall",
+            tenant_id="east-bay-food-bank",
+            incident_id="INC-RECALL-01",
+            agent_role="INCIDENT_COORDINATOR",
+            command_type="OPEN_RECALL_INCIDENT",
+            expected_plan_revision=active_rev,
+            trace_id=trace_id,
+            payload={
+                "incident_id": "INC-RECALL-01",
+                "coordinator_id": coord_id,
+                "lot_id": event_data.get("lot_id", "LTC-4471"),
+                "details": event_data,
+            },
+        )
+    else:
+        ledger_result = None
 
     return {
         "status": "PUB_SUB_WAKE_RESUMED",
@@ -505,6 +515,7 @@ def handle_pubsub_push(payload: Dict[str, Any]):
             "affected_lot_id": "LTC-4471"
         },
         "idempotent_redelivery": incident_exists,
+        "ledger_receipt": ledger_result["receipt"] if ledger_result else None,
         "trace_id": trace_id
     }
 
@@ -539,6 +550,22 @@ def execute_hero_loop(
 
     # Step 3: Lifecycle -> SCOPING & Spanner Graph Custody Traversal
     IncidentLifecycleManager.validate_transition("DETECTED", "SCOPING")
+    scoping_result = execute_ledger_command(
+        command_id="CMD-RECALL-SCOPING",
+        idempotency_key=f"{tenant_id}:INC-RECALL-01:status:SCOPING",
+        tenant_id=tenant_id,
+        incident_id="INC-RECALL-01",
+        agent_role="INCIDENT_COORDINATOR",
+        command_type="SET_INCIDENT_STATUS",
+        expected_plan_revision="rev08",
+        trace_id=trace_id,
+        payload={
+            "incident_id": "INC-RECALL-01",
+            "expected_status": "DETECTED",
+            "new_status": "SCOPING",
+            "terminal_state": "NONE",
+        },
+    )
 
     graph_nodes = []
     unique_cases_total = 0
@@ -550,32 +577,122 @@ def execute_hero_loop(
                 src, t_type, tgt, cases = row[0], row[1], row[2], row[3]
                 graph_nodes.append({"source": src, "transfer_type": t_type, "target": tgt, "cases": cases})
                 unique_cases_total += cases
-    except Exception as ex:
-        print(f"Graph edge query note: {ex}")
-        with db.snapshot() as snapshot:
-            gql_nodes = "GRAPH CustodyGraph MATCH (n:Node) RETURN n.node_id AS id, n.node_type AS type, n.name AS name, n.on_hand_cases AS cases"
-            results = snapshot.execute_sql(gql_nodes)
-            for row in results:
-                n_id, n_type, n_name, n_cases = row[0], row[1], row[2], row[3]
-                graph_nodes.append({"node_id": n_id, "type": n_type, "name": n_name, "cases": n_cases})
-                unique_cases_total += n_cases
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="AUTHORITATIVE_GRAPH_READ_UNAVAILABLE") from exc
 
     # Step 4: Movement Barrier & Lifecycle -> CONTAINMENT_IN_PROGRESS
     IncidentLifecycleManager.validate_transition("SCOPING", "CONTAINMENT_IN_PROGRESS")
-
-    # Step 5: Invalidate rev08 and allocate safe stock LTC-5090
-    post_to_plan_ledger(
-        "/api/v1/plans/allocate-safe-stock",
-        payload={"tenant_id": tenant_id, "trace_id": trace_id},
+    barrier_result = execute_ledger_command(
+        command_id="CMD-BARRIER-LTC-4471",
+        idempotency_key=f"{tenant_id}:LTC-4471:movement-barrier:active",
+        tenant_id=tenant_id,
+        incident_id="INC-RECALL-01",
+        agent_role="INCIDENT_COORDINATOR",
+        command_type="ACTIVATE_MOVEMENT_BARRIER",
+        expected_plan_revision="rev08",
         trace_id=trace_id,
+        payload={
+            "barrier_id": "BARRIER-LTC-4471",
+            "incident_id": "INC-RECALL-01",
+            "lot_id": "LTC-4471",
+            "reason": "FOOD_SAFETY_RECALL",
+            "work_item_id": "WORK-RECALL-LTC-4471-ROOT",
+        },
+    )
+    containment_progress_result = execute_ledger_command(
+        command_id="CMD-RECALL-CONTAINMENT-IN-PROGRESS",
+        idempotency_key=f"{tenant_id}:INC-RECALL-01:status:CONTAINMENT_IN_PROGRESS",
+        tenant_id=tenant_id,
+        incident_id="INC-RECALL-01",
+        agent_role="INCIDENT_COORDINATOR",
+        command_type="SET_INCIDENT_STATUS",
+        expected_plan_revision="rev08",
+        trace_id=trace_id,
+        payload={
+            "incident_id": "INC-RECALL-01",
+            "expected_status": "SCOPING",
+            "new_status": "CONTAINMENT_IN_PROGRESS",
+            "terminal_state": "NONE",
+        },
+    )
+
+    # Step 5: Invalidate rev08 and record safe recovery through commands.
+    invalidation_result = execute_ledger_command(
+        command_id="CMD-INVALIDATE-REV08-RECALL",
+        idempotency_key=f"{tenant_id}:PLAN-2026-08-07:rev08:recall-invalidation",
+        tenant_id=tenant_id,
+        incident_id="INC-RECALL-01",
+        agent_role="INCIDENT_COORDINATOR",
+        command_type="INVALIDATE_PLAN",
+        expected_plan_revision="rev08",
+        trace_id=trace_id,
+        payload={
+            "plan_id": "PLAN-2026-08-07",
+            "revision": "rev08",
+            "reason": "LTC-4471_RECALL",
+        },
+    )
+    allocation_result = execute_ledger_command(
+        command_id="CMD-ALLOCATE-LTC-5090-RECOVERY",
+        idempotency_key=f"{tenant_id}:INC-RECALL-01:LTC-5090:recovery",
+        tenant_id=tenant_id,
+        incident_id="INC-RECALL-01",
+        agent_role="FULFILLMENT_RECOVERY_PLANNER",
+        command_type="ALLOCATE_SAFE_STOCK",
+        expected_plan_revision="rev08",
+        trace_id=trace_id,
+        payload={
+            "incident_id": "INC-RECALL-01",
+            "allocations": [
+                {
+                    "allocation_id": "ALLOC-INC-RECALL-01-AG01",
+                    "agency_id": "AG01",
+                    "lot_id": "LTC-5090",
+                    "cases": 18,
+                },
+                {
+                    "allocation_id": "ALLOC-INC-RECALL-01-AG02",
+                    "agency_id": "AG02",
+                    "lot_id": "LTC-5090",
+                    "cases": 22,
+                },
+            ],
+            "shortfalls": [
+                {
+                    "shortfall_id": "SHORT-INC-RECALL-01-AG03",
+                    "agency_id": "AG03",
+                    "cases": 20,
+                }
+            ],
+        },
     )
 
     # Step 6: Attempt Site 01 containment -> DENIED (DOWNSTREAM_CUSTODY_UNCONFIRMED)
-    res_site01 = post_to_plan_ledger(
-        "/api/v1/incidents/site01-containment-attempt",
-        payload={"tenant_id": tenant_id},
+    refusal_result = execute_ledger_command(
+        command_id="CMD-REFUSE-SITE01-CONTAINMENT",
+        idempotency_key=f"{tenant_id}:INC-RECALL-01:SITE-01:containment-refusal",
+        tenant_id=tenant_id,
+        incident_id="INC-RECALL-01",
+        agent_role="INCIDENT_COORDINATOR",
+        command_type="RECORD_REFUSAL",
+        expected_plan_revision="rev08",
         trace_id=trace_id,
-    ).json()
+        allow_denied=True,
+        payload={
+            "incident_id": "INC-RECALL-01",
+            "subject_id": "SITE-01",
+            "reason": "DOWNSTREAM_CUSTODY_UNCONFIRMED",
+            "unconfirmed_cases": 8,
+        },
+    )
+    res_site01 = {
+        "status": refusal_result["receipt"]["status"],
+        "mutations_applied": refusal_result["receipt"]["mutations_applied"],
+        "reason": "DOWNSTREAM_CUSTODY_UNCONFIRMED",
+        "site_id": "SITE-01",
+        "unconfirmed_cases": 8,
+        "receipt": refusal_result["receipt"],
+    }
 
     # Step 7: Schedule Cloud Task for Site 01 deadline
     task_res = schedule_site01_deadline_task("INC-RECALL-01")
@@ -585,17 +702,24 @@ def execute_hero_loop(
 
     terminal_state = "PARTIALLY_CONTAINED"
 
-    # Step 9: Update Spanner incident record
-    def _tx(transaction):
-        transaction.execute_update(
-            "UPDATE Incidents SET status = 'PARTIALLY_CONTAINED', terminal_state = @ts WHERE tenant_id = @t AND incident_id = 'INC-RECALL-01'",
-            params={"t": tenant_id, "ts": terminal_state},
-            param_types={"t": spanner.param_types.STRING, "ts": spanner.param_types.STRING}
-        )
-    try:
-        db.run_in_transaction(_tx)
-    except Exception as e:
-        print(f"Spanner incident terminal update note: {e}")
+    # Step 9: Commit the honest terminal state through the deterministic ledger.
+    terminal_result = execute_ledger_command(
+        command_id="CMD-RECALL-PARTIALLY-CONTAINED",
+        idempotency_key=f"{tenant_id}:INC-RECALL-01:status:PARTIALLY_CONTAINED",
+        tenant_id=tenant_id,
+        incident_id="INC-RECALL-01",
+        agent_role="INCIDENT_COORDINATOR",
+        command_type="SET_INCIDENT_STATUS",
+        expected_plan_revision="rev08",
+        trace_id=trace_id,
+        payload={
+            "incident_id": "INC-RECALL-01",
+            "expected_status": "CONTAINMENT_IN_PROGRESS",
+            "new_status": terminal_state,
+            "terminal_state": terminal_state,
+            "unconfirmed_cases": 8,
+        },
+    )
 
     refusal_proof = "DOWNSTREAM_CUSTODY_UNCONFIRMED: Refused transition from PARTIALLY_CONTAINED to CONTAINED."
 
@@ -634,6 +758,15 @@ def execute_hero_loop(
         },
         "site01_containment_refusal": res_site01,
         "site01_refusal_proof": refusal_proof,
+        "ledger_command_receipts": {
+            "scoping": scoping_result["receipt"],
+            "barrier": barrier_result["receipt"],
+            "containment_in_progress": containment_progress_result["receipt"],
+            "plan_invalidation": invalidation_result["receipt"],
+            "safe_stock_allocation": allocation_result["receipt"],
+            "containment_refusal": refusal_result["receipt"],
+            "terminal": terminal_result["receipt"],
+        },
         "cloud_tasks_scheduling": task_res,
         "terminal_state_calculation": {
             "service_state": "4_OF_5_AGENCIES_SUPPLIED_AGENCY03_SHORT_20",
@@ -678,12 +811,7 @@ def get_incident_status(incident_id: str = Query("INC-RECALL-01"), tenant_id: st
             }
 
     if not incident_data:
-        incident_data = {
-            "incident_id": incident_id,
-            "status": "PARTIALLY_CONTAINED",
-            "terminal_state": "PARTIALLY_CONTAINED",
-            "affected_lot_id": "LTC-4471"
-        }
+        raise HTTPException(status_code=404, detail="INCIDENT_NOT_FOUND")
 
     return incident_data
 
@@ -707,7 +835,7 @@ def generate_next_day_plan(
     db = get_spanner_database()
 
     # Read current open incident state
-    incident_status = "PARTIALLY_CONTAINED"
+    incident_status = None
     with db.snapshot() as snapshot:
         rows = list(snapshot.execute_sql(
             "SELECT status FROM Incidents WHERE tenant_id = @t AND incident_id = 'INC-RECALL-01'",
@@ -716,6 +844,8 @@ def generate_next_day_plan(
         ))
         if rows:
             incident_status = rows[0][0]
+    if incident_status is None:
+        raise HTTPException(status_code=409, detail="OPEN_RECALL_INCIDENT_NOT_FOUND")
 
     next_day_plan = {
         "plan_id": "PLAN-2026-08-08",
@@ -760,21 +890,31 @@ def generate_next_day_plan(
         }
     }
 
-    # Save to Ledger
+    # Save to Ledger through the same deterministic command boundary.
     try:
-        post_to_plan_ledger(
-            "/api/v1/plans/next-day-plan/save",
-            payload={"tenant_id": tenant_id, "next_day_plan": next_day_plan},
-            timeout=10.0,
+        ledger_result = execute_ledger_command(
+            command_id="CMD-NEXT-DAY-PLAN-2026-08-08-REV01",
+            idempotency_key=f"{tenant_id}:PLAN-2026-08-08:rev01:draft",
+            tenant_id=tenant_id,
+            incident_id="INC-RECALL-01",
+            agent_role="FULFILLMENT_RECOVERY_PLANNER",
+            command_type="SAVE_PLAN_REVISION",
+            expected_plan_revision="rev08",
             trace_id=trace_id,
+            payload={
+                "plan_id": "PLAN-2026-08-08",
+                "revision": "rev01",
+                "status": "DRAFT_WITH_CONSTRAINTS",
+            },
         )
-    except Exception as e:
-        print(f"Plan Ledger next-day plan save note: {e}")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="PLAN_LEDGER_NEXT_DAY_COMMIT_FAILED") from exc
 
     return {
         "status": "NEXT_DAY_DRAFT_CREATED",
         "next_day_draft": next_day_plan,
-        "idempotent_replay": True,
+        "idempotent_replay": ledger_result["idempotent_replay"],
+        "ledger_receipt": ledger_result["receipt"],
         "trace_id": trace_id
     }
 
@@ -789,9 +929,9 @@ def get_system_evidence(tenant_id: str = "east-bay-food-bank"):
     trace_id = generate_trace_id()
     db = get_spanner_database()
 
-    spanner_active_rev = "rev08"
-    spanner_incident_status = "PARTIALLY_CONTAINED"
-    spanner_receipt_count = 0
+    spanner_active_rev = None
+    spanner_incident_status = None
+    spanner_receipt_count = None
 
     try:
         with db.snapshot() as snapshot:
@@ -818,8 +958,8 @@ def get_system_evidence(tenant_id: str = "east-bay-food-bank"):
             ))
             if r_rows:
                 spanner_receipt_count = r_rows[0][0]
-    except Exception as e:
-        print(f"Evidence Spanner query note: {e}")
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="AUTHORITATIVE_EVIDENCE_READ_UNAVAILABLE") from exc
 
     return {
         "service": "Full Shelf Control Plane",
@@ -836,7 +976,7 @@ def get_system_evidence(tenant_id: str = "east-bay-food-bank"):
             "orchestrator_service": {
                 "name": "full-shelf-orchestrator",
                 "url": "https://full-shelf-orchestrator-620464070103.us-central1.run.app",
-                "service_account": "full-shelf-orchestrator-sa@preflight-hackathon.iam.gserviceaccount.com",
+                "service_account": "full-shelf-ledger-sa@preflight-hackathon.iam.gserviceaccount.com",
                 "classification": "OBSERVED_LIVE"
             },
             "plan_ledger_service": {
@@ -1079,44 +1219,21 @@ def reset_demo_state(
     x_api_key: Optional[str] = Header(None, alias="X-Full-Shelf-API-Key"),
     tenant_id: str = "east-bay-food-bank"
 ):
-    """Safely resets demo tenant records in Spanner."""
+    """Production reset is disabled; isolated audit tooling owns test teardown."""
     verify_judge_key(x_api_key)
-    db = get_spanner_database()
-    def _tx(transaction):
-        transaction.execute_update(
-            "DELETE FROM Receipts WHERE tenant_id = @t",
-            params={"t": tenant_id},
-            param_types={"t": spanner.param_types.STRING}
-        )
-        transaction.execute_update(
-            "DELETE FROM Incidents WHERE tenant_id = @t",
-            params={"t": tenant_id},
-            param_types={"t": spanner.param_types.STRING}
-        )
-        transaction.execute_update(
-            "DELETE FROM Coordinators WHERE tenant_id = @t",
-            params={"t": tenant_id},
-            param_types={"t": spanner.param_types.STRING}
-        )
-        transaction.execute_update(
-            "DELETE FROM PlanRevisions WHERE tenant_id = @t",
-            params={"t": tenant_id},
-            param_types={"t": spanner.param_types.STRING}
-        )
-    try:
-        db.run_in_transaction(_tx)
-    except Exception as e:
-        print(f"Reset transaction note: {e}")
-
-    return {"status": "RESET_COMPLETE", "tenant_id": tenant_id, "database": SPANNER_DATABASE}
+    raise HTTPException(
+        status_code=410,
+        detail="PRODUCTION_RESET_DISABLED_USE_ISOLATED_AUDIT_DATABASE",
+    )
 
 
 @app.post("/api/v1/demo/seed")
 def seed_demo_state(tenant_id: str = "east-bay-food-bank"):
-    """Seeds initial demo data in Spanner."""
-    from full_shelf_domain.spanner import seed_initial_spanner_data
-    seed_initial_spanner_data(tenant_id)
-    return {"status": "SEED_COMPLETE", "tenant_id": tenant_id}
+    """Production startup/demo seeding is disabled."""
+    raise HTTPException(
+        status_code=410,
+        detail="PRODUCTION_SEED_DISABLED_USE_ISOLATED_AUDIT_DATABASE",
+    )
 
 
 @app.post("/api/v1/demo/replay")

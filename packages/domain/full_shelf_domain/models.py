@@ -26,10 +26,15 @@ class PlanStatus(str, Enum):
 
 
 class IncidentStatus(str, Enum):
-    ACTIVE = "ACTIVE"
-    RESOLVED = "RESOLVED"
+    DETECTED = "DETECTED"
+    SCOPING = "SCOPING"
+    CONTAINMENT_IN_PROGRESS = "CONTAINMENT_IN_PROGRESS"
     PARTIALLY_CONTAINED = "PARTIALLY_CONTAINED"
     CONTAINED = "CONTAINED"
+    CLOSED = "CLOSED"
+    # Truck-disruption lifecycle states are separate from the recall chain.
+    ACTIVE = "ACTIVE"
+    RESOLVED = "RESOLVED"
 
 
 class NodeType(str, Enum):

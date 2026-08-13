@@ -201,12 +201,15 @@ legacy script for managed proof.
 
 - Formatting/linting: `NOT YET AVAILABLE`.
 - Safe unit tests:
-  `PYTHONPATH=packages/domain:packages/observability:apps/orchestrator/src:apps/plan-ledger/src .venv/bin/python -m pytest -q packages/domain/tests/test_capacity.py packages/domain/tests/test_identity.py packages/domain/tests/test_incident_lifecycle.py packages/domain/tests/test_recall_reconciliation.py packages/domain/tests/test_tenant_isolation.py packages/domain/tests/test_truthful_terminal_state.py apps/orchestrator/tests/test_ledger_identity.py apps/plan-ledger/tests/test_ledger_auth.py`
+  `PYTHONPATH=packages/domain:packages/observability:apps/orchestrator/src:apps/plan-ledger/src .venv/bin/python -m pytest -q packages/domain/tests/test_capacity.py packages/domain/tests/test_identity.py packages/domain/tests/test_incident_lifecycle.py packages/domain/tests/test_recall_reconciliation.py packages/domain/tests/test_tenant_isolation.py packages/domain/tests/test_truthful_terminal_state.py packages/domain/tests/test_ledger_commands.py packages/domain/tests/test_ledger_executor.py packages/domain/tests/test_authoritative_read_failures.py packages/domain/tests/test_single_mutation_authority.py apps/orchestrator/tests/test_ledger_identity.py apps/orchestrator/tests/test_no_authoritative_writes.py apps/plan-ledger/tests/test_ledger_auth.py apps/plan-ledger/tests/test_single_mutation_executor.py`
 - Integration tests: `NOT YET AVAILABLE` until a non-shared isolated target is
   enforced. Do not use `scripts/run_tests.py` against canonical state.
 - Safe test collection:
   `PYTHONPATH=packages/domain:packages/observability:apps/orchestrator/src:apps/plan-ledger/src .venv/bin/python -m pytest --collect-only -q packages/domain/tests apps/orchestrator/tests apps/plan-ledger/tests`
-- Isolated mutation tests: `NOT YET AVAILABLE` (required in WP11).
+- Isolated WP2 mutation replay (requires `SPANNER_DATABASE_ID` to name a
+  noncanonical database containing `audit`):
+  `PYTHONPATH=packages/domain:packages/observability .venv/bin/python scripts/verify_wp2_isolated.py`.
+  A complete isolated regression suite remains required in WP11.
 - Deployment: `NOT YET AVAILABLE` as a checked-in end-to-end command. The
   SHA-parameterized `cloudbuild-orchestrator.yaml` and `cloudbuild-ledger.yaml`
   build images but do not deploy them.

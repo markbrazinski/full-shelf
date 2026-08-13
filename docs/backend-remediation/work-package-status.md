@@ -7,9 +7,9 @@ Builder verdict authority: none; final acceptance requires a fresh independent a
 | Package | Commit | Local tests | Deployed verification | Status | Blocker |
 |---|---|---|---|---|---|
 | WP0 — Baseline and repair map | `90dcb4a` | Read-only repository and resource inspection | Audited revisions and current resource state reconfirmed | LOCALLY VERIFIED | None |
-| WP0.5 — Canonical agent constitution | This package commit | Instruction inventory and contradiction review | Not applicable; documentation-only package | STRUCTURALLY_VERIFIED | None |
+| WP0.5 — Canonical agent constitution | `3994a87` | Instruction inventory and contradiction review | Not applicable; documentation-only package | STRUCTURALLY_VERIFIED | None |
 | WP1 — Identity and ledger perimeter | `ea462c0`, `833c478`, `4763392` | 28 targeted tests passed | Revisions `orchestrator-00023-frt` / `plan-ledger-00016-x4j`; all acceptance outcomes observed | DEPLOYED OBSERVED | None |
-| WP2 — Deterministic mutation boundary | Uncommitted work preserved in `codex-wp2-wip-before-wp0.5` | Partial targeted suite only; package not accepted | Isolated audit database was created before WP0.5; no package replay accepted | IN PROGRESS | Acceptance tests pending |
+| WP2 — Deterministic mutation boundary | This implementation commit | 69 safe tests passed; 87 collected | Fresh altered-tenant replay passed in isolated `full-shelf-audit-wp2-20260813` | IN PROGRESS | Canonical additive DDL and deployed replay pending |
 | WP3 — Human approval and KMS | — | — | — | NOT STARTED | WP2 gate |
 | WP4 — Managed Model Armor | — | — | — | NOT STARTED | WP3 gate |
 | WP5 — Gemini 3.5 through ADK | — | — | — | NOT STARTED | WP4 gate |
@@ -25,5 +25,5 @@ Statuses in this table are builder progress labels only: `NOT STARTED`, `IN PROG
 
 WP0.5 was supplied after WP1 had already been implemented. It is recorded in
 the required logical order without rewriting history. WP2 work was reversibly
-stashed before WP0.5; no code, IAM, data, or deployment mutation is part of the
-WP0.5 package.
+stashed before WP0.5 and restored only after the WP0.5 commit; no code, IAM,
+data, or deployment mutation is part of the WP0.5 package.
