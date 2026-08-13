@@ -80,26 +80,96 @@ fresh v3 current-code run passed. The Spanner client emitted a non-fatal Cloud
 Monitoring metrics-export warning because local client resource labels omitted
 `instance_id`; authoritative Spanner commits and readback succeeded.
 
-## Canonical database preflight
+## Canonical database migration and reconciliation
 
 Classification: `OBSERVED_LIVE`
 
-Before any canonical DDL or WP2 replay, `full-shelf-main` contained:
+Before canonical DDL, `full-shelf-main` contained:
 
 | Tenants | Plan revisions | Incidents | Receipts |
 |---:|---:|---:|---:|
 | 1 | 3 | 2 | 3 |
 
-Read-only DDL inspection confirmed the canonical database does not yet contain
-the WP2 receipt columns/index or new barrier/recovery/work-item tables. No WP2
-test has run against the canonical database.
+Read-only DDL inspection confirmed the WP2 objects were absent. The exact
+additive migration `infra/spanner/migrations/001_wp2_deterministic_boundary.sql`
+was then applied. Readback observed the new receipt columns/index and the
+`MovementBarriers`, `RecoveryAllocations`, `RecoveryShortfalls`, and `WorkItems`
+tables.
 
-## Remaining gate
+Canonical counts immediately after migration, and again after the deployed
+tenant-denial request, were unchanged:
+
+| Tenants | Plan revisions | Incidents | Receipts | Barriers | Allocations | Shortfalls | Work items |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 3 | 2 | 3 | 0 | 0 | 0 | 0 |
+
+No WP2 successful mutation or replay was run against the canonical tenant.
+
+## Build and deployment
+
+Classification: `OBSERVED_LIVE`
+
+Both builds came from full Git SHA
+`22d86f9fb5710524343f1b853aa210a012aec478` and succeeded:
+
+| Service | Cloud Build | Image digest | Ready revision |
+|---|---|---|---|
+| orchestrator | `3831c3d6-ec10-4798-9923-ccff13f41a22` | `sha256:90b542c9e0e6db5336f0fd32609e7574f1f21058bfe9c061046e046761861066` | `full-shelf-orchestrator-00024-kwm` |
+| plan-ledger | `e6b1be62-4c83-4283-98d0-385667b5ab9a` | `sha256:9389776af3d7f51d34514d63865216f59f6ef58eca0574b7a2f00f21b830f7f4` | `full-shelf-plan-ledger-00017-7mh` |
+
+Cloud Run reported both revisions ready and the orchestrator revision serving
+100 percent of traffic. Runtime identities remained separated:
+
+- orchestrator: `full-shelf-orchestrator-sa`, with
+  `roles/spanner.databaseReader` and no database writer role;
+- plan-ledger: `full-shelf-ledger-sa`, with
+  `roles/spanner.databaseUser`;
+- private ledger invoker policy contains the orchestrator service account and
+  the operator only, with no `allUsers` member.
+
+The ledger deployment has `ALLOWED_TENANT_IDS=east-bay-food-bank`.
+
+## Deployed denial and zero-mutation reconciliation
+
+Classification: `OBSERVED_LIVE`
+
+An identity token was minted by impersonating the configured orchestrator
+service account, with the exact ledger audience and service-account email
+claim. A valid `PERSIST_COORDINATOR` command using an unauthorized tenant then
+reached the deployed generic command route and returned:
+
+```json
+{"detail":"TENANT_SCOPE_NOT_AUTHORIZED"}
+```
+
+HTTP status was 403. Direct authoritative count reconciliation before and after
+the request was identical, including three receipts and zero WP2 operational
+rows. Anonymous access to the ledger returned the Cloud Run platform's 403.
+
+The successful duplicate replay was deliberately performed against the
+isolated managed audit database rather than the canonical tenant. The deployed
+image is the same Git-bound executor image verified there; this is not a claim
+that a successful canonical deployed mutation was exercised.
+
+## Package result
+
+Classification: `OBSERVED_LIVE`
+
+All WP2 acceptance outcomes are observed through structural checks, direct IAM
+inspection, isolated managed mutation replay, deployed tenant denial, and
+authoritative reconciliation. The mutation boundary is not bypassable through
+the inspected service code or deployed IAM roles. WP3 may begin. This is a
+builder package result, not final backend acceptance.
+
+## Limitations carried forward
 
 Classification: `NOT_PROVEN`
 
-- Canonical additive DDL has not yet been applied.
-- WP2 images have not yet been built or deployed.
-- Deployed command authentication, duplicate replay, refusal, and direct
-  authoritative reconciliation remain to be observed before WP2 can be marked
-  deployed or complete.
+- A successful command and its duplicate were not sent through the deployed
+  service against the canonical tenant, because remediation tests may not
+  mutate shared canonical data.
+- Both published orchestrator `run.app` URLs returned a Google platform 404
+  during an unauthenticated health probe even though Cloud Run reported the
+  revision ready, ingress `all`, public invoker IAM, and 100 percent traffic.
+  This routing anomaly must be resolved before a later deployed end-to-end
+  replay; it does not weaken the separately exercised private ledger boundary.
