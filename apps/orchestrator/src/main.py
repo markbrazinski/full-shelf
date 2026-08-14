@@ -671,15 +671,6 @@ def persist_coordinator_waiting(
             "child_incident_ids": proposal.child_incident_ids,
         },
     )
-    logger.info(
-        "cloud_task_delivery task_name=%s event_idempotency_key=%s "
-        "receipt_id=%s idempotent_replay=%s",
-        task_name,
-        event_idempotency_key,
-        ledger_result["receipt"]["receipt_id"],
-        ledger_result["idempotent_replay"],
-    )
-
     return {
         "status": "COORDINATOR_PERSISTED",
         "coordinator_id": coord_id,
@@ -741,6 +732,14 @@ def handle_site01_deadline_callback(
             "delivery_email": caller.email,
             "delivery_audience": caller.audience,
         },
+    )
+    logger.info(
+        "cloud_task_delivery task_name=%s event_idempotency_key=%s "
+        "receipt_id=%s idempotent_replay=%s",
+        task_name,
+        event_idempotency_key,
+        ledger_result["receipt"]["receipt_id"],
+        ledger_result["idempotent_replay"],
     )
 
     return {

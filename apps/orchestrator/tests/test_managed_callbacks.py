@@ -374,6 +374,42 @@ def test_two_distinct_task_names_share_one_event_idempotency_key():
     } == {"site01-event-shared"}
 
 
+def test_task_delivery_emits_committed_idempotency_evidence():
+    client = TestClient(main.app)
+    request = _task_payload("task-evidence")
+    request["event_idempotency_key"] = "site01-event-evidence"
+    result = {
+        "receipt": {"receipt_id": "RCT-TASK-EVIDENCE", "status": "SUCCESS"},
+        "idempotent_replay": True,
+    }
+    with patch.object(main, "_verify_managed_callback", return_value=CALLER), patch.object(
+        main, "execute_ledger_command", return_value=result
+    ), patch.object(main.logger, "info") as log_info:
+        response = client.post(
+            "/api/v1/incidents/site01-deadline",
+            headers={
+                "Authorization": "Bearer signed",
+                "X-CloudTasks-TaskName": "task-evidence",
+                "X-CloudTasks-QueueName": "full-shelf-deadlines",
+                "traceparent": (
+                    "00-0123456789abcdef0123456789abcdef-"
+                    "0123456789abcdef-01"
+                ),
+            },
+            json=request,
+        )
+
+    assert response.status_code == 200
+    log_info.assert_called_once_with(
+        "cloud_task_delivery task_name=%s event_idempotency_key=%s "
+        "receipt_id=%s idempotent_replay=%s",
+        "task-evidence",
+        "site01-event-evidence",
+        "RCT-TASK-EVIDENCE",
+        True,
+    )
+
+
 def test_application_escalation_schedules_task_from_authoritative_isolated_state():
     client = TestClient(main.app)
     db = MagicMock()
