@@ -135,6 +135,44 @@ def test_fabricated_value_fails_source_anchor_validation():
     assert extracted["downstream_allowed"] is False
 
 
+def test_document_identifier_cannot_be_reclassified_as_lot_identifier():
+    ambiguous_notice = (
+        "Supplier bulletin SB-INCOMPLETE: a product may be affected. "
+        "Pause distribution."
+    )
+    ambiguous_json = (
+        '{"lot_id":"SB-INCOMPLETE","product_name":"a product",'
+        '"hazard":"may be affected","action_required":"Pause distribution",'
+        '"source_anchor":"Supplier bulletin SB-INCOMPLETE"}'
+    )
+    with patch("full_shelf_domain.recall.generate_trace_id", return_value="unused"):
+        mock_agent = SimpleNamespace(name="RecallExtractionAgent")
+        mock_runner = MagicMock()
+
+        async def run_async(*args, **kwargs):
+            yield event(text=ambiguous_json)
+
+        mock_runner.run_async = run_async
+        mock_session = SimpleNamespace(id="adk-session-ambiguous")
+
+        async def create_session(*args, **kwargs):
+            return mock_session
+
+        mock_session_service = MagicMock()
+        mock_session_service.create_session = create_session
+        with patch("google.adk.agents.Agent", return_value=mock_agent), patch(
+            "google.adk.runners.Runner", return_value=mock_runner
+        ), patch(
+            "google.adk.sessions.InMemorySessionService",
+            return_value=mock_session_service,
+        ):
+            extracted = extract_recall_entities_with_gemini_35(ambiguous_notice)
+
+    assert extracted["status"] == "MANUAL_REVIEW_REQUIRED"
+    assert extracted["reason_code"] == "LOT_ANCHOR_VALIDATION_FAILED"
+    assert extracted["downstream_allowed"] is False
+
+
 def test_adk_model_error_requires_manual_review():
     extracted, _ = invoke([event(error_code="MODEL_ERROR")])
     assert extracted["status"] == "MANUAL_REVIEW_REQUIRED"

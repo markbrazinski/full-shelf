@@ -26,8 +26,10 @@ authoritative state.
    non-`STOP` final response is incomplete and requires manual review.
 4. The orchestrator independently validates the final ADK response against the
    same schema and verifies every extracted value occurs in the screened source
-   notice. Missing, extra, malformed, or fabricated values require manual
-   review.
+   notice. A purported lot ID must additionally occur in explicit `lot`,
+   `lot id`, or `lot number` context so a bulletin/document identifier cannot
+   be silently reclassified as a lot. Missing, extra, malformed, ambiguous, or
+   fabricated values require manual review.
 5. The actual ADK-created session ID, Runner invocation ID, final event ID,
    configured model, framework version, and application correlation ID are
    returned and persisted as a sanitized structured Cloud Logging record.

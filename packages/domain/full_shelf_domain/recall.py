@@ -52,6 +52,18 @@ class AdkExtractionFailure(RuntimeError):
         self.reason_code = reason_code
 
 
+def _has_explicit_lot_anchor(notice: str, lot_id: str) -> bool:
+    """Distinguish a lot identifier from an unrelated bulletin or document ID."""
+    lot_pattern = re.escape(lot_id.strip())
+    return bool(
+        re.search(
+            rf"\blot(?:\s+(?:id|number))?\s*[:#-]?\s*{lot_pattern}(?=\W|$)",
+            notice,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
 def inspect_recall_notice_with_model_armor(
     notice_text: str,
     *,
@@ -251,6 +263,8 @@ def extract_recall_entities_with_gemini_35(
             value = getattr(extracted, field_name)
             if value.casefold() not in normalized_notice:
                 raise AdkExtractionFailure("SOURCE_ANCHOR_VALIDATION_FAILED")
+        if not _has_explicit_lot_anchor(raw_notice, extracted.lot_id):
+            raise AdkExtractionFailure("LOT_ANCHOR_VALIDATION_FAILED")
 
         result = {
             **extracted.model_dump(),
