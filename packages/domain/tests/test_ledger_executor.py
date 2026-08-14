@@ -305,7 +305,8 @@ def test_next_day_draft_atomically_persists_event_constraints_plan_and_coordinat
         command_type=LedgerCommandType.CREATE_NEXT_DAY_DRAFT,
         payload={
             "source_event_id": "message-alt-1",
-            "source_publish_time": "2026-08-14T00:00:00Z",
+            "source_operating_day": "2026-08-13",
+            "event_type": "PLAN_NEXT_DAY_REQUESTED",
             "operating_date": "2026-08-14",
             "plan_id": "PLAN-ALT-NEXT",
             "revision": "rev01",
@@ -331,6 +332,73 @@ def test_next_day_draft_atomically_persists_event_constraints_plan_and_coordinat
     assert transaction.upserts[0]["values"][0][2:5] == [
         "DRAFT_WITH_CONSTRAINTS", "HUMAN_APPROVAL_REQUIRED", "rev01"
     ]
+
+
+def test_legacy_next_day_receipt_replays_only_when_authoritative_draft_matches():
+    timestamp = datetime(2026, 8, 14, 15, 0, tzinfo=timezone.utc)
+    existing = (
+        "RCT-NEXT-STABLE", "CMD-NEXT-DAY-2026-08-15-REV01", "rev01",
+        "CREATE_NEXT_DAY_DRAFT", "SUCCESS", 6,
+        "CREATE_NEXT_DAY_DRAFT committed", "legacy-trace-00000000000000000000",
+        timestamp, IDENTITY.subject, IDENTITY.email,
+        "FULFILLMENT_RECOVERY_PLANNER", "legacy-transport-bound-fingerprint",
+    )
+
+    class LegacyReplayTransaction(FakeTransaction):
+        def execute_sql(self, sql, params, param_types):
+            if "idempotency_key" in sql:
+                return [existing]
+            if "SELECT status FROM PlanRevisions" in sql:
+                return [("DRAFT_WITH_CONSTRAINTS",)]
+            if "FROM PlanConstraints" in sql:
+                return [
+                    ("LOT_MOVEMENT_BARRIER", "LOT-ALT-908",
+                     json.dumps({"barrier_id": "BARRIER-ALT", "status": "ACTIVE"},
+                                sort_keys=True), 1),
+                    ("RECOVERY_PRIORITY", "AG-X",
+                     json.dumps({"shortfall_id": "SHORT-ALT", "cases": 9,
+                                 "status": "OPEN"}, sort_keys=True), 2),
+                    ("ACKNOWLEDGMENT_HOLD", "SITE-X",
+                     json.dumps({"hold_incident_id": "HOLD-ALT",
+                                 "unconfirmed_cases": 3,
+                                 "status": "ACKNOWLEDGMENT_HOLD_ACTIVE"},
+                                sort_keys=True), 3),
+                ]
+            if "FROM Coordinators" in sql:
+                return [("DRAFT_WITH_CONSTRAINTS", "HUMAN_APPROVAL_REQUIRED", "rev01")]
+            raise AssertionError(f"Unexpected SQL: {sql}")
+
+    command = coordinator_command(
+        command_id="CMD-NEXT-DAY-2026-08-15-REV01",
+        idempotency_key="audit-tenant:PLAN-2026-08-15:rev01:day-close",
+        agent_role="FULFILLMENT_RECOVERY_PLANNER",
+        command_type=LedgerCommandType.CREATE_NEXT_DAY_DRAFT,
+        expected_plan_revision="rev08",
+        payload={
+            "source_event_id": "NEXTDAY-STABLE",
+            "source_operating_day": "2026-08-14",
+            "event_type": "PLAN_NEXT_DAY_REQUESTED",
+            "operating_date": "2026-08-15",
+            "plan_id": "PLAN-2026-08-15",
+            "revision": "rev01",
+            "status": "DRAFT_WITH_CONSTRAINTS",
+            "coordinator_id": "COORD-2026-08-15",
+            "barriers": [{"barrier_id": "BARRIER-ALT", "lot_id": "LOT-ALT-908"}],
+            "shortfalls": [{"shortfall_id": "SHORT-ALT", "agency_id": "AG-X",
+                            "cases": 9}],
+            "acknowledgment_holds": [{"hold_incident_id": "HOLD-ALT",
+                                       "site_id": "SITE-X", "unconfirmed_cases": 3}],
+            "human_approval_required": True,
+        },
+    )
+    transaction = LegacyReplayTransaction(existing_receipt=existing)
+    result = SpannerLedgerCommandExecutor(
+        FakeDatabase(transaction), allowed_tenant_ids={"audit-tenant"}
+    ).execute(command, IDENTITY)
+    assert result.idempotent_replay is True
+    assert result.additional_mutations == 0
+    assert result.receipt["receipt_id"] == "RCT-NEXT-STABLE"
+    assert transaction.inserts == []
 
 
 def test_unsigned_repair_command_is_not_a_valid_command_contract():

@@ -99,6 +99,13 @@ class RecurringDailyRequest(StrictPayload):
     operating_plan: OperatingPlanDefinition
 
 
+class NextDayRequest(StrictPayload):
+    """Date-free next-day Scheduler input; managed delivery time supplies the day."""
+
+    event_type: Literal["PLAN_NEXT_DAY_REQUESTED"]
+    tenant_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{2,63}$")
+
+
 class SavePlanRevisionPayload(OperatingPlanDefinition):
     logical_tenant_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{2,54}$")
     operating_day: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
@@ -214,7 +221,8 @@ class NextDayAcknowledgmentHoldPayload(StrictPayload):
 
 class CreateNextDayDraftPayload(StrictPayload):
     source_event_id: str = Field(min_length=1, max_length=256)
-    source_publish_time: str = Field(min_length=1, max_length=64)
+    source_operating_day: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    event_type: Literal["PLAN_NEXT_DAY_REQUESTED"]
     operating_date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
     plan_id: str = Field(min_length=1, max_length=64)
     revision: Literal["rev01"]

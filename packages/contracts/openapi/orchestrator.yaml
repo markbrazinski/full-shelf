@@ -34,16 +34,17 @@ paths:
         operating_day is derived only from Pub/Sub message.publishTime in the
         configured food-bank timezone. The resulting ledger request is keyed by
         logical tenant, derived ISO day, request type, plan ID, and revision;
-        raw timestamps and delivery identity are excluded. Authenticated permanently malformed or
-        unsupported messages are acknowledged with 2xx and zero mutations;
+        raw timestamps and delivery identity are excluded. Next-day product
+        identity is tenant, trusted source operating day, event type, next-day
+        plan ID, and revision. Authenticated permanently malformed, stale, or
+        permanently rejected messages are acknowledged with 2xx and zero mutations;
         transient managed or authoritative failures remain retryable.
       security: [{ googleManagedOidc: [] }]
       responses:
-        '200': { description: Accepted or idempotently replayed managed event }
+        '200': { description: Committed, idempotently replayed, stale-acknowledged, or permanently-rejected authenticated event }
         '401': { description: Missing, invalid, expired, or wrong-audience token }
         '403': { description: Valid but unauthorized managed identity or tenant }
-        '409': { description: Authoritative coordinator or plan precondition failed }
-        '503': { description: Required managed or authoritative read failed closed }
+        '503': { description: Retryable managed, ledger, or authoritative failure }
   /api/v1/incidents/site01-deadline:
     post:
       summary: Receive an OIDC-authenticated Cloud Tasks acknowledgment deadline

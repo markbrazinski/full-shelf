@@ -22,6 +22,10 @@ inventory = _load(
     "configure_micro1a_recurring_jobs",
     ROOT / "scripts" / "configure_micro1a_recurring_jobs.py",
 )
+delta = _load(
+    "configure_delta_audit_scheduler",
+    ROOT / "scripts" / "configure_delta_audit_scheduler.py",
+)
 
 
 def test_scheduler_body_is_date_free_strict_recurring_contract():
@@ -45,3 +49,12 @@ def test_inventory_has_distinct_builder_and_two_untouched_auditor_jobs():
     assert len(auditors) == 2
     assert len({job["tenant"] for job in [*builder, *auditors]}) == 3
     assert all(job["job"].endswith("-daily") for job in auditors)
+
+
+def test_next_day_scheduler_body_has_stable_tenant_and_no_profile():
+    body = delta.build_next_day_request(fixture="canonical")
+    assert body == {
+        "event_type": "PLAN_NEXT_DAY_REQUESTED",
+        "tenant_id": "audit-canonical-20260814-036ab83d29",
+    }
+    assert "qualification_profile" not in body

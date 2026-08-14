@@ -201,7 +201,7 @@ def test_recurring_daily_rejects_payload_day_and_caller_timestamp():
             json=_pubsub_envelope(event),
         )
     assert response.status_code == 200
-    assert response.json()["status"] == "PERMANENT_EVENT_REJECTED_ACKNOWLEDGED"
+    assert response.json()["disposition"] == "PERMANENTLY_REJECTED_ACKNOWLEDGED"
     generate.assert_not_called()
 
 
@@ -257,7 +257,7 @@ def test_daily_qualification_profile_is_not_an_operating_day_contract():
         )
 
     assert response.status_code == 200
-    assert response.json()["status"] == "PERMANENT_EVENT_REJECTED_ACKNOWLEDGED"
+    assert response.json()["disposition"] == "PERMANENTLY_REJECTED_ACKNOWLEDGED"
     generate.assert_not_called()
 
 
@@ -273,7 +273,7 @@ def test_authenticated_poison_pubsub_message_is_acked_2xx_without_mutation():
         )
 
     assert response.status_code == 200
-    assert response.json()["status"] == "PERMANENT_EVENT_REJECTED_ACKNOWLEDGED"
+    assert response.json()["disposition"] == "PERMANENTLY_REJECTED_ACKNOWLEDGED"
     assert response.json()["mutations_applied"] == 0
     ledger.assert_not_called()
 
@@ -298,6 +298,7 @@ def test_authenticated_stale_pubsub_message_is_acked_without_interpretation():
 
     assert response.status_code == 200
     assert response.json()["reason"] == "STALE_PUBSUB_EVENT"
+    assert response.json()["disposition"] == "STALE_ACKNOWLEDGED"
     assert response.json()["mutations_applied"] == 0
     resolve.assert_not_called()
     ledger.assert_not_called()
@@ -327,25 +328,68 @@ def test_authenticated_duplicate_next_day_deliveries_return_2xx():
     assert first.status_code == duplicate.status_code == 200
     assert first.json()["next_day_plan_result"]["ledger_receipt"]["receipt_id"] == "RCT-STABLE"
     assert generate.call_count == 2
+    assert all(
+        call.kwargs["source_operating_day"] == "2026-08-14"
+        for call in generate.call_args_list
+    )
+    assert all("source_event_id" not in call.kwargs for call in generate.call_args_list)
 
 
-def test_next_day_scope_resolver_selects_only_oldest_pending_scope():
-    db = MagicMock()
-    snapshot = MagicMock()
-    snapshot.execute_sql.return_value = [("audit-canonical-20260814-oldest",)]
-    db.snapshot.return_value.__enter__.return_value = snapshot
-    resolver = MagicMock()
-    with patch.dict(main.os.environ, {"AUDIT_SPANNER_DATABASE_ID": "audit-db"}), patch.object(
-        main.AuthorityScopeResolver, "from_environment", return_value=resolver
-    ), patch.object(main, "get_spanner_database", return_value=db):
-        tenant_id = main._latest_qualification_tenant(profile="canonical")
+def test_next_day_qualification_profile_is_permanently_rejected():
+    client = TestClient(main.app)
+    event = {
+        "event_type": "PLAN_NEXT_DAY_REQUESTED",
+        "qualification_profile": "canonical",
+    }
+    with patch.object(main, "_verify_managed_callback", return_value=CALLER), patch.object(
+        main, "_generate_next_day_plan"
+    ) as generate:
+        response = client.post(
+            "/api/v1/orchestrator/pubsub/push",
+            headers={"Authorization": "Bearer signed"},
+            json=_pubsub_envelope(event),
+        )
+    assert response.status_code == 200
+    assert response.json()["disposition"] == "PERMANENTLY_REJECTED_ACKNOWLEDGED"
+    assert response.json()["mutations_applied"] == 0
+    generate.assert_not_called()
 
-    assert tenant_id == "audit-canonical-20260814-oldest"
-    sql = snapshot.execute_sql.call_args.args[0]
-    assert "NOT EXISTS" in sql
-    assert "next_day.revision = 'rev01'" in sql
-    assert "ORDER BY candidate.created_at ASC" in sql
-    resolver.resolve.assert_called_once_with(tenant_id)
+
+def test_next_day_transient_persistence_failure_remains_retryable():
+    client = TestClient(main.app)
+    event = {"event_type": "PLAN_NEXT_DAY_REQUESTED", "tenant_id": "east-bay-food-bank"}
+    with patch.object(main, "_verify_managed_callback", return_value=CALLER), patch.object(
+        main, "_resolve_authority_scope"
+    ), patch.object(
+        main, "_generate_next_day_plan",
+        side_effect=main.HTTPException(503, "AUTHORITATIVE_CONTINUITY_READ_UNAVAILABLE"),
+    ):
+        response = client.post(
+            "/api/v1/orchestrator/pubsub/push",
+            headers={"Authorization": "Bearer signed"},
+            json=_pubsub_envelope(event),
+        )
+    assert response.status_code == 503
+
+
+def test_next_day_permanent_business_rejection_is_acked_without_mutation():
+    client = TestClient(main.app)
+    event = {"event_type": "PLAN_NEXT_DAY_REQUESTED", "tenant_id": "east-bay-food-bank"}
+    with patch.object(main, "_verify_managed_callback", return_value=CALLER), patch.object(
+        main, "_resolve_authority_scope"
+    ), patch.object(
+        main, "_generate_next_day_plan",
+        side_effect=main.HTTPException(409, "NEXT_DAY_CONSTRAINTS_INCOMPLETE"),
+    ), patch.object(main, "execute_ledger_command") as ledger:
+        response = client.post(
+            "/api/v1/orchestrator/pubsub/push",
+            headers={"Authorization": "Bearer signed"},
+            json=_pubsub_envelope(event),
+        )
+    assert response.status_code == 200
+    assert response.json()["disposition"] == "PERMANENTLY_REJECTED_ACKNOWLEDGED"
+    assert response.json()["mutations_applied"] == 0
+    ledger.assert_not_called()
 
 
 def test_recall_pubsub_redelivery_uses_stable_ledger_command_and_isolated_scope():

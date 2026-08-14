@@ -83,7 +83,14 @@ class SpannerLedgerCommandExecutor:
                             "IDEMPOTENCY_KEY_COLLISION_UNBOUND_LEGACY_RECEIPT"
                         )
                 elif stored_fingerprint != command.request_fingerprint():
-                    raise ValueError("IDEMPOTENCY_KEY_COLLISION")
+                    if not (
+                        command.command_type is LedgerCommandType.CREATE_NEXT_DAY_DRAFT
+                        and isinstance(payload, CreateNextDayDraftPayload)
+                        and self._next_day_draft_matches_authority(
+                            transaction, command, payload, existing
+                        )
+                    ):
+                        raise ValueError("IDEMPOTENCY_KEY_COLLISION")
                 return CommandExecutionResult(
                     receipt=existing,
                     idempotent_replay=True,
@@ -213,6 +220,103 @@ class SpannerLedgerCommandExecutor:
                 "request_fingerprint": row[12],
             }
         return None
+
+    @staticmethod
+    def _next_day_draft_matches_authority(
+        transaction: Any,
+        command: LedgerCommand,
+        payload: CreateNextDayDraftPayload,
+        receipt: Dict[str, Any],
+    ) -> bool:
+        """Permit legacy transport-bound receipts only for an exact persisted draft."""
+        if (
+            receipt.get("command_type") != LedgerCommandType.CREATE_NEXT_DAY_DRAFT.value
+            or receipt.get("status") != "SUCCESS"
+            or receipt.get("plan_revision_id") != payload.revision
+        ):
+            return False
+
+        plan = next(iter(transaction.execute_sql(
+            "SELECT status FROM PlanRevisions WHERE tenant_id = @tenant_id "
+            "AND plan_id = @plan_id AND revision = @revision",
+            params={
+                "tenant_id": command.tenant_id,
+                "plan_id": payload.plan_id,
+                "revision": payload.revision,
+            },
+            param_types={
+                "tenant_id": spanner.param_types.STRING,
+                "plan_id": spanner.param_types.STRING,
+                "revision": spanner.param_types.STRING,
+            },
+        )), None)
+        if plan is None or tuple(plan) != (payload.status,):
+            return False
+
+        expected_constraints = []
+        priority = 1
+        for barrier in payload.barriers:
+            expected_constraints.append((
+                "LOT_MOVEMENT_BARRIER",
+                barrier.lot_id,
+                json.dumps({"barrier_id": barrier.barrier_id, "status": "ACTIVE"},
+                           sort_keys=True),
+                priority,
+            ))
+            priority += 1
+        for shortfall in payload.shortfalls:
+            expected_constraints.append((
+                "RECOVERY_PRIORITY",
+                shortfall.agency_id,
+                json.dumps({"shortfall_id": shortfall.shortfall_id,
+                            "cases": shortfall.cases, "status": "OPEN"},
+                           sort_keys=True),
+                priority,
+            ))
+            priority += 1
+        for hold in payload.acknowledgment_holds:
+            expected_constraints.append((
+                "ACKNOWLEDGMENT_HOLD",
+                hold.site_id,
+                json.dumps({"hold_incident_id": hold.hold_incident_id,
+                            "unconfirmed_cases": hold.unconfirmed_cases,
+                            "status": "ACKNOWLEDGMENT_HOLD_ACTIVE"}, sort_keys=True),
+                priority,
+            ))
+            priority += 1
+        actual_constraints = [tuple(row) for row in transaction.execute_sql(
+            "SELECT constraint_type, subject_id, details, priority "
+            "FROM PlanConstraints WHERE tenant_id = @tenant_id "
+            "AND plan_id = @plan_id AND revision = @revision ORDER BY priority",
+            params={
+                "tenant_id": command.tenant_id,
+                "plan_id": payload.plan_id,
+                "revision": payload.revision,
+            },
+            param_types={
+                "tenant_id": spanner.param_types.STRING,
+                "plan_id": spanner.param_types.STRING,
+                "revision": spanner.param_types.STRING,
+            },
+        )]
+        if actual_constraints != expected_constraints:
+            return False
+
+        coordinator = next(iter(transaction.execute_sql(
+            "SELECT state, checkpoint, active_plan_revision FROM Coordinators "
+            "WHERE tenant_id = @tenant_id AND coordinator_id = @coordinator_id",
+            params={
+                "tenant_id": command.tenant_id,
+                "coordinator_id": payload.coordinator_id,
+            },
+            param_types={
+                "tenant_id": spanner.param_types.STRING,
+                "coordinator_id": spanner.param_types.STRING,
+            },
+        )), None)
+        return coordinator is not None and tuple(coordinator) == (
+            "DRAFT_WITH_CONSTRAINTS", "HUMAN_APPROVAL_REQUIRED", payload.revision
+        )
 
     @staticmethod
     def _active_revision(transaction: Any, tenant_id: str) -> str | None:
@@ -959,9 +1063,11 @@ class SpannerLedgerCommandExecutor:
                     columns=["tenant_id", "source_event_id", "event_type", "status",
                              "payload", "occurred_at"],
                     values=[[command.tenant_id, payload.source_event_id,
-                             "PLAN_NEXT_DAY_REQUESTED", "ACCEPTED",
-                             json.dumps({"source_publish_time": payload.source_publish_time,
-                                         "operating_date": payload.operating_date}, sort_keys=True),
+                             payload.event_type, "ACCEPTED",
+                             json.dumps({
+                                 "source_operating_day": payload.source_operating_day,
+                                 "operating_date": payload.operating_date,
+                             }, sort_keys=True),
                              spanner.COMMIT_TIMESTAMP]],
                 )
                 transaction.insert_or_update(

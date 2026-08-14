@@ -15,6 +15,10 @@ ROOT = Path(__file__).resolve().parents[1]
 PROJECT = "preflight-hackathon"
 LOCATION = "us-central1"
 TOPIC = "full-shelf-delta-audit"
+NEXT_DAY_TENANTS = {
+    "canonical": "audit-canonical-20260814-036ab83d29",
+    "altered": "audit-altered-20260814-6c7cdd8557",
+}
 
 
 def run(args, *, check=True):
@@ -46,6 +50,13 @@ def upsert_job(name: str, body: dict):
     return name
 
 
+def build_next_day_request(*, fixture: str) -> dict:
+    return {
+        "event_type": "PLAN_NEXT_DAY_REQUESTED",
+        "tenant_id": NEXT_DAY_TENANTS[fixture],
+    }
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--fixture", choices=["canonical", "altered"], required=True)
@@ -60,14 +71,12 @@ def main():
         "tenant_id": f"audit-{args.fixture}",
         "operating_plan": fixture["operating_plan"],
     })
-    upsert_job(next_name, {
-        "event_type": "PLAN_NEXT_DAY_REQUESTED",
-        "qualification_profile": args.fixture,
-    })
+    upsert_job(next_name, build_next_day_request(fixture=args.fixture))
     print(json.dumps({
         "tenant_prefix": f"audit-{args.fixture}-",
         "daily_job": daily_name,
         "next_day_job": next_name,
+        "next_day_tenant": NEXT_DAY_TENANTS[args.fixture],
         "state": "ENABLED_MANUAL_QUALIFICATION",
     }, sort_keys=True))
 

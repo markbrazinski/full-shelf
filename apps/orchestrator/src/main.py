@@ -32,7 +32,11 @@ from full_shelf_domain.authority import (
     UnauthorizedAuthorityScope,
     operating_day_authority_id,
 )
-from full_shelf_domain.ledger_commands import OperatingDayRequest, RecurringDailyRequest
+from full_shelf_domain.ledger_commands import (
+    NextDayRequest,
+    OperatingDayRequest,
+    RecurringDailyRequest,
+)
 from full_shelf_domain.recall import (
     inspect_recall_notice_with_model_armor,
     extract_recall_entities_with_gemini_35,
@@ -61,6 +65,7 @@ async def managed_request_trace(request: Request, call_next):
         request.headers,
         f"orchestrator {request.method} {request.url.path}",
     ) as trace_id:
+        request.state.full_shelf_trace_id = trace_id
         response = await call_next(request)
         response.headers["X-Full-Shelf-Trace-Id"] = trace_id
         return response
@@ -345,51 +350,45 @@ def _operating_day_from_managed_publish_time(published_at: datetime) -> str:
     return published_at.astimezone(operating_zone).date().isoformat()
 
 
-def _latest_qualification_tenant(*, profile: str) -> str:
-    """Resolve next-day work from committed state, never caller-selected scope."""
-    if profile not in {"canonical", "altered"}:
-        raise ValueError("QUALIFICATION_PROFILE_NOT_ALLOWED")
-    resolver = AuthorityScopeResolver.from_environment()
-    database_id = os.getenv("AUDIT_SPANNER_DATABASE_ID", "")
-    if not database_id:
-        raise HTTPException(503, "AUDIT_DATABASE_NOT_CONFIGURED")
-    prefix = f"audit-{profile}-"
-    with get_spanner_database(database_id).snapshot() as snapshot:
-        rows = list(snapshot.execute_sql(
-            "SELECT candidate.tenant_id FROM PlanRevisions AS candidate "
-            "WHERE STARTS_WITH(candidate.tenant_id, @prefix) "
-            "AND candidate.revision = 'rev08' "
-            "AND candidate.status = 'INVALIDATED_RECALL' "
-            "AND NOT EXISTS (SELECT 1 FROM PlanRevisions AS next_day "
-            "WHERE next_day.tenant_id = candidate.tenant_id "
-            "AND next_day.revision = 'rev01') "
-            "ORDER BY candidate.created_at ASC LIMIT 1",
-            params={"prefix": prefix},
-            param_types={"prefix": spanner.param_types.STRING},
-        ))
-    if len(rows) != 1:
-        raise HTTPException(409, "FRESH_QUALIFICATION_SCOPE_NOT_READY")
-    tenant_id = rows[0][0]
-    resolver.resolve(tenant_id)
-    return tenant_id
-
-
 def _ack_permanent_pubsub_rejection(
-    *, message_id: str | None, reason: str, trace_id: str
+    *, message_id: str | None, event_type: str | None, reason: str,
+    trace_id: str, age_seconds: float | None = None,
 ) -> Dict[str, Any]:
     """Acknowledge authenticated poison messages without any authoritative write."""
+    disposition = (
+        "STALE_ACKNOWLEDGED" if reason == "STALE_PUBSUB_EVENT"
+        else "PERMANENTLY_REJECTED_ACKNOWLEDGED"
+    )
     logger.warning(
-        "pubsub_permanent_rejection message_id=%s reason=%s trace_id=%s",
-        message_id or "UNKNOWN", reason, trace_id,
+        "pubsub_disposition message_id=%s event_type=%s disposition=%s "
+        "age_seconds=%s trace_id=%s receipt_id=NONE reason=%s",
+        message_id or "UNKNOWN", event_type or "UNKNOWN", disposition,
+        round(age_seconds, 3) if age_seconds is not None else "UNKNOWN",
+        trace_id, reason,
     )
     return {
-        "status": "PERMANENT_EVENT_REJECTED_ACKNOWLEDGED",
+        "status": disposition,
+        "disposition": disposition,
         "message_id": message_id,
+        "event_type": event_type,
         "reason": reason,
         "mutations_applied": 0,
         "classification": "OBSERVED_LIVE",
         "trace_id": trace_id,
     }
+
+
+def _log_pubsub_result(
+    *, message_id: str, event_type: str, disposition: str, trace_id: str,
+    age_seconds: float, receipt_id: str | None = None, reason: str | None = None,
+) -> None:
+    log = logger.error if disposition == "RETRYABLE_FAILURE" else logger.info
+    log(
+        "pubsub_disposition message_id=%s event_type=%s disposition=%s "
+        "age_seconds=%s trace_id=%s receipt_id=%s reason=%s",
+        message_id, event_type, disposition, round(age_seconds, 3), trace_id,
+        receipt_id or "NONE", reason or "NONE",
+    )
 
 
 CUSTODY_GRAPH_GQL = """
@@ -839,21 +838,25 @@ def schedule_site01_escalation(
 @app.post("/api/v1/orchestrator/pubsub/push")
 def handle_pubsub_push(
     payload: Dict[str, Any],
+    request: Request,
     authorization: Optional[str] = Header(None),
 ):
     """Handles real Pub/Sub wake-and-resume event pushing to Cloud Run orchestrator."""
     caller = _verify_managed_callback(authorization)
-    trace_id = generate_trace_id()
+    trace_id = getattr(request.state, "full_shelf_trace_id", generate_trace_id())
 
     message = payload.get("message", {})
     message_id = message.get("messageId")
     publish_time = message.get("publishTime")
+    event_type = message.get("attributes", {}).get("event_type", "") or None
     if not message_id or not publish_time:
         return _ack_permanent_pubsub_rejection(
             message_id=message_id,
+            event_type=event_type,
             reason="PUBSUB_MESSAGE_ID_AND_PUBLISH_TIME_REQUIRED",
             trace_id=trace_id,
         )
+    age_seconds = None
     try:
         published_at = _parse_managed_publish_time(publish_time)
         age_seconds = (datetime.now(timezone.utc) - published_at).total_seconds()
@@ -861,20 +864,26 @@ def handle_pubsub_push(
         if age_seconds > max_age_seconds:
             return _ack_permanent_pubsub_rejection(
                 message_id=message_id,
+                event_type=event_type,
                 reason="STALE_PUBSUB_EVENT",
                 trace_id=trace_id,
+                age_seconds=age_seconds,
             )
         if age_seconds < -300:
             return _ack_permanent_pubsub_rejection(
                 message_id=message_id,
+                event_type=event_type,
                 reason="FUTURE_PUBSUB_EVENT",
                 trace_id=trace_id,
+                age_seconds=age_seconds,
             )
     except (HTTPException, TypeError, ValueError):
         return _ack_permanent_pubsub_rejection(
             message_id=message_id,
+            event_type=event_type,
             reason="INVALID_PUBSUB_PUBLISH_TIME",
             trace_id=trace_id,
+            age_seconds=age_seconds,
         )
     data_b64 = message.get("data", "")
     event_data = {}
@@ -883,17 +892,18 @@ def handle_pubsub_push(
         event_data = json.loads(raw_str)
     except Exception as exc:
         return _ack_permanent_pubsub_rejection(
-            message_id=message_id, reason="INVALID_PUBSUB_EVENT_DATA",
-            trace_id=trace_id,
+            message_id=message_id, event_type=event_type,
+            reason="INVALID_PUBSUB_EVENT_DATA", trace_id=trace_id,
+            age_seconds=age_seconds,
         )
 
-    event_type = event_data.get("event_type", "") or message.get("attributes", {}).get("event_type", "")
+    event_type = event_data.get("event_type", "") or event_type or ""
 
-    qualification_profile = event_data.get("qualification_profile")
     try:
         tenant_id = event_data.get("tenant_id")
-        if event_type == "PLAN_NEXT_DAY_REQUESTED" and qualification_profile:
-            tenant_id = _latest_qualification_tenant(profile=qualification_profile)
+        if event_type == "PLAN_NEXT_DAY_REQUESTED":
+            next_day_request = NextDayRequest.model_validate(event_data)
+            tenant_id = next_day_request.tenant_id
         elif event_type == "PLAN_DAY_REQUESTED":
             recurring_request = RecurringDailyRequest.model_validate(event_data)
             operating_day_request = OperatingDayRequest.model_validate({
@@ -911,24 +921,58 @@ def handle_pubsub_push(
         scope = _resolve_authority_scope(tenant_id)
     except ValueError as exc:
         return _ack_permanent_pubsub_rejection(
-            message_id=message_id, reason=str(exc), trace_id=trace_id,
+            message_id=message_id, event_type=event_type, reason=str(exc),
+            trace_id=trace_id, age_seconds=age_seconds,
         )
     except HTTPException as exc:
-        if exc.status_code not in {400, 403}:
+        if exc.status_code == 403:
+            raise
+        if exc.status_code >= 500:
+            _log_pubsub_result(
+                message_id=message_id, event_type=event_type,
+                disposition="RETRYABLE_FAILURE", trace_id=trace_id,
+                age_seconds=age_seconds, reason=str(exc.detail),
+            )
             raise
         return _ack_permanent_pubsub_rejection(
-            message_id=message_id, reason=str(exc.detail), trace_id=trace_id,
+            message_id=message_id, event_type=event_type,
+            reason=str(exc.detail), trace_id=trace_id, age_seconds=age_seconds,
         )
     db = get_spanner_database(scope.database_id)
 
     if event_type == "PLAN_NEXT_DAY_REQUESTED":
-        next_day_res = _generate_next_day_plan(
-            tenant_id=tenant_id,
-            source_event_id=message_id,
-            source_publish_time=publish_time,
+        source_operating_day = _operating_day_from_managed_publish_time(published_at)
+        try:
+            next_day_res = _generate_next_day_plan(
+                tenant_id=tenant_id,
+                source_operating_day=source_operating_day,
+                correlation_trace_id=trace_id,
+            )
+        except HTTPException as exc:
+            if exc.status_code in {400, 404, 409, 422}:
+                return _ack_permanent_pubsub_rejection(
+                    message_id=message_id, event_type=event_type,
+                    reason=str(exc.detail), trace_id=trace_id,
+                    age_seconds=age_seconds,
+                )
+            _log_pubsub_result(
+                message_id=message_id, event_type=event_type,
+                disposition="RETRYABLE_FAILURE", trace_id=trace_id,
+                age_seconds=age_seconds, reason=str(exc.detail),
+            )
+            raise
+        disposition = (
+            "IDEMPOTENT_REPLAY" if next_day_res["idempotent_replay"] else "COMMITTED"
+        )
+        receipt_id = next_day_res["ledger_receipt"]["receipt_id"]
+        _log_pubsub_result(
+            message_id=message_id, event_type=event_type,
+            disposition=disposition, trace_id=trace_id,
+            age_seconds=age_seconds, receipt_id=receipt_id,
         )
         return {
             "status": "SCHEDULER_NEXT_DAY_PLAN_GENERATED",
+            "disposition": disposition,
             "message_id": message_id,
             "event_type": "PLAN_NEXT_DAY_REQUESTED",
             "next_day_plan_result": next_day_res,
@@ -938,11 +982,31 @@ def handle_pubsub_push(
         }
 
     if event_type == "PLAN_DAY_REQUESTED":
-        day_res = _generate_daily_morning_plan(
-            request=operating_day_request,
+        try:
+            day_res = _generate_daily_morning_plan(request=operating_day_request)
+        except HTTPException as exc:
+            if exc.status_code in {400, 404, 409, 422}:
+                return _ack_permanent_pubsub_rejection(
+                    message_id=message_id, event_type=event_type,
+                    reason=str(exc.detail), trace_id=trace_id,
+                    age_seconds=age_seconds,
+                )
+            _log_pubsub_result(
+                message_id=message_id, event_type=event_type,
+                disposition="RETRYABLE_FAILURE", trace_id=trace_id,
+                age_seconds=age_seconds, reason=str(exc.detail),
+            )
+            raise
+        disposition = "IDEMPOTENT_REPLAY" if day_res["idempotent_replay"] else "COMMITTED"
+        receipt_id = (day_res.get("ledger_receipt") or {}).get("receipt_id")
+        _log_pubsub_result(
+            message_id=message_id, event_type=event_type,
+            disposition=disposition, trace_id=trace_id,
+            age_seconds=age_seconds, receipt_id=receipt_id,
         )
         return {
             "status": "SCHEDULER_DAILY_PLAN_GENERATED",
+            "disposition": disposition,
             "message_id": message_id,
             "event_type": "PLAN_DAY_REQUESTED",
             "daily_plan_result": day_res,
@@ -953,8 +1017,9 @@ def handle_pubsub_push(
 
     if event_type != "RECALL_NOTICE_RECEIVED":
         return _ack_permanent_pubsub_rejection(
-            message_id=message_id, reason="UNSUPPORTED_PUBSUB_EVENT_TYPE",
-            trace_id=trace_id,
+            message_id=message_id, event_type=event_type,
+            reason="UNSUPPORTED_PUBSUB_EVENT_TYPE", trace_id=trace_id,
+            age_seconds=age_seconds,
         )
     coord_id = event_data.get("coordinator_id")
     incident_id = event_data.get("incident_id")
@@ -963,8 +1028,9 @@ def handle_pubsub_push(
         coord_id, incident_id, lot_id
     )):
         return _ack_permanent_pubsub_rejection(
-            message_id=message_id, reason="RECALL_EVENT_SCOPE_REQUIRED",
-            trace_id=trace_id,
+            message_id=message_id, event_type=event_type,
+            reason="RECALL_EVENT_SCOPE_REQUIRED", trace_id=trace_id,
+            age_seconds=age_seconds,
         )
     coord_state = None
     active_rev = None
@@ -986,14 +1052,16 @@ def handle_pubsub_push(
         raise HTTPException(status_code=503, detail="AUTHORITATIVE_COORDINATOR_READ_UNAVAILABLE") from exc
     if coord_state != "WAITING_FOR_EVENTS" or active_rev is None:
         return _ack_permanent_pubsub_rejection(
-            message_id=message_id, reason="WAITING_COORDINATOR_NOT_FOUND",
-            trace_id=trace_id,
+            message_id=message_id, event_type=event_type,
+            reason="WAITING_COORDINATOR_NOT_FOUND", trace_id=trace_id,
+            age_seconds=age_seconds,
         )
     notice_text = event_data.get("notice_text")
     if not isinstance(notice_text, str) or not notice_text.strip():
         return _ack_permanent_pubsub_rejection(
-            message_id=message_id, reason="RECALL_NOTICE_TEXT_REQUIRED",
-            trace_id=trace_id,
+            message_id=message_id, event_type=event_type,
+            reason="RECALL_NOTICE_TEXT_REQUIRED", trace_id=trace_id,
+            age_seconds=age_seconds,
         )
     hero_result = _execute_managed_recall_event(
         tenant_id=tenant_id, coordinator_id=coord_id,
@@ -1502,20 +1570,30 @@ def _parse_managed_publish_time(value: str) -> datetime:
 def _generate_next_day_plan(
     *,
     tenant_id: str,
-    source_event_id: str,
-    source_publish_time: str,
+    source_operating_day: str,
+    correlation_trace_id: str | None = None,
 ) -> Dict[str, Any]:
     """Derive and command one governed draft from authoritative unresolved state."""
-    trace_id = generate_trace_id()
+    trace_id = correlation_trace_id or generate_trace_id()
     scope = _resolve_authority_scope(tenant_id)
     db = get_spanner_database(scope.database_id)
-    publish_datetime = _parse_managed_publish_time(source_publish_time)
-    operating_date = (
-        publish_datetime.astimezone(ZoneInfo(OPERATING_TIME_ZONE)).date()
-        + timedelta(days=1)
-    )
+    try:
+        source_date = datetime.strptime(source_operating_day, "%Y-%m-%d").date()
+    except ValueError as exc:
+        raise HTTPException(400, "SOURCE_OPERATING_DAY_INVALID") from exc
+    operating_date = source_date + timedelta(days=1)
     plan_id = f"PLAN-{operating_date.isoformat()}"
     coordinator_id = f"COORD-{operating_date.isoformat()}"
+    stable_identity = {
+        "tenant_id": tenant_id,
+        "source_operating_day": source_operating_day,
+        "event_type": "PLAN_NEXT_DAY_REQUESTED",
+        "plan_id": plan_id,
+        "revision": "rev01",
+    }
+    stable_event_id = "NEXTDAY-" + hashlib.sha256(
+        json.dumps(stable_identity, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()[:32].upper()
 
     read_phase = "snapshot_open"
     try:
@@ -1660,8 +1738,9 @@ def _generate_next_day_plan(
             expected_plan_revision="rev08",
             trace_id=trace_id,
             payload={
-                "source_event_id": source_event_id,
-                "source_publish_time": source_publish_time,
+                "source_event_id": stable_event_id,
+                "source_operating_day": source_operating_day,
+                "event_type": "PLAN_NEXT_DAY_REQUESTED",
                 "operating_date": operating_date.isoformat(),
                 "plan_id": plan_id,
                 "revision": "rev01",
@@ -1682,6 +1761,19 @@ def _generate_next_day_plan(
                 "human_approval_required": True,
             },
         )
+    except httpx.HTTPStatusError as exc:
+        status_code = exc.response.status_code
+        if 400 <= status_code < 500:
+            try:
+                detail = exc.response.json().get("detail", "PLAN_LEDGER_REQUEST_REJECTED")
+            except (TypeError, ValueError):
+                detail = "PLAN_LEDGER_REQUEST_REJECTED"
+            raise HTTPException(status_code=status_code, detail=detail) from exc
+        raise HTTPException(
+            status_code=502, detail="PLAN_LEDGER_NEXT_DAY_COMMIT_FAILED"
+        ) from exc
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=502, detail="PLAN_LEDGER_NEXT_DAY_COMMIT_FAILED") from exc
 
@@ -1704,8 +1796,9 @@ def generate_next_day_plan(
     now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     return _generate_next_day_plan(
         tenant_id=tenant_id,
-        source_event_id=f"manual-{generate_trace_id()}",
-        source_publish_time=now,
+        source_operating_day=_operating_day_from_managed_publish_time(
+            _parse_managed_publish_time(now)
+        ),
     )
 
 

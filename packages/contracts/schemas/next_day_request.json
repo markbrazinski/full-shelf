@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "NextDayRequest",
+  "description": "Date-free next-day Scheduler request. Verified Pub/Sub publishTime supplies the source operating day.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["event_type", "tenant_id"],
+  "properties": {
+    "event_type": { "const": "PLAN_NEXT_DAY_REQUESTED" },
+    "tenant_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{2,63}$"
+    }
+  }
+}

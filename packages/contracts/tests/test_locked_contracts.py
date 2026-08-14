@@ -78,6 +78,14 @@ def test_recurring_daily_request_has_no_caller_selected_day_or_profile():
     assert "timestamp" not in schema["properties"]
 
 
+def test_next_day_request_has_only_ordinary_scope_and_event_type():
+    schema = _schema("next_day_request.json")
+    assert set(schema["required"]) == {"event_type", "tenant_id"}
+    assert "qualification_profile" not in schema["properties"]
+    assert "publish_time" not in schema["properties"]
+    assert "message_id" not in schema["properties"]
+
+
 def test_next_day_draft_requires_constraints_and_human_approval():
     schema = _schema("plan.json")
     draft = {

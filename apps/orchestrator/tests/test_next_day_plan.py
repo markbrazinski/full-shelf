@@ -97,7 +97,10 @@ def test_pubsub_next_day_delivery_requires_verified_identity_and_uses_publish_da
         email="delivery@example.iam.gserviceaccount.com",
         audience="https://orchestrator.example.run.app",
     )
-    result = {"status": "NEXT_DAY_DRAFT_CREATED", "idempotent_replay": False}
+    result = {
+        "status": "NEXT_DAY_DRAFT_CREATED", "idempotent_replay": False,
+        "ledger_receipt": {"receipt_id": "RCT-NEXT"},
+    }
     envelope = {
         "message": {
             "messageId": "managed-message-123",
@@ -115,11 +118,10 @@ def test_pubsub_next_day_delivery_requires_verified_identity_and_uses_publish_da
         )
     assert response.status_code == 200
     assert response.json()["delivery_identity"] == caller.email
-    assert generate.call_args.kwargs == {
-        "tenant_id": "east-bay-food-bank",
-        "source_event_id": "managed-message-123",
-        "source_publish_time": "2026-08-14T00:30:00Z",
-    }
+    assert generate.call_args.kwargs["tenant_id"] == "east-bay-food-bank"
+    assert generate.call_args.kwargs["source_operating_day"] == "2026-08-13"
+    assert "source_event_id" not in generate.call_args.kwargs
+    assert "source_publish_time" not in generate.call_args.kwargs
 
 
 def test_pubsub_push_rejects_missing_identity_before_interpretation():
@@ -146,7 +148,10 @@ def test_pubsub_redelivery_preserves_source_idempotency_inputs():
             "data": "eyJldmVudF90eXBlIjoiUExBTl9ORVhUX0RBWV9SRVFVRVNURUQiLCJ0ZW5hbnRfaWQiOiJlYXN0LWJheS1mb29kLWJhbmsifQ==",
         }
     }
-    result = {"status": "NEXT_DAY_DRAFT_CREATED", "idempotent_replay": False}
+    result = {
+        "status": "NEXT_DAY_DRAFT_CREATED", "idempotent_replay": False,
+        "ledger_receipt": {"receipt_id": "RCT-NEXT"},
+    }
     with patch.object(orchestrator_main, "_verify_managed_callback", return_value=caller), patch.object(
         orchestrator_main, "_generate_next_day_plan", return_value=result
     ) as generate:
@@ -155,13 +160,20 @@ def test_pubsub_redelivery_preserves_source_idempotency_inputs():
             headers={"Authorization": "Bearer signed"},
             json=envelope,
         )
+        second_envelope = {
+            "message": {**envelope["message"], "messageId": "managed-message-redelivery-456"}
+        }
         second = client.post(
             "/api/v1/orchestrator/pubsub/push",
             headers={"Authorization": "Bearer signed"},
-            json=envelope,
+            json=second_envelope,
         )
 
     assert first.status_code == second.status_code == 200
     assert generate.call_count == 2
-    assert generate.call_args_list[0].kwargs == generate.call_args_list[1].kwargs
-    assert generate.call_args_list[0].kwargs["source_event_id"] == "managed-message-redelivery-123"
+    assert generate.call_args_list[0].kwargs["tenant_id"] == (
+        generate.call_args_list[1].kwargs["tenant_id"]
+    )
+    assert generate.call_args_list[0].kwargs["source_operating_day"] == "2026-08-13"
+    assert generate.call_args_list[1].kwargs["source_operating_day"] == "2026-08-13"
+    assert all("source_event_id" not in call.kwargs for call in generate.call_args_list)
