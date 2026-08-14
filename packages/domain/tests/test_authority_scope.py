@@ -4,6 +4,7 @@ from full_shelf_domain.authority import (
     AuthorityConfigurationError,
     AuthorityScopeResolver,
     UnauthorizedAuthorityScope,
+    operating_day_authority_id,
 )
 
 
@@ -54,6 +55,17 @@ def test_configured_fresh_operating_day_prefix_resolves_without_static_allowlist
     assert scope.kind == "AUDIT_ISOLATED_FRESH_OPERATING_DAY"
     with pytest.raises(UnauthorizedAuthorityScope):
         resolver.resolve("audit-unconfigured-20260814-a1b2c3d4e5")
+
+
+def test_operating_day_authority_is_stable_and_changes_only_with_product_identity():
+    assert operating_day_authority_id("audit-canonical", "2026-08-14") == (
+        "audit-canonical-20260814"
+    )
+    assert operating_day_authority_id("audit-canonical", "2026-08-15") == (
+        "audit-canonical-20260815"
+    )
+    with pytest.raises(ValueError, match="OPERATING_DAY_INVALID"):
+        operating_day_authority_id("audit-canonical", "not-a-day")
 
 
 @pytest.mark.parametrize(

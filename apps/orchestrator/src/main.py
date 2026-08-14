@@ -30,8 +30,9 @@ from full_shelf_domain.authority import (
     AuthorityConfigurationError,
     AuthorityScopeResolver,
     UnauthorizedAuthorityScope,
+    operating_day_authority_id,
 )
-from full_shelf_domain.ledger_commands import OperatingPlanDefinition
+from full_shelf_domain.ledger_commands import OperatingDayRequest
 from full_shelf_domain.recall import (
     inspect_recall_notice_with_model_armor,
     extract_recall_entities_with_gemini_35,
@@ -333,19 +334,6 @@ def _resolve_authority_scope(tenant_id: str):
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 
-def _fresh_qualification_tenant(
-    *, profile: str, message_id: str, publish_time: str
-) -> str:
-    """Derive a new immutable operating-day tenant from managed delivery facts."""
-    if profile not in {"canonical", "altered"}:
-        raise ValueError("QUALIFICATION_PROFILE_NOT_ALLOWED")
-    operating_day = _parse_managed_publish_time(publish_time).astimezone(
-        ZoneInfo(OPERATING_TIME_ZONE)
-    ).date().strftime("%Y%m%d")
-    nonce = hashlib.sha256(message_id.encode("utf-8")).hexdigest()[:10]
-    return f"audit-{profile}-{operating_day}-{nonce}"
-
-
 def _latest_qualification_tenant(*, profile: str) -> str:
     """Resolve next-day work from committed state, never caller-selected scope."""
     if profile not in {"canonical", "altered"}:
@@ -562,16 +550,20 @@ def healthz_check():
 
 def _generate_daily_morning_plan(
     *,
-    tenant_id: str,
-    operating_plan: OperatingPlanDefinition,
-    source_event_id: str,
-    source_publish_time: str,
+    request: OperatingDayRequest,
 ) -> Dict[str, Any]:
     """Commit a validated morning plan definition through the private ledger."""
     trace_id = generate_trace_id()
+    tenant_id = operating_day_authority_id(request.tenant_id, request.operating_day)
+    operating_plan = request.operating_plan
+    authority_scope = f"{request.tenant_id}@{request.operating_day}"
     _resolve_authority_scope(tenant_id)
     plan_scope_digest = hashlib.sha256(
-        f"{tenant_id}\x00{operating_plan.plan_id}\x00rev07".encode("utf-8")
+        (
+            f"{request.tenant_id}\x00{request.operating_day}\x00"
+            f"{request.event_type}\x00{operating_plan.plan_id}\x00"
+            f"{operating_plan.revision}"
+        ).encode("utf-8")
     ).hexdigest()[:24]
 
     try:
@@ -586,8 +578,10 @@ def _generate_daily_morning_plan(
             trace_id=trace_id,
             payload={
                 **operating_plan.model_dump(),
-                "source_event_id": source_event_id,
-                "source_publish_time": source_publish_time,
+                "logical_tenant_id": request.tenant_id,
+                "operating_day": request.operating_day,
+                "request_type": request.event_type,
+                "authority_scope": authority_scope,
             },
         )
     except Exception as exc:
@@ -600,6 +594,10 @@ def _generate_daily_morning_plan(
             else "DAILY_PLAN_GENERATED_REV07"
         ),
         "revision": "rev07",
+        "tenant_id": request.tenant_id,
+        "operating_day": request.operating_day,
+        "authority_scope": authority_scope,
+        "authority_tenant_id": tenant_id,
         "plan_details": operating_plan.model_dump(),
         "idempotent_replay": ledger_result["idempotent_replay"],
         "ledger_receipt": ledger_result["receipt"],
@@ -609,18 +607,11 @@ def _generate_daily_morning_plan(
 
 @app.post("/api/v1/orchestrator/daily-plan/generate")
 def generate_daily_morning_plan(
-    operating_plan: OperatingPlanDefinition,
-    tenant_id: str = Query("east-bay-food-bank"),
+    request: OperatingDayRequest,
     x_api_key: Optional[str] = Header(None, alias="X-Full-Shelf-API-Key"),
 ):
     verify_judge_key(x_api_key)
-    now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-    return _generate_daily_morning_plan(
-        tenant_id=tenant_id,
-        operating_plan=operating_plan,
-        source_event_id=f"manual-{generate_trace_id()}",
-        source_publish_time=now,
-    )
+    return _generate_daily_morning_plan(request=request)
 
 
 # -------------------------------------------------------------------
@@ -887,17 +878,17 @@ def handle_pubsub_push(
 
     event_type = event_data.get("event_type", "") or message.get("attributes", {}).get("event_type", "")
 
-    tenant_id = event_data.get("tenant_id")
     qualification_profile = event_data.get("qualification_profile")
     try:
-        if event_type == "PLAN_DAY_REQUESTED" and qualification_profile:
-            tenant_id = _fresh_qualification_tenant(
-                profile=qualification_profile,
-                message_id=message_id,
-                publish_time=publish_time,
-            )
-        elif event_type == "PLAN_NEXT_DAY_REQUESTED" and qualification_profile:
+        tenant_id = event_data.get("tenant_id")
+        if event_type == "PLAN_NEXT_DAY_REQUESTED" and qualification_profile:
             tenant_id = _latest_qualification_tenant(profile=qualification_profile)
+        elif event_type == "PLAN_DAY_REQUESTED":
+            operating_day_request = OperatingDayRequest.model_validate(event_data)
+            tenant_id = operating_day_authority_id(
+                operating_day_request.tenant_id,
+                operating_day_request.operating_day,
+            )
         if not isinstance(tenant_id, str):
             raise ValueError("PUBSUB_TENANT_REQUIRED")
         scope = _resolve_authority_scope(tenant_id)
@@ -930,21 +921,8 @@ def handle_pubsub_push(
         }
 
     if event_type == "PLAN_DAY_REQUESTED":
-        try:
-            operating_plan = OperatingPlanDefinition.model_validate(
-                event_data.get("operating_plan")
-            )
-        except Exception as exc:
-            return _ack_permanent_pubsub_rejection(
-                message_id=message_id,
-                reason="OPERATING_PLAN_DEFINITION_REQUIRED",
-                trace_id=trace_id,
-            )
         day_res = _generate_daily_morning_plan(
-            tenant_id=tenant_id,
-            operating_plan=operating_plan,
-            source_event_id=message_id,
-            source_publish_time=publish_time,
+            request=operating_day_request,
         )
         return {
             "status": "SCHEDULER_DAILY_PLAN_GENERATED",

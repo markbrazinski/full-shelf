@@ -8,6 +8,7 @@ mapping is deployment configuration, and an unknown tenant fails closed.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 import os
 import re
 
@@ -114,3 +115,21 @@ class AuthorityScopeResolver:
                 kind="AUDIT_ISOLATED_FRESH_OPERATING_DAY",
             )
         raise UnauthorizedAuthorityScope("TENANT_SCOPE_NOT_AUTHORIZED")
+
+
+def operating_day_authority_id(logical_tenant_id: str, operating_day: str) -> str:
+    """Return the stable storage authority for one tenant operating day.
+
+    The relational model isolates an operating day as a tenant-shaped authority
+    scope.  This identifier is product identity, not delivery identity: Pub/Sub
+    message IDs, publish timestamps, and qualification labels never participate.
+    """
+
+    tenant = logical_tenant_id.strip()
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{2,54}", tenant):
+        raise ValueError("OPERATING_DAY_TENANT_INVALID")
+    try:
+        parsed_day = date.fromisoformat(operating_day)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("OPERATING_DAY_INVALID") from exc
+    return f"{tenant}-{parsed_day.strftime('%Y%m%d')}"

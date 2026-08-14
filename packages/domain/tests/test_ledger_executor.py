@@ -191,17 +191,20 @@ def test_daily_scheduler_command_atomically_initializes_isolated_operating_plan(
     command = coordinator_command(
         command_id="CMD-DAY-ALT",
         idempotency_key="daily-plan:alt",
+        tenant_id="audit-tenant-20260814",
         incident_id="INC-DAY-ALT",
         agent_role="FULFILLMENT_RECOVERY_PLANNER",
         command_type=LedgerCommandType.SAVE_PLAN_REVISION,
         expected_plan_revision="rev07",
         payload={
+            "logical_tenant_id": "audit-tenant",
+            "operating_day": "2026-08-14",
+            "request_type": "PLAN_DAY_REQUESTED",
+            "authority_scope": "audit-tenant@2026-08-14",
             "tenant_name": "Altered isolated operating day",
             "plan_id": "PLAN-ALT-DAY",
             "revision": "rev07",
             "status": "ACTIVE",
-            "source_event_id": "scheduler-message-1",
-            "source_publish_time": "2026-08-14T12:30:00Z",
             "lots": [{
                 "lot_id": "LOT-ALT", "code": "LOT-ALT",
                 "produce_type": "Spinach", "hazard_status": "CLEAR_SAFE",
@@ -235,7 +238,7 @@ def test_daily_scheduler_command_atomically_initializes_isolated_operating_plan(
     )
     transaction = DailyTransaction(active_revision=None)
     result = SpannerLedgerCommandExecutor(
-        FakeDatabase(transaction), allowed_tenant_ids={"audit-tenant"}
+        FakeDatabase(transaction), allowed_tenant_ids={"audit-tenant-20260814"}
     ).execute(command, IDENTITY)
 
     assert result.receipt["status"] == "SUCCESS"

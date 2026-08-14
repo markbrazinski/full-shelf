@@ -15,7 +15,10 @@ def _schema(name):
 
 @pytest.mark.parametrize(
     "name",
-    ["approval.json", "event.json", "incident.json", "plan.json", "ledger_command.json"],
+    [
+        "approval.json", "event.json", "incident.json", "plan.json",
+        "ledger_command.json", "operating_day_request.json",
+    ],
 )
 def test_schema_is_valid_draft_2020_12(name):
     jsonschema.Draft202012Validator.check_schema(_schema(name))
@@ -53,6 +56,15 @@ def test_locked_incident_lifecycle_and_planning_events_are_contract_states():
     ]
     event_types = set(_schema("event.json")["properties"]["event_type"]["enum"])
     assert {"PLAN_DAY_REQUESTED", "PLAN_NEXT_DAY_REQUESTED", "RECALL_NOTICE_RECEIVED"} <= event_types
+
+
+def test_operating_day_request_uses_product_identity_not_delivery_identity():
+    schema = _schema("operating_day_request.json")
+    assert set(schema["required"]) == {
+        "event_type", "tenant_id", "operating_day", "operating_plan"
+    }
+    assert "qualification_profile" not in schema["properties"]
+    assert "message_id" not in schema["properties"]
 
 
 def test_next_day_draft_requires_constraints_and_human_approval():

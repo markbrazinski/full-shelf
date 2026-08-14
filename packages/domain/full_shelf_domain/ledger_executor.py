@@ -9,6 +9,7 @@ from typing import Any, Dict, Iterable
 
 from google.cloud import spanner
 
+from .authority import operating_day_authority_id
 from .identity import VerifiedGoogleIdentity
 from .ledger_commands import (
     AllocateSafeStockPayload,
@@ -249,6 +250,14 @@ class SpannerLedgerCommandExecutor:
     ) -> int:
         if command.command_type is LedgerCommandType.SAVE_PLAN_REVISION:
             assert isinstance(payload, SavePlanRevisionPayload)
+            if command.tenant_id != operating_day_authority_id(
+                payload.logical_tenant_id, payload.operating_day
+            ):
+                raise ValueError("OPERATING_DAY_STORAGE_AUTHORITY_MISMATCH")
+            if payload.authority_scope != (
+                f"{payload.logical_tenant_id}@{payload.operating_day}"
+            ):
+                raise ValueError("OPERATING_DAY_AUTHORITY_SCOPE_MISMATCH")
             existing_rows = transaction.execute_sql(
                 "SELECT status FROM PlanRevisions WHERE tenant_id = @tenant_id "
                 "AND plan_id = @plan_id AND revision = @revision",
@@ -374,9 +383,11 @@ class SpannerLedgerCommandExecutor:
                 table="InboundEvents",
                 columns=["tenant_id", "source_event_id", "event_type", "status",
                          "payload", "occurred_at"],
-                values=[[command.tenant_id, payload.source_event_id,
+                values=[[command.tenant_id, command.idempotency_key,
                          "PLAN_DAY_REQUESTED", "ACCEPTED",
-                         json.dumps({"source_publish_time": payload.source_publish_time,
+                         json.dumps({"logical_tenant_id": payload.logical_tenant_id,
+                                     "operating_day": payload.operating_day,
+                                     "authority_scope": payload.authority_scope,
                                      "plan_id": payload.plan_id,
                                      "revision": payload.revision}, sort_keys=True),
                          spanner.COMMIT_TIMESTAMP]],

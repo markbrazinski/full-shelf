@@ -84,9 +84,18 @@ class OperatingPlanDefinition(StrictPayload):
     custody_edges: list[OperatingCustodyEdgePayload] = Field(min_length=1)
 
 
+class OperatingDayRequest(StrictPayload):
+    event_type: Literal["PLAN_DAY_REQUESTED"]
+    tenant_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{2,54}$")
+    operating_day: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    operating_plan: OperatingPlanDefinition
+
+
 class SavePlanRevisionPayload(OperatingPlanDefinition):
-    source_event_id: str = Field(min_length=1, max_length=256)
-    source_publish_time: str = Field(min_length=1, max_length=64)
+    logical_tenant_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{2,54}$")
+    operating_day: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    request_type: Literal["PLAN_DAY_REQUESTED"]
+    authority_scope: str = Field(min_length=3, max_length=128)
 
 
 class SignedRepairDiffPayload(StrictPayload):
