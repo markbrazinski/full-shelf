@@ -145,6 +145,7 @@ def extract_recall_entities_with_gemini_35(
     from importlib.metadata import version
 
     from google.adk.agents import Agent
+    from google.adk.planners import BuiltInPlanner
     from google.adk.runners import Runner
     from google.adk.sessions import InMemorySessionService
     from google.genai import types
@@ -177,6 +178,11 @@ def extract_recall_entities_with_gemini_35(
         name="RecallExtractionAgent",
         model=MODEL_ID,
         output_schema=RecallExtractionSchema,
+        planner=BuiltInPlanner(
+            thinking_config=types.ThinkingConfig(thinking_budget=0),
+        ),
+        disallow_transfer_to_parent=True,
+        disallow_transfer_to_peers=True,
         generate_content_config=types.GenerateContentConfig(
             temperature=0,
             max_output_tokens=512,
@@ -220,6 +226,9 @@ def extract_recall_entities_with_gemini_35(
                 raise AdkExtractionFailure("ADK_MODEL_ERROR")
             if event.author != agent.name or not event.is_final_response():
                 continue
+            finish_reason = getattr(event.finish_reason, "name", event.finish_reason)
+            if finish_reason not in {None, "STOP"}:
+                raise AdkExtractionFailure("ADK_RESPONSE_INCOMPLETE")
             text = "".join(
                 part.text or ""
                 for part in (event.content.parts if event.content else [])

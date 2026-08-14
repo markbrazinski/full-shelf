@@ -21,6 +21,9 @@ authoritative state.
    extraction fallback.
 3. The Agent uses a strict Pydantic output schema with exactly five fields:
    lot ID, product name, hazard, required action, and source anchor.
+   An ADK `BuiltInPlanner` disables model thinking for this bounded extraction
+   task so the output budget is reserved for the structured response. Any
+   non-`STOP` final response is incomplete and requires manual review.
 4. The orchestrator independently validates the final ADK response against the
    same schema and verifies every extracted value occurs in the screened source
    notice. Missing, extra, malformed, or fabricated values require manual

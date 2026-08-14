@@ -28,10 +28,12 @@ def event(
     invocation_id="adk-run-123",
     event_id="adk-event-456",
     error_code=None,
+    finish_reason="STOP",
 ):
     return SimpleNamespace(
         invocation_id=invocation_id,
         error_code=error_code,
+        finish_reason=finish_reason,
         author="RecallExtractionAgent",
         content=SimpleNamespace(parts=[SimpleNamespace(text=text)]),
         id=event_id,
@@ -104,6 +106,9 @@ def test_adk_runner_is_load_bearing_and_preserves_real_identifiers():
     }
     assert agent_cls.call_args.kwargs["model"] == MODEL_ID
     assert agent_cls.call_args.kwargs["output_schema"] is RecallExtractionSchema
+    assert agent_cls.call_args.kwargs["planner"].thinking_config.thinking_budget == 0
+    assert agent_cls.call_args.kwargs["disallow_transfer_to_parent"] is True
+    assert agent_cls.call_args.kwargs["disallow_transfer_to_peers"] is True
 
 
 @pytest.mark.parametrize(
@@ -150,4 +155,11 @@ def test_missing_adk_run_identifier_requires_manual_review():
     extracted, _ = invoke([event(invocation_id="")])
     assert extracted["status"] == "MANUAL_REVIEW_REQUIRED"
     assert extracted["reason_code"] == "ADK_RUN_IDENTIFIER_MISSING"
+    assert extracted["downstream_allowed"] is False
+
+
+def test_truncated_adk_response_requires_manual_review():
+    extracted, _ = invoke([event(text='{"lot_id":"', finish_reason="MAX_TOKENS")])
+    assert extracted["status"] == "MANUAL_REVIEW_REQUIRED"
+    assert extracted["reason_code"] == "ADK_RESPONSE_INCOMPLETE"
     assert extracted["downstream_allowed"] is False
