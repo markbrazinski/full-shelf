@@ -26,13 +26,15 @@ paths:
     post:
       summary: Receive an OIDC-authenticated managed Pub/Sub delivery
       description: >-
-        Accepts PLAN_DAY_REQUESTED as an OperatingDayRequest,
+        Accepts PLAN_DAY_REQUESTED as a date-free RecurringDailyRequest,
         PLAN_NEXT_DAY_REQUESTED, or
         RECALL_NOTICE_RECEIVED. Recall notices pass managed Model Armor before
         ADK/Gemini or any recall ledger mutation. Duplicate deliveries resolve
-        to stable command receipts. A daily request is keyed by logical tenant,
-        operating day, request type, plan ID, and revision rather than Pub/Sub
-        message identity. Authenticated permanently malformed or
+        to stable command receipts. After managed OIDC verification, daily
+        operating_day is derived only from Pub/Sub message.publishTime in the
+        configured food-bank timezone. The resulting ledger request is keyed by
+        logical tenant, derived ISO day, request type, plan ID, and revision;
+        raw timestamps and delivery identity are excluded. Authenticated permanently malformed or
         unsupported messages are acknowledged with 2xx and zero mutations;
         transient managed or authoritative failures remain retryable.
       security: [{ googleManagedOidc: [] }]

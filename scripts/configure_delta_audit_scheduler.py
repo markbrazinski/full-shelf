@@ -57,7 +57,7 @@ def main():
     next_name = f"full-shelf-delta-{suffix}-next-day"
     upsert_job(daily_name, {
         "event_type": "PLAN_DAY_REQUESTED",
-        "qualification_profile": args.fixture,
+        "tenant_id": f"audit-{args.fixture}",
         "operating_plan": fixture["operating_plan"],
     })
     upsert_job(next_name, {

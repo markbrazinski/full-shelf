@@ -56,11 +56,14 @@ def test_task_callback_rejects_unauthenticated_before_ledger():
     ledger.assert_not_called()
 
 
-def _pubsub_envelope(event, message_id="scheduler-message-1"):
+def _pubsub_envelope(
+    event, message_id="scheduler-message-1",
+    publish_time="2026-08-14T12:30:00Z",
+):
     return {
         "message": {
             "messageId": message_id,
-            "publishTime": "2026-08-14T12:30:00Z",
+            "publishTime": publish_time,
             "data": base64.b64encode(json.dumps(event).encode()).decode(),
         }
     }
@@ -94,7 +97,7 @@ def _minimal_operating_plan():
 def test_pubsub_daily_delivery_requires_google_identity_before_plan_logic():
     client = TestClient(main.app)
     event = {"event_type": "PLAN_DAY_REQUESTED", "tenant_id": "east-bay-food-bank",
-             "operating_day": "2026-08-14", "operating_plan": _minimal_operating_plan()}
+             "operating_plan": _minimal_operating_plan()}
     with patch.object(
         main, "_verify_managed_callback", side_effect=main.HTTPException(401, "required")
     ), patch.object(main, "_generate_daily_morning_plan") as generate:
@@ -107,7 +110,7 @@ def test_pubsub_daily_delivery_requires_google_identity_before_plan_logic():
 def test_authenticated_duplicate_daily_deliveries_return_stable_2xx_result():
     client = TestClient(main.app)
     event = {"event_type": "PLAN_DAY_REQUESTED", "tenant_id": "audit-canonical",
-             "operating_day": "2026-08-14", "operating_plan": _minimal_operating_plan()}
+             "operating_plan": _minimal_operating_plan()}
     results = [
         {"status": "DAILY_PLAN_GENERATED_REV07", "idempotent_replay": False},
         {"status": "DAILY_PLAN_EXISTS_IDEMPOTENT", "idempotent_replay": True},
@@ -133,6 +136,73 @@ def test_authenticated_duplicate_daily_deliveries_return_stable_2xx_result():
     assert generate.call_count == 2
     assert generate.call_args_list[0].kwargs["request"].operating_day == "2026-08-14"
     assert generate.call_args_list[0].kwargs["request"].tenant_id == "audit-canonical"
+
+
+def test_managed_publish_time_uses_food_bank_day_boundary():
+    before_midnight = datetime.fromisoformat("2026-08-15T06:59:59+00:00")
+    at_midnight = datetime.fromisoformat("2026-08-15T07:00:00+00:00")
+    with patch.object(main, "OPERATING_TIME_ZONE", "America/Los_Angeles"):
+        assert main._operating_day_from_managed_publish_time(before_midnight) == (
+            "2026-08-14"
+        )
+        assert main._operating_day_from_managed_publish_time(at_midnight) == (
+            "2026-08-15"
+        )
+
+
+def test_same_local_day_is_stable_and_next_local_day_changes_authority():
+    client = TestClient(main.app)
+    event = {
+        "event_type": "PLAN_DAY_REQUESTED", "tenant_id": "audit-canonical",
+        "operating_plan": _minimal_operating_plan(),
+    }
+    stable = {"status": "OK", "idempotent_replay": True}
+    with patch.object(main, "_verify_managed_callback", return_value=CALLER), patch.object(
+        main, "_resolve_authority_scope"
+    ), patch.object(main, "_generate_daily_morning_plan", return_value=stable) as generate:
+        for message_id, publish_time in (
+            ("managed-a", "2026-08-14T05:00:00Z"),
+            ("managed-b", "2026-08-14T06:59:59Z"),
+            ("managed-c", "2026-08-14T07:00:00Z"),
+        ):
+            response = client.post(
+                "/api/v1/orchestrator/pubsub/push",
+                headers={"Authorization": "Bearer signed"},
+                json=_pubsub_envelope(event, message_id, publish_time),
+            )
+            assert response.status_code == 200
+
+    requests = [call.kwargs["request"] for call in generate.call_args_list]
+    assert [request.operating_day for request in requests] == [
+        "2026-08-13", "2026-08-13", "2026-08-14"
+    ]
+    assert [main.operating_day_authority_id(request.tenant_id, request.operating_day)
+            for request in requests] == [
+        "audit-canonical-20260813",
+        "audit-canonical-20260813",
+        "audit-canonical-20260814",
+    ]
+
+
+def test_recurring_daily_rejects_payload_day_and_caller_timestamp():
+    client = TestClient(main.app)
+    event = {
+        "event_type": "PLAN_DAY_REQUESTED", "tenant_id": "audit-canonical",
+        "operating_day": "2099-01-01",
+        "timestamp": "2099-01-01T00:00:00Z",
+        "operating_plan": _minimal_operating_plan(),
+    }
+    with patch.object(main, "_verify_managed_callback", return_value=CALLER), patch.object(
+        main, "_generate_daily_morning_plan"
+    ) as generate:
+        response = client.post(
+            "/api/v1/orchestrator/pubsub/push",
+            headers={"Authorization": "Bearer signed"},
+            json=_pubsub_envelope(event),
+        )
+    assert response.status_code == 200
+    assert response.json()["status"] == "PERMANENT_EVENT_REJECTED_ACKNOWLEDGED"
+    generate.assert_not_called()
 
 
 def test_distinct_scheduler_message_ids_resolve_to_one_operating_day_command():
@@ -163,6 +233,8 @@ def test_distinct_scheduler_message_ids_resolve_to_one_operating_day_command():
     )
     assert first_command["idempotency_key"] == duplicate_command["idempotency_key"]
     assert first_command["payload"] == duplicate_command["payload"]
+    assert "source_publish_time" not in first_command["payload"]
+    assert "message_id" not in first_command["payload"]
     assert first_result["ledger_receipt"]["receipt_id"] == "RCT-STABLE"
     assert duplicate_result["ledger_receipt"]["receipt_id"] == "RCT-STABLE"
     assert duplicate_result["idempotent_replay"] is True

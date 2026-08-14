@@ -98,6 +98,21 @@ class AuthorityScopeResolver:
                 database_id=self._canonical_database_id,
                 kind="CANONICAL",
             )
+        canonical_day_prefix = f"{self._canonical_tenant_id}-"
+        if requested.startswith(canonical_day_prefix):
+            date_token = requested[len(canonical_day_prefix):]
+            try:
+                parsed_day = date.fromisoformat(
+                    f"{date_token[:4]}-{date_token[4:6]}-{date_token[6:]}"
+                )
+            except ValueError:
+                parsed_day = None
+            if parsed_day is not None and parsed_day.strftime("%Y%m%d") == date_token:
+                return AuthorityScope(
+                    tenant_id=requested,
+                    database_id=self._canonical_database_id,
+                    kind="CANONICAL_OPERATING_DAY",
+                )
         if requested in self._audit_tenant_ids:
             return AuthorityScope(
                 tenant_id=requested,

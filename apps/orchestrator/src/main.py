@@ -32,7 +32,7 @@ from full_shelf_domain.authority import (
     UnauthorizedAuthorityScope,
     operating_day_authority_id,
 )
-from full_shelf_domain.ledger_commands import OperatingDayRequest
+from full_shelf_domain.ledger_commands import OperatingDayRequest, RecurringDailyRequest
 from full_shelf_domain.recall import (
     inspect_recall_notice_with_model_armor,
     extract_recall_entities_with_gemini_35,
@@ -332,6 +332,17 @@ def _resolve_authority_scope(tenant_id: str):
         ) from exc
     except UnauthorizedAuthorityScope as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+def _operating_day_from_managed_publish_time(published_at: datetime) -> str:
+    """Normalize verified Pub/Sub delivery time to the configured food-bank day."""
+    if published_at.tzinfo is None:
+        raise ValueError("MANAGED_PUBLISH_TIME_MUST_BE_TIMEZONE_AWARE")
+    try:
+        operating_zone = ZoneInfo(OPERATING_TIME_ZONE)
+    except Exception as exc:
+        raise HTTPException(503, "OPERATING_TIME_ZONE_INVALID") from exc
+    return published_at.astimezone(operating_zone).date().isoformat()
 
 
 def _latest_qualification_tenant(*, profile: str) -> str:
@@ -884,7 +895,13 @@ def handle_pubsub_push(
         if event_type == "PLAN_NEXT_DAY_REQUESTED" and qualification_profile:
             tenant_id = _latest_qualification_tenant(profile=qualification_profile)
         elif event_type == "PLAN_DAY_REQUESTED":
-            operating_day_request = OperatingDayRequest.model_validate(event_data)
+            recurring_request = RecurringDailyRequest.model_validate(event_data)
+            operating_day_request = OperatingDayRequest.model_validate({
+                **recurring_request.model_dump(),
+                "operating_day": _operating_day_from_managed_publish_time(
+                    published_at
+                ),
+            })
             tenant_id = operating_day_authority_id(
                 operating_day_request.tenant_id,
                 operating_day_request.operating_day,

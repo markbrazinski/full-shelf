@@ -18,6 +18,7 @@ def _schema(name):
     [
         "approval.json", "event.json", "incident.json", "plan.json",
         "ledger_command.json", "operating_day_request.json",
+        "recurring_daily_request.json",
     ],
 )
 def test_schema_is_valid_draft_2020_12(name):
@@ -65,6 +66,16 @@ def test_operating_day_request_uses_product_identity_not_delivery_identity():
     }
     assert "qualification_profile" not in schema["properties"]
     assert "message_id" not in schema["properties"]
+
+
+def test_recurring_daily_request_has_no_caller_selected_day_or_profile():
+    schema = _schema("recurring_daily_request.json")
+    assert set(schema["required"]) == {
+        "event_type", "tenant_id", "operating_plan"
+    }
+    assert "operating_day" not in schema["properties"]
+    assert "qualification_profile" not in schema["properties"]
+    assert "timestamp" not in schema["properties"]
 
 
 def test_next_day_draft_requires_constraints_and_human_approval():

@@ -91,6 +91,14 @@ class OperatingDayRequest(StrictPayload):
     operating_plan: OperatingPlanDefinition
 
 
+class RecurringDailyRequest(StrictPayload):
+    """Date-free Scheduler input; managed delivery time supplies the day."""
+
+    event_type: Literal["PLAN_DAY_REQUESTED"]
+    tenant_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{2,54}$")
+    operating_plan: OperatingPlanDefinition
+
+
 class SavePlanRevisionPayload(OperatingPlanDefinition):
     logical_tenant_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{2,54}$")
     operating_day: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")

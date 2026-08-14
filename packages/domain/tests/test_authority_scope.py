@@ -68,6 +68,22 @@ def test_operating_day_authority_is_stable_and_changes_only_with_product_identit
         operating_day_authority_id("audit-canonical", "not-a-day")
 
 
+def test_canonical_operating_day_authority_routes_only_valid_dates_to_main():
+    resolver = AuthorityScopeResolver(
+        canonical_tenant_id="east-bay-food-bank",
+        canonical_database_id="full-shelf-main",
+        audit_database_id="full-shelf-audit",
+        audit_tenant_ids=set(),
+    )
+    scope = resolver.resolve("east-bay-food-bank-20260815")
+    assert scope.database_id == "full-shelf-main"
+    assert scope.kind == "CANONICAL_OPERATING_DAY"
+    with pytest.raises(UnauthorizedAuthorityScope):
+        resolver.resolve("east-bay-food-bank-20260230")
+    with pytest.raises(UnauthorizedAuthorityScope):
+        resolver.resolve("east-bay-food-bank-auditor-selected")
+
+
 @pytest.mark.parametrize(
     ("canonical_database", "audit_database", "audit_tenants", "error"),
     [
