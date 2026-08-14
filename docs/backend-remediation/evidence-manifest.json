@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "recorded_at": "2026-08-14T02:34:49Z",
+  "recorded_at": "2026-08-14T03:19:18Z",
   "builder_acceptance_authority": false,
   "branch": "repair/backend-acceptance-20260813",
   "baseline_commit": "bfd1e1040824da379d69add8755682bc8eafebd6",
@@ -54,6 +54,12 @@
       "receipt_id": "RCT-19F3D0BAA928D4849F77E123",
       "cloud_run_trace_id": "d05bdc027d78d4d5b625b6acfce91ae5",
       "ledger_trace_id": "4a9accd3ef749e44eafcb3662fa37014"
+    },
+    {
+      "work_package": "WP10",
+      "task_decision_id": "site01-3333444455556666777788889999aaaa",
+      "receipt_id": "RCT-E3A117925CF6FDA66B50970C",
+      "cloud_trace_id": "3333444455556666777788889999aaaa"
     }
   ],
   "wp1": {
@@ -153,6 +159,34 @@
     "same_connection_receipt": "RCT-B98C0B3C40844BDCB1084F9B",
     "resumed_connection_receipt": "RCT-208D1843F053D04DD4612FB7"
   },
+  "wp10": {
+    "implementation_commits": [
+      "a20d9dc7a93166f024b9e1bd09f3d90944f4f997",
+      "65f247de49b52546942f21a9b602ebfc395d24de"
+    ],
+    "local_tests": {
+      "collected": 125,
+      "passed": 125,
+      "failed": 0,
+      "warnings": 18
+    },
+    "orchestrator": {
+      "build_id": "5a89a95e-999d-491e-b5a7-730e6652c726",
+      "source_revision": "65f247de49b52546942f21a9b602ebfc395d24de",
+      "revision": "full-shelf-orchestrator-00040-2hc",
+      "image_digest": "sha256:e567938230786da9a1f5b71c04fb8585e55771c46022a4b7690b1e3466969f55"
+    },
+    "plan_ledger": {
+      "build_id": "a3f78520-9e6e-4d4a-b5f8-d284e1d47d59",
+      "source_revision": "a20d9dc7a93166f024b9e1bd09f3d90944f4f997",
+      "revision": "full-shelf-plan-ledger-00020-rls",
+      "image_digest": "sha256:1336bbe769d65cfc02391234da854c6b20a1e94f09b13d48781ecb5f4eead466"
+    },
+    "evidence_endpoint_trace_id": "444455556666777788889999aaaabbbb",
+    "correlated_managed_trace_id": "3333444455556666777788889999aaaa",
+    "task_name": "projects/preflight-hackathon/locations/us-central1/queues/full-shelf-deadlines/tasks/site01-3333444455556666777788889999aaaa",
+    "receipt_id": "RCT-E3A117925CF6FDA66B50970C"
+  },
   "claims": [
     {
       "capability": "WP0 baseline and repair map",
@@ -189,6 +223,12 @@
       "classification": "OBSERVED_LIVE",
       "observed_at": "2026-08-14T02:34:49Z",
       "limitation": "Builder-observed same-connection and exact-cursor reconnect executions; final acceptance remains with a fresh independent auditor."
+    },
+    {
+      "capability": "WP10 trace, evidence, and provenance",
+      "classification": "OBSERVED_LIVE",
+      "observed_at": "2026-08-14T03:19:18Z",
+      "limitation": "Builder-observed endpoint and fresh hero-loop escalation trace readbacks; final acceptance remains with a fresh independent auditor."
     }
   ]
 }
