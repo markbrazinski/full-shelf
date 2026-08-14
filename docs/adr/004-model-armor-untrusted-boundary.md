@@ -10,15 +10,20 @@ External recall notices, supplier bulletins, and partner Webhook payloads are un
    the ADK/Gemini stage.
 2. The exact managed template is
    `projects/preflight-hackathon/locations/us-central1/templates/full-shelf-recall-input-v1`.
+   The resource ID is retained for compatibility, but its template-level
+   selector is `FILTER_VERSION_ALIAS_LATEST`; the runtime does not infer a
+   filter version from the resource name.
 3. The orchestrator uses Application Default Credentials for its runtime
    identity and sends the notice in `userPromptData.text` to the regional REST
    operation:
 
    `POST https://modelarmor.us-central1.rep.googleapis.com/v1/projects/preflight-hackathon/locations/us-central1/templates/full-shelf-recall-input-v1:sanitizeUserPrompt`
 
-4. Only `invocationResult=SUCCESS`, `filterMatchState=NO_MATCH_FOUND`, and a
-   nonempty set of successfully executed filters permit processing to advance
-   to the next authorized stage.
+4. Only `invocationResult=SUCCESS`, `filterMatchState=NO_MATCH_FOUND`, a
+   nonempty set of successfully executed filters, and sanitize metadata naming
+   an effective `STABLE` or `LATEST` filter alias permit processing to advance
+   to the next authorized stage. Legacy, retired, missing, or malformed filter
+   version metadata fails closed.
 5. `MATCH_FOUND`, any non-200 response, timeout, malformed response, missing
    filters, or any skipped/failed filter fails closed before Gemini/ADK and
    before ledger invocation.
@@ -27,6 +32,10 @@ External recall notices, supplier bulletins, and partner Webhook payloads are un
    contains the raw notice, access token, or upstream error body.
 7. A template or floor-setting GET and local substring matching are not
    accepted as sanitization.
+8. `scripts/migrate_model_armor_filter.py` performs a narrowly masked,
+   idempotent selector migration and verifies that the configured filters were
+   preserved. Managed sanitize responses—not the PATCH alone—prove the
+   effective version.
 
 ## Consequences
 

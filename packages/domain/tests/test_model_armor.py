@@ -5,7 +5,8 @@ import httpx
 from full_shelf_domain.recall import inspect_recall_notice_with_model_armor
 
 
-def managed_response(match_state="NO_MATCH_FOUND", invocation="SUCCESS", filters=None):
+def managed_response(match_state="NO_MATCH_FOUND", invocation="SUCCESS", filters=None,
+                     version_alias="FILTER_VERSION_ALIAS_LATEST"):
     response = MagicMock(status_code=200)
     response.json.return_value = {"sanitizationResult": {
         "filterMatchState": match_state,
@@ -14,6 +15,10 @@ def managed_response(match_state="NO_MATCH_FOUND", invocation="SUCCESS", filters
             "piAndJailbreakFilterResult": {
                 "executionState": "EXECUTION_SUCCESS", "matchState": match_state,
             }
+        }},
+        "sanitizationMetadata": {"filterVersionConfig": {
+            "filterVersion": "v3", "filterVersionAlias": version_alias,
+            "releaseDate": {"year": 2026, "month": 7, "day": 20},
         }},
     }}
     return response
@@ -36,6 +41,8 @@ def test_benign_notice_requires_managed_no_match():
     assert result["invocation_result"] == "SUCCESS"
     assert result["filter_match_state"] == "NO_MATCH_FOUND"
     assert result["managed_operation"] == "sanitizeUserPrompt"
+    assert result["filter_version"] == "v3"
+    assert result["filter_version_alias"] == "FILTER_VERSION_ALIAS_LATEST"
     assert result["model_armor_location"] == "us-central1"
     assert "notice_text" not in result
     request = post.call_args
@@ -94,4 +101,20 @@ def test_skipped_filter_fails_closed():
         "executionState": "EXECUTION_SKIPPED", "matchState": "NO_MATCH_FOUND"
     }}}
     result, _ = call("altered notice", managed_response(filters=filters))
+    assert result["status"] == "SERVICE_UNAVAILABLE"
+
+
+def test_legacy_filter_version_fails_closed():
+    result, _ = call(
+        "altered notice",
+        managed_response(version_alias="FILTER_VERSION_ALIAS_LEGACY"),
+    )
+    assert result["status"] == "SERVICE_UNAVAILABLE"
+    assert result["failure_type"] == "ValueError"
+
+
+def test_missing_filter_version_metadata_fails_closed():
+    response = managed_response()
+    del response.json.return_value["sanitizationResult"]["sanitizationMetadata"]
+    result, _ = call("altered notice", response)
     assert result["status"] == "SERVICE_UNAVAILABLE"

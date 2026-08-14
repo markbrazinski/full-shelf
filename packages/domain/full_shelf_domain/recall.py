@@ -28,6 +28,11 @@ VALID_LIFECYCLE_STATES = [
     "CLOSED"
 ]
 
+SUPPORTED_MODEL_ARMOR_FILTER_ALIASES = {
+    "FILTER_VERSION_ALIAS_STABLE",
+    "FILTER_VERSION_ALIAS_LATEST",
+}
+
 
 def is_eligible_gemini_model(model_id: str) -> bool:
     """Return true only for a Gemini major/minor identifier at least 3.5."""
@@ -117,10 +122,20 @@ def inspect_recall_notice_with_model_armor(
         invocation = result.get("invocationResult")
         match_state = result.get("filterMatchState")
         filter_results = result.get("filterResults")
+        version_config = result.get("sanitizationMetadata", {}).get(
+            "filterVersionConfig"
+        )
         if invocation != "SUCCESS" or match_state not in {"MATCH_FOUND", "NO_MATCH_FOUND"}:
             raise ValueError("MODEL_ARMOR_RESULT_INVALID")
         if not isinstance(filter_results, dict) or not filter_results:
             raise ValueError("MODEL_ARMOR_FILTER_RESULTS_MISSING")
+        if not isinstance(version_config, dict):
+            raise ValueError("MODEL_ARMOR_FILTER_VERSION_METADATA_MISSING")
+        filter_version = version_config.get("filterVersion")
+        filter_version_alias = version_config.get("filterVersionAlias")
+        if (not isinstance(filter_version, str) or not filter_version
+                or filter_version_alias not in SUPPORTED_MODEL_ARMOR_FILTER_ALIASES):
+            raise ValueError("MODEL_ARMOR_FILTER_VERSION_UNSUPPORTED")
         serialized_filters = json.dumps(filter_results, sort_keys=True)
         if "EXECUTION_FAILED" in serialized_filters or "EXECUTION_SKIPPED" in serialized_filters:
             raise ValueError("MODEL_ARMOR_PARTIAL_FILTER_FAILURE")
@@ -134,6 +149,10 @@ def inspect_recall_notice_with_model_armor(
             "invocation_result": invocation,
             "filter_match_state": match_state,
             "filter_results": filter_results,
+            "filter_version": filter_version,
+            "filter_version_alias": filter_version_alias,
+            "filter_version_release_date": version_config.get("releaseDate"),
+            "filter_version_messages": version_config.get("messageItems", []),
             "api_response_code": 200,
             "correlation_id": correlation_id,
         }
