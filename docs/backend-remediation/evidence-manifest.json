@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "recorded_at": "2026-08-14T02:12:34Z",
+  "recorded_at": "2026-08-14T02:27:27Z",
   "builder_acceptance_authority": false,
   "branch": "repair/backend-acceptance-20260813",
   "baseline_commit": "bfd1e1040824da379d69add8755682bc8eafebd6",
@@ -117,6 +117,28 @@
       "idempotent_replay": true
     }
   },
+  "wp8": {
+    "source_revision": "05c2ec6e46c94f4169009115409b37d2dfdb6d33",
+    "local_tests": {
+      "collected": 118,
+      "passed": 118,
+      "failed": 0,
+      "warnings": 18
+    },
+    "build_id": "c17bc67d-ad33-40a7-9758-5518f6399628",
+    "orchestrator_revision": "full-shelf-orchestrator-00037-mpr",
+    "image_digest": "sha256:472dc8f0d2eb63993b424e47fae23babef11300077345d2fd6ddc6ba7042df71",
+    "canonical": {
+      "lot_id": "LTC-4471",
+      "unique_current_cases": 96,
+      "max_path_depth": 2
+    },
+    "altered": {
+      "lot_id": "ALT-LOT-9001",
+      "unique_current_cases": 51,
+      "max_path_depth": 4
+    }
+  },
   "claims": [
     {
       "capability": "WP0 baseline and repair map",
@@ -141,6 +163,12 @@
       "classification": "OBSERVED_LIVE",
       "observed_at": "2026-08-14T02:06:20Z",
       "limitation": "Builder-observed package evidence; Cloud Tasks Data Access audit logging was not enabled, and the managed callback is correlated through the real task resource, request log, verified claims, and ledger receipt."
+    },
+    {
+      "capability": "WP8 dynamic managed Spanner Graph",
+      "classification": "OBSERVED_LIVE",
+      "observed_at": "2026-08-14T02:27:27Z",
+      "limitation": "Builder-observed deployed canonical and isolated altered executions; final acceptance remains with a fresh independent auditor."
     }
   ]
 }
