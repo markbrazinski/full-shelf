@@ -848,6 +848,28 @@ def handle_pubsub_push(
             reason="PUBSUB_MESSAGE_ID_AND_PUBLISH_TIME_REQUIRED",
             trace_id=trace_id,
         )
+    try:
+        published_at = _parse_managed_publish_time(publish_time)
+        age_seconds = (datetime.now(timezone.utc) - published_at).total_seconds()
+        max_age_seconds = int(os.getenv("PUBSUB_MAX_EVENT_AGE_SECONDS", "86400"))
+        if age_seconds > max_age_seconds:
+            return _ack_permanent_pubsub_rejection(
+                message_id=message_id,
+                reason="STALE_PUBSUB_EVENT",
+                trace_id=trace_id,
+            )
+        if age_seconds < -300:
+            return _ack_permanent_pubsub_rejection(
+                message_id=message_id,
+                reason="FUTURE_PUBSUB_EVENT",
+                trace_id=trace_id,
+            )
+    except (HTTPException, TypeError, ValueError):
+        return _ack_permanent_pubsub_rejection(
+            message_id=message_id,
+            reason="INVALID_PUBSUB_PUBLISH_TIME",
+            trace_id=trace_id,
+        )
     data_b64 = message.get("data", "")
     event_data = {}
     try:

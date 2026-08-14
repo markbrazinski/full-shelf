@@ -2,7 +2,7 @@ import importlib.util
 import os
 import base64
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
@@ -147,6 +147,31 @@ def test_authenticated_poison_pubsub_message_is_acked_2xx_without_mutation():
     assert response.status_code == 200
     assert response.json()["status"] == "PERMANENT_EVENT_REJECTED_ACKNOWLEDGED"
     assert response.json()["mutations_applied"] == 0
+    ledger.assert_not_called()
+
+
+def test_authenticated_stale_pubsub_message_is_acked_without_interpretation():
+    client = TestClient(main.app)
+    envelope = _pubsub_envelope(
+        {"event_type": "RECALL_NOTICE_RECEIVED", "tenant_id": "east-bay-food-bank"},
+        "historical-backlog-1",
+    )
+    envelope["message"]["publishTime"] = (
+        datetime.now(timezone.utc) - timedelta(days=2)
+    ).isoformat().replace("+00:00", "Z")
+    with patch.object(main, "_verify_managed_callback", return_value=CALLER), patch.object(
+        main, "_resolve_authority_scope"
+    ) as resolve, patch.object(main, "execute_ledger_command") as ledger:
+        response = client.post(
+            "/api/v1/orchestrator/pubsub/push",
+            headers={"Authorization": "Bearer signed"},
+            json=envelope,
+        )
+
+    assert response.status_code == 200
+    assert response.json()["reason"] == "STALE_PUBSUB_EVENT"
+    assert response.json()["mutations_applied"] == 0
+    resolve.assert_not_called()
     ledger.assert_not_called()
 
 
