@@ -19,7 +19,7 @@ Builder verdict authority: none; final acceptance requires a fresh independent a
 | WP9 — Event-backed SSE | `1a3ace8` | 123 safe tests passed; 123 collected | Revision `orchestrator-00038-s85`; same-connection new commit and exact-cursor reconnect without duplicate observed | DEPLOYED OBSERVED | None; builder testimony ready for strategy review |
 | WP10 — Evidence, Trace, provenance | `a20d9dc`, `65f247d` | 125 safe tests passed; 125 collected | Revisions `orchestrator-00040-2hc` / `plan-ledger-00020-rls`; exact evidence trace readback and fresh task→callback→ledger→receipt trace observed | DEPLOYED OBSERVED | None; builder testimony ready for strategy review |
 | WP11 — Isolated regression suite | `a9ac78f` | 133 passed; 133 collected; 0 failed; 0 skipped | Audit DB `full-shelf-audit-wp6-20260813` ready; canonical receipts 17 before / 17 after | LOCALLY VERIFIED | None; builder testimony ready for independent reproduction |
-| WP12 — Deployment and handoff | source `454bfef` | WP11 gate: 133 passed; 0 failed; 0 skipped | Revisions `orchestrator-00042-xhj` / `plan-ledger-00022-rv2`; canonical + altered managed safe replays observed | DEPLOYED OBSERVED | None; independent audit still required |
+| WP12 — Deployment and handoff | source `454bfef`; evidence `d2a163f` | WP11 gate: 133 passed; 0 failed; 0 skipped | Revisions `orchestrator-00042-xhj` / `plan-ledger-00022-rv2`; canonical + altered managed safe replays observed | DEPLOYED OBSERVED | None; independent audit still required |
 
 Statuses in this table are builder progress labels only: `NOT STARTED`, `IN PROGRESS`, `LOCALLY VERIFIED`, `DEPLOYED OBSERVED`, `BLOCKED`, or `FAILED`.
 

@@ -204,6 +204,7 @@
   },
   "wp12": {
     "source_revision": "454bfeffa11722315cdaa015d0e5e6dfb656c9bb",
+    "initial_evidence_record_commit": "d2a163f",
     "orchestrator": {
       "build_id": "0aaa79bb-87a0-4253-9334-c46472f204bc",
       "revision": "full-shelf-orchestrator-00042-xhj",

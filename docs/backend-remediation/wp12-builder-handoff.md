@@ -34,7 +34,7 @@ This record does not declare `PASS`.
 | WP9 | `1a3ace8` | `04e8285` |
 | WP10 | `a20d9dc`, `65f247d` | `32c7d8e` |
 | WP11 | `a9ac78f` | `454bfef` |
-| WP12 | Deployment source `454bfef`; no runtime-code delta | This handoff is committed separately after managed evidence capture |
+| WP12 | Deployment source `454bfef`; no runtime-code delta | Initial handoff record `d2a163f`; final metadata linkage follows that record |
 
 Baseline: `bfd1e1040824da379d69add8755682bc8eafebd6`.
 
