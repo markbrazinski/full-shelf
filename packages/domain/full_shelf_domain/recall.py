@@ -6,7 +6,7 @@ from typing import Dict, Any, Optional, List
 import httpx
 
 from google.cloud import pubsub_v1, spanner, tasks_v2
-from full_shelf_observability import generate_trace_id
+from full_shelf_observability import build_traceparent, generate_span_id, generate_trace_id
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 
@@ -334,6 +334,7 @@ def schedule_site01_deadline_task(
     orchestrator_url: Optional[str] = None,
     oidc_audience: Optional[str] = None,
     delivery_service_account: Optional[str] = None,
+    trace_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Create one real, explicitly audience-bound Site 01 deadline task."""
     client = tasks_v2.CloudTasksClient()
@@ -343,6 +344,7 @@ def schedule_site01_deadline_task(
     service_account = delivery_service_account or os.getenv("MANAGED_CALLBACK_SERVICE_ACCOUNT_EMAIL", "")
     if not audience or not service_account:
         raise ValueError("TASK_OIDC_CONFIGURATION_REQUIRED")
+    correlation_trace_id = trace_id or generate_trace_id()
     task_name = client.task_path(PROJECT_ID, "us-central1", "full-shelf-deadlines", task_id)
 
     task = {
@@ -350,12 +352,16 @@ def schedule_site01_deadline_task(
         "http_request": {
             "http_method": tasks_v2.HttpMethod.POST,
             "url": f"{target_url}/api/v1/incidents/site01-deadline",
-            "headers": {"Content-Type": "application/json"},
+            "headers": {
+                "Content-Type": "application/json",
+                "traceparent": build_traceparent(correlation_trace_id, generate_span_id()),
+            },
             "body": json.dumps({
                 "incident_id": incident_id,
                 "site_id": "SITE-01",
                 "tenant_id": "east-bay-food-bank",
                 "task_decision_id": task_id,
+                "correlation_trace_id": correlation_trace_id,
             }).encode("utf-8"),
             "oidc_token": {
                 "service_account_email": service_account,
@@ -372,6 +378,7 @@ def schedule_site01_deadline_task(
         "target_url": task["http_request"]["url"],
         "oidc_audience": audience,
         "delivery_service_account": service_account,
+        "correlation_trace_id": correlation_trace_id,
     }
 def publish_recall_event_to_pubsub(event_payload: Dict[str, Any]) -> Dict[str, Any]:
     """Publishes recall event to GCP Pub/Sub topic full-shelf-incidents."""

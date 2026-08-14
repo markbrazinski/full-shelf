@@ -55,9 +55,11 @@ def test_task_callback_uses_verified_identity_and_cannot_bypass_ledger():
                 "Authorization": "Bearer signed",
                 "X-CloudTasks-TaskName": "task-alt",
                 "X-CloudTasks-QueueName": "full-shelf-deadlines",
+                "traceparent": "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01",
             },
             json={"incident_id": "INC-RECALL-01", "site_id": "SITE-01",
-                  "task_decision_id": "task-alt"},
+                  "task_decision_id": "task-alt",
+                  "correlation_trace_id": "0123456789abcdef0123456789abcdef"},
         )
     assert response.status_code == 200
     command = ledger.call_args.kwargs
@@ -65,6 +67,7 @@ def test_task_callback_uses_verified_identity_and_cannot_bypass_ledger():
     assert command["idempotency_key"].startswith("cloud-task:")
     assert command["payload"]["delivery_subject"] == CALLER.subject
     assert command["payload"]["delivery_audience"] == CALLER.audience
+    assert command["trace_id"] == "0123456789abcdef0123456789abcdef"
 
 
 def test_task_creation_is_explicitly_audience_bound_without_local_fallback():
@@ -80,6 +83,7 @@ def test_task_creation_is_explicitly_audience_bound_without_local_fallback():
             orchestrator_url="https://orchestrator.example.run.app",
             oidc_audience="https://orchestrator.example.run.app",
             delivery_service_account="delivery@example.iam.gserviceaccount.com",
+            trace_id="0123456789abcdef0123456789abcdef",
         )
     task = client.create_task.call_args.kwargs["request"]["task"]
     assert result["status"] == "SCHEDULED"
@@ -87,3 +91,7 @@ def test_task_creation_is_explicitly_audience_bound_without_local_fallback():
         "service_account_email": "delivery@example.iam.gserviceaccount.com",
         "audience": "https://orchestrator.example.run.app",
     }
+    assert task["http_request"]["headers"]["traceparent"].startswith(
+        "00-0123456789abcdef0123456789abcdef-"
+    )
+    assert result["correlation_trace_id"] == "0123456789abcdef0123456789abcdef"

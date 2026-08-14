@@ -14,8 +14,11 @@ import httpx
 
 from google.cloud import spanner
 from full_shelf_observability import (
+    build_traceparent,
+    generate_span_id,
     get_tracer,
     generate_trace_id,
+    request_trace_span,
 )
 from full_shelf_domain.identity import (
     GoogleOidcVerifier, IdentityConfigurationError, InvalidIdentityToken,
@@ -40,6 +43,18 @@ app = FastAPI(
 
 tracer = get_tracer("orchestrator")
 logger = logging.getLogger("full_shelf.orchestrator")
+
+
+@app.middleware("http")
+async def managed_request_trace(request: Request, call_next):
+    with request_trace_span(
+        tracer,
+        request.headers,
+        f"orchestrator {request.method} {request.url.path}",
+    ) as trace_id:
+        response = await call_next(request)
+        response.headers["X-Full-Shelf-Trace-Id"] = trace_id
+        return response
 
 PROJECT_ID = os.getenv("GCP_PROJECT_ID", "preflight-hackathon")
 SPANNER_INSTANCE = os.getenv("SPANNER_INSTANCE_ID", "fef-smoke-spanner")
@@ -79,6 +94,7 @@ def post_to_plan_ledger(
     }
     if trace_id:
         headers["X-Full-Shelf-Trace-Id"] = trace_id
+        headers["traceparent"] = build_traceparent(trace_id, generate_span_id())
     if operator_authorization:
         headers["X-Full-Shelf-Operator-Authorization"] = operator_authorization
 
@@ -526,6 +542,9 @@ def handle_site01_deadline_callback(
 
     now = datetime.now(timezone.utc).isoformat()
     trace_id = generate_trace_id()
+    payload_trace_id = (payload or {}).get("correlation_trace_id")
+    if payload_trace_id and payload_trace_id != trace_id:
+        raise HTTPException(400, "CLOUD_TASK_TRACE_CONTEXT_MISMATCH")
     ledger_result = execute_ledger_command(
         command_id=f"CMD-SITE01-{task_decision_id[-40:]}",
         idempotency_key=f"cloud-task:{task_decision_id}",
@@ -545,6 +564,7 @@ def handle_site01_deadline_callback(
             "delivery_subject": caller.subject,
             "delivery_email": caller.email,
             "delivery_audience": caller.audience,
+            "correlation_trace_id": trace_id,
         },
     )
 
@@ -601,12 +621,14 @@ def schedule_site01_escalation(
     if not recall or recall[0][0] != "PARTIALLY_CONTAINED" or not hold_open:
         raise HTTPException(409, "SITE01_ESCALATION_PRECONDITIONS_NOT_MET")
 
-    decision_id = f"site01-{generate_trace_id()}"
+    trace_id = generate_trace_id()
+    decision_id = f"site01-{trace_id}"
     task = schedule_site01_deadline_task(
         "INC-RECALL-01",
         task_id=decision_id,
         oidc_audience=MANAGED_CALLBACK_AUDIENCE,
         delivery_service_account=MANAGED_CALLBACK_SERVICE_ACCOUNT_EMAIL,
+        trace_id=trace_id,
     )
     evidence = {
         "event": "SITE01_ESCALATION_TASK_CREATED",
@@ -965,6 +987,7 @@ def execute_hero_loop(
         task_id=f"site01-{trace_id}",
         oidc_audience=MANAGED_CALLBACK_AUDIENCE,
         delivery_service_account=MANAGED_CALLBACK_SERVICE_ACCOUNT_EMAIL,
+        trace_id=trace_id,
     )
 
     # Step 8: Terminal calculation -> PARTIALLY_CONTAINED
@@ -1422,123 +1445,225 @@ def generate_next_day_plan(
 # -------------------------------------------------------------------
 
 @app.get("/api/v1/evidence/system")
-def get_system_evidence(tenant_id: str = "east-bay-food-bank"):
-    """Returns complete non-secret System Evidence references with live Spanner queries and truth classifications."""
+def get_system_evidence(
+    request: Request,
+    tenant_id: str = "east-bay-food-bank",
+    x_api_key: Optional[str] = Header(None, alias="X-Full-Shelf-API-Key"),
+):
+    """Return independently classified evidence from this exact execution."""
+    verify_judge_key(x_api_key)
     trace_id = generate_trace_id()
     db = get_spanner_database()
 
-    spanner_active_rev = None
-    spanner_incident_status = None
-    spanner_receipt_count = None
+    def read_rows(sql: str):
+        with db.snapshot() as snapshot:
+            return list(snapshot.execute_sql(
+                sql,
+                params={"tenant_id": tenant_id},
+                param_types={"tenant_id": spanner.param_types.STRING},
+            ))
+
+    failures = []
+    ground_truth = {
+        "tenant_id": tenant_id,
+        "classification": "NOT_PROVEN",
+    }
+    try:
+        rows = read_rows(
+            "SELECT revision FROM PlanRevisions WHERE tenant_id = @tenant_id "
+            "AND status = 'ACTIVE' ORDER BY created_at DESC LIMIT 1"
+        )
+        ground_truth["active_plan_revision"] = rows[0][0] if rows else None
+        rows = read_rows(
+            "SELECT status, terminal_state FROM Incidents WHERE tenant_id = @tenant_id "
+            "AND incident_id = 'INC-RECALL-01'"
+        )
+        ground_truth["active_incident_status"] = rows[0][0] if rows else None
+        ground_truth["incident_terminal_state"] = rows[0][1] if rows else None
+        rows = read_rows(
+            "SELECT COUNT(*) FROM Receipts WHERE tenant_id = @tenant_id"
+        )
+        ground_truth["committed_receipts_count"] = rows[0][0] if rows else 0
+        ground_truth["classification"] = "OBSERVED_LIVE"
+    except Exception:
+        logger.exception("System evidence authoritative-state query failed")
+        ground_truth["classification"] = "FAILED"
+        ground_truth["reason"] = "AUTHORITATIVE_STATE_READ_UNAVAILABLE"
+        failures.append("spanner_ground_truth")
+
+    latest_receipt = {
+        "classification": "NOT_PROVEN",
+        "reason": "NO_COMMITTED_RECEIPT_OBSERVED",
+    }
+    try:
+        rows = read_rows(
+            "SELECT receipt_id, action_id, action_type, status, mutations_applied, "
+            "trace_id, caller_email, timestamp FROM Receipts "
+            "WHERE tenant_id = @tenant_id ORDER BY timestamp DESC, receipt_id DESC LIMIT 1"
+        )
+        if rows:
+            row = rows[0]
+            latest_receipt = {
+                "receipt_id": row[0],
+                "action_id": row[1],
+                "action_type": row[2],
+                "status": row[3],
+                "mutations_applied": row[4],
+                "correlation_trace_id": row[5],
+                "caller_email": row[6],
+                "committed_at": row[7].isoformat(),
+                "classification": "OBSERVED_LIVE",
+            }
+    except Exception:
+        logger.exception("System evidence receipt query failed")
+        latest_receipt = {
+            "classification": "FAILED",
+            "reason": "RECEIPT_READ_UNAVAILABLE",
+        }
+        failures.append("latest_ledger_receipt")
+
+    latest_inbound_event = {
+        "classification": "NOT_PROVEN",
+        "reason": "NO_COMMITTED_INBOUND_EVENT_OBSERVED",
+    }
+    try:
+        rows = read_rows(
+            "SELECT source_event_id, event_type, status, occurred_at FROM InboundEvents "
+            "WHERE tenant_id = @tenant_id ORDER BY occurred_at DESC, source_event_id DESC LIMIT 1"
+        )
+        if rows:
+            row = rows[0]
+            latest_inbound_event = {
+                "source_event_id": row[0],
+                "event_type": row[1],
+                "status": row[2],
+                "occurred_at": row[3].isoformat(),
+                "classification": "OBSERVED_LIVE",
+            }
+    except Exception:
+        logger.exception("System evidence inbound-event query failed")
+        latest_inbound_event = {
+            "classification": "FAILED",
+            "reason": "INBOUND_EVENT_READ_UNAVAILABLE",
+        }
+        failures.append("latest_inbound_event")
 
     try:
-        with db.snapshot() as snapshot:
-            rev_rows = list(snapshot.execute_sql(
-                "SELECT revision FROM PlanRevisions WHERE tenant_id = @t AND status = 'ACTIVE'",
-                params={"t": tenant_id},
-                param_types={"t": spanner.param_types.STRING}
-            ))
-            if rev_rows:
-                spanner_active_rev = rev_rows[0][0]
+        graph = _run_managed_custody_graph(
+            db, tenant_id=tenant_id, lot_id="LTC-4471"
+        )
+        graph_evidence = {
+            "lot_id": graph["lot_id"],
+            "unique_current_cases": graph["unique_current_cases"],
+            "max_path_depth": graph["max_path_depth"],
+            "query_engine": graph["query_engine"],
+            "classification": "OBSERVED_LIVE",
+        }
+    except Exception:
+        logger.exception("System evidence graph query failed")
+        graph_evidence = {
+            "classification": "FAILED",
+            "reason": "MANAGED_GRAPH_READ_UNAVAILABLE",
+        }
+        failures.append("spanner_graph")
 
-            inc_rows = list(snapshot.execute_sql(
-                "SELECT status FROM Incidents WHERE tenant_id = @t AND incident_id = 'INC-RECALL-01'",
-                params={"t": tenant_id},
-                param_types={"t": spanner.param_types.STRING}
-            ))
-            if inc_rows:
-                spanner_incident_status = inc_rows[0][0]
-
-            r_rows = list(snapshot.execute_sql(
-                "SELECT COUNT(*) FROM Receipts WHERE tenant_id = @t",
-                params={"t": tenant_id},
-                param_types={"t": spanner.param_types.STRING}
-            ))
-            if r_rows:
-                spanner_receipt_count = r_rows[0][0]
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail="AUTHORITATIVE_EVIDENCE_READ_UNAVAILABLE") from exc
+    source_revision = os.getenv("FULL_SHELF_SOURCE_REVISION", "UNBOUND")
+    image_digest = os.getenv("FULL_SHELF_IMAGE_DIGEST", "UNBOUND")
+    runtime_revision = os.getenv("K_REVISION", "LOCAL")
 
     return {
         "service": "Full Shelf Control Plane",
         "build_book_version": "1.1",
         "evidence_timestamp": datetime.now(timezone.utc).isoformat(),
-        "trace_id": trace_id,
-        "spanner_ground_truth": {
-            "tenant_id": tenant_id,
-            "active_plan_revision": spanner_active_rev,
-            "active_incident_status": spanner_incident_status,
-            "committed_receipts_count": spanner_receipt_count
+        "request_execution": {
+            "trace_id": trace_id,
+            "response_header": "X-Full-Shelf-Trace-Id",
+            "span_kind": "SERVER",
+            "managed_readback": "PENDING_EXTERNAL_QUERY",
+            "classification": "NOT_PROVEN",
         },
+        "overall_classification": "FAILED" if failures else "OBSERVED_LIVE",
+        "failed_checks": failures,
+        "spanner_ground_truth": ground_truth,
+        "latest_ledger_receipt": latest_receipt,
+        "latest_inbound_event": latest_inbound_event,
         "managed_resources": {
             "orchestrator_service": {
-                "name": "full-shelf-orchestrator",
-                "url": "https://full-shelf-orchestrator-620464070103.us-central1.run.app",
-                "service_account": "full-shelf-orchestrator-sa@preflight-hackathon.iam.gserviceaccount.com",
+                "name": os.getenv("K_SERVICE", "full-shelf-orchestrator"),
+                "revision": runtime_revision,
+                "trace_id": trace_id,
                 "classification": "OBSERVED_LIVE"
             },
             "plan_ledger_service": {
                 "name": "full-shelf-plan-ledger",
-                "url": "https://full-shelf-plan-ledger-620464070103.us-central1.run.app",
-                "service_account": "full-shelf-ledger-sa@preflight-hackathon.iam.gserviceaccount.com",
-                "classification": "OBSERVED_LIVE"
+                "latest_receipt_id": latest_receipt.get("receipt_id"),
+                "latest_receipt_trace_id": latest_receipt.get("correlation_trace_id"),
+                "classification": latest_receipt["classification"],
             },
             "spanner_database": {
                 "path": f"projects/{PROJECT_ID}/instances/{SPANNER_INSTANCE}/databases/{SPANNER_DATABASE}",
-                "authoritative_db_name": "full-shelf-main",
-                "spanner_graph_query": "GRAPH CustodyGraph MATCH (a:Node)-[e:TRANSFERRED_TO]->(b:Node) RETURN ...",
-                "reconstructed_cases": 96,
-                "classification": "OBSERVED_LIVE"
+                "classification": ground_truth["classification"],
             },
+            "spanner_graph": graph_evidence,
             "gemini_model": {
                 "model_id": MODEL_ID,
                 "vertex_location": VERTEX_LOCATION,
                 "sdk": "google-adk",
-                "framework": "Google ADK 2.6 Agent & Runner Framework on Vertex AI",
-                "classification": "STRUCTURALLY_VERIFIED"
+                "classification": "DESIGNED",
+                "limitation": "Configuration is not invocation evidence",
             },
             "model_armor": {
                 "template": f"projects/{PROJECT_ID}/locations/us-central1/templates/full-shelf-recall-input-v1",
                 "operation": "sanitizeUserPrompt",
-                "classification": "STRUCTURALLY_VERIFIED"
+                "classification": "DESIGNED",
+                "limitation": "Configuration is not invocation evidence",
             },
             "kms_approval_key": {
                 "key_version": f"projects/{PROJECT_ID}/locations/us-central1/keyRings/full-shelf-keyring/cryptoKeys/approval-signer/cryptoKeyVersions/1",
-                "verified_binding": "rev07 -> rev08 envelope diff SHA-256",
-                "classification": "OBSERVED_LIVE"
+                "classification": "DESIGNED",
+                "limitation": "This endpoint did not invoke or verify KMS",
             },
             "pubsub": {
                 "topic": f"projects/{PROJECT_ID}/topics/full-shelf-incidents",
                 "subscription": f"projects/{PROJECT_ID}/subscriptions/full-shelf-incidents-sub",
-                "classification": "OBSERVED_LIVE"
+                "latest_committed_event_id": latest_inbound_event.get("source_event_id"),
+                "classification": "STRUCTURALLY_VERIFIED",
+                "limitation": "A committed event alone does not prove managed delivery",
             },
             "cloud_scheduler": {
-                "jobs": [
-                    "full-shelf-daily-plan-job (05:30 -> PLAN_DAY_REQUESTED)",
-                    "full-shelf-next-day-plan-job (17:00 -> PLAN_NEXT_DAY_REQUESTED)"
-                ],
-                "classification": "OBSERVED_LIVE"
+                "jobs": ["full-shelf-daily-plan-job", "full-shelf-next-day-plan-job"],
+                "classification": "DESIGNED",
+                "limitation": "This request did not inspect Scheduler",
             },
             "cloud_tasks": {
                 "queue": f"projects/{PROJECT_ID}/locations/us-central1/queues/full-shelf-deadlines",
-                "target_callback": f"https://full-shelf-orchestrator-620464070103.us-central1.run.app/api/v1/incidents/site01-deadline",
-                "classification": "OBSERVED_LIVE"
+                "classification": "DESIGNED",
+                "limitation": "This request did not create or inspect a task",
             },
             "cloud_trace": {
                 "exporter": "OpenTelemetry GoogleCloudTraceExporter",
                 "trace_id": trace_id,
-                "classification": "OBSERVED_LIVE"
+                "classification": "NOT_PROVEN",
+                "limitation": "Upgrade only after managed trace readback",
             },
             "secret_manager": {
                 "secret_name": f"projects/{PROJECT_ID}/secrets/full-shelf-judge-api-key",
-                "classification": "OBSERVED_LIVE"
+                "classification": "DESIGNED",
+                "limitation": "Resource configuration is not an access receipt",
+            },
+            "build_provenance": {
+                "runtime_revision": runtime_revision,
+                "source_revision": source_revision,
+                "image_digest": image_digest,
+                "classification": "DESIGNED",
+                "limitation": "Requires external Cloud Run and Artifact Registry comparison",
             }
         },
         "preview_service_seams": {
             "agent_registry": "STRUCTURALLY_VERIFIED — Versioned Agent Cards / Tool Gateway Manifest",
-            "agent_identity": "OBSERVED_LIVE — GCP Workload Identity / OIDC Service Account Tokens",
-            "agent_gateway": "OBSERVED_LIVE — Private Plan Ledger Policy Gateway",
-            "agent_sessions": "OBSERVED_LIVE — Spanner-backed Coordinator State"
+            "agent_identity": "STRUCTURALLY_VERIFIED — Cloud IAM / OIDC seam; not managed Agent Identity",
+            "agent_gateway": "STRUCTURALLY_VERIFIED — private plan-ledger seam; not managed Agent Gateway",
+            "agent_sessions": "STRUCTURALLY_VERIFIED — Spanner coordinator seam; not managed Agent Sessions"
         }
     }
 
@@ -1860,6 +1985,9 @@ def replay_hero_loop(x_api_key: Optional[str] = Header(None, alias="X-Full-Shelf
 
 
 @app.get("/api/v1/demo/export-evidence")
-def export_evidence():
+def export_evidence(
+    request: Request,
+    x_api_key: Optional[str] = Header(None, alias="X-Full-Shelf-API-Key"),
+):
     """Exports full system evidence payload."""
-    return get_system_evidence()
+    return get_system_evidence(request=request, x_api_key=x_api_key)

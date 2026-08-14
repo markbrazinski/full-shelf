@@ -64,7 +64,7 @@ def test_ledger_call_mints_exact_audience_token_and_uses_authorization(monkeypat
     response = orchestrator_main.post_to_plan_ledger(
         "/api/v1/evidence/system",
         payload={"tenant_id": "audit-tenant"},
-        trace_id="trace-123",
+        trace_id="0123456789abcdef0123456789abcdef",
     )
 
     assert response.status_code == 200
@@ -72,7 +72,10 @@ def test_ledger_call_mints_exact_audience_token_and_uses_authorization(monkeypat
     assert observed["url"] == f"{audience}/api/v1/evidence/system"
     assert observed["headers"]["Authorization"] == "Bearer google-signed-token"
     assert "X-Serverless-Authorization" not in observed["headers"]
-    assert observed["headers"]["X-Full-Shelf-Trace-Id"] == "trace-123"
+    assert observed["headers"]["X-Full-Shelf-Trace-Id"] == "0123456789abcdef0123456789abcdef"
+    assert observed["headers"]["traceparent"].startswith(
+        "00-0123456789abcdef0123456789abcdef-"
+    )
 
 
 def test_denied_mutation_command_stops_orchestrator_processing(monkeypatch):

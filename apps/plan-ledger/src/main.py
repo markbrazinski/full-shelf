@@ -26,10 +26,27 @@ from full_shelf_domain.reconciliation import reconcile_recall_graph
 from full_shelf_domain.spanner import (
     get_spanner_database, get_active_plan_revision
 )
-from full_shelf_observability import get_tracer, generate_trace_id, generate_span_id, parse_traceparent
+from full_shelf_observability import (
+    generate_trace_id,
+    get_tracer,
+    parse_traceparent,
+    request_trace_span,
+)
 
 app = FastAPI(title="Full Shelf Plan Ledger Service", version="1.1.0")
 tracer = get_tracer("plan-ledger")
+
+
+@app.middleware("http")
+async def managed_request_trace(request: Request, call_next):
+    with request_trace_span(
+        tracer,
+        request.headers,
+        f"plan-ledger {request.method} {request.url.path}",
+    ) as trace_id:
+        response = await call_next(request)
+        response.headers["X-Full-Shelf-Trace-Id"] = trace_id
+        return response
 
 
 def require_ledger_workload_identity(
@@ -182,6 +199,8 @@ def execute_ledger_command(
 ):
     """Execute one authenticated authoritative command and receipt atomically."""
 
+    if command.trace_id != generate_trace_id():
+        raise HTTPException(status_code=400, detail="TRACE_CONTEXT_COMMAND_MISMATCH")
     if command.command_type.value == "APPROVE_REPAIR_PLAN":
         raise HTTPException(403, "USE_HUMAN_APPROVAL_ROUTE")
     try:
