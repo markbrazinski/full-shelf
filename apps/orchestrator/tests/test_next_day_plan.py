@@ -69,6 +69,25 @@ def test_next_day_plan_is_dynamic_authoritative_and_ledger_bound():
     assert any("hazard_status = 'CLEAR_SAFE'" in sql for sql in executed_sql)
 
 
+def test_spanner_database_handle_is_cached_per_service_instance():
+    orchestrator_main.get_spanner_database.cache_clear()
+    mock_database = MagicMock()
+    mock_instance = MagicMock()
+    mock_instance.database.return_value = mock_database
+    mock_client = MagicMock()
+    mock_client.instance.return_value = mock_instance
+
+    with patch.object(orchestrator_main.spanner, "Client", return_value=mock_client):
+        first = orchestrator_main.get_spanner_database()
+        second = orchestrator_main.get_spanner_database()
+
+    assert first is mock_database
+    assert second is mock_database
+    mock_client.instance.assert_called_once_with(orchestrator_main.SPANNER_INSTANCE)
+    mock_instance.database.assert_called_once_with(orchestrator_main.SPANNER_DATABASE)
+    orchestrator_main.get_spanner_database.cache_clear()
+
+
 def test_pubsub_next_day_delivery_requires_verified_identity_and_uses_publish_date():
     client = TestClient(orchestrator_main.app)
     caller = MagicMock(

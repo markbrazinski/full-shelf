@@ -2,6 +2,7 @@ import json
 import os
 import base64
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 from typing import Dict, Any, Optional, List
 from zoneinfo import ZoneInfo
 from fastapi import FastAPI, Header, HTTPException, Query, BackgroundTasks, Request
@@ -202,7 +203,9 @@ def approve_and_activate(
     return result
 
 
+@lru_cache(maxsize=1)
 def get_spanner_database():
+    """Reuse one thread-safe Spanner client/session pool per service instance."""
     spanner_client = spanner.Client(project=PROJECT_ID)
     instance = spanner_client.instance(SPANNER_INSTANCE)
     return instance.database(SPANNER_DATABASE)
