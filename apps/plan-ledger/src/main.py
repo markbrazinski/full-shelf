@@ -1,5 +1,5 @@
 from fastapi import Depends, FastAPI, HTTPException, Query, Header, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List
 import os
 from datetime import datetime, timezone
@@ -119,15 +119,27 @@ class SaveNextDayPlanRequest(BaseModel):
 
 
 class HumanApprovalRequest(BaseModel):
-    command_id: str
-    idempotency_key: str
+    command_id: str = Field(min_length=1, max_length=48)
+    idempotency_key: str = Field(min_length=1, max_length=112)
     tenant_id: str
     incident_id: str
     plan_id: str
     source_revision: str
     proposed_revision: str
-    approval_id: str
+    approval_id: str = Field(min_length=1, max_length=48)
     expires_at: str
+    plan_diff: "HumanRepairPlanDiff"
+
+
+class HumanRepairPlanDiff(BaseModel):
+    reroute_order_id: str = Field(min_length=1, max_length=64)
+    reroute_cases: int = Field(gt=0)
+    reroute_target_vehicle: str = Field(min_length=1, max_length=64)
+    pickup_order_id: str = Field(min_length=1, max_length=64)
+    pickup_cases: int = Field(gt=0)
+
+
+HumanApprovalRequest.model_rebuild()
 
 
 def verify_human_operator(token: Optional[str]) -> VerifiedGoogleIdentity:
@@ -155,7 +167,7 @@ def approve_and_activate(
         None, alias="X-Full-Shelf-Operator-Authorization"
     ),
 ):
-    """Independently authenticate the human, KMS-sign, persist, and activate."""
+    """Authenticate, KMS-bind, persist approval, then activate in a later txn."""
     operator = verify_human_operator(operator_authorization)
     _resolve_authority_scope(req.tenant_id)
     if req.source_revision != "rev07" or req.proposed_revision != "rev08":
@@ -165,23 +177,28 @@ def approve_and_activate(
             approval_id=req.approval_id, rev_id=req.proposed_revision,
             principal_id=operator.subject, incident_id=req.incident_id,
             plan_id=req.plan_id, source_revision=req.source_revision,
-            proposed_revision=req.proposed_revision, reroute_order_id="O202",
-            reroute_cases=22, reroute_target_vehicle="TRUCK-02",
-            pickup_order_id="O203", pickup_cases=20, expires_at=req.expires_at,
+            proposed_revision=req.proposed_revision,
+            reroute_order_id=req.plan_diff.reroute_order_id,
+            reroute_cases=req.plan_diff.reroute_cases,
+            reroute_target_vehicle=req.plan_diff.reroute_target_vehicle,
+            pickup_order_id=req.plan_diff.pickup_order_id,
+            pickup_cases=req.plan_diff.pickup_cases,
+            expires_at=req.expires_at,
         )
     except KmsApprovalError as exc:
         raise HTTPException(503, str(exc)) from exc
     if not verify_kms_approval_envelope(envelope):
         raise HTTPException(503, "MANAGED_KMS_VERIFICATION_FAILED")
-    command = LedgerCommand.model_validate({
+    trace_id = generate_trace_id()
+    approval_command = LedgerCommand.model_validate({
         "command_id": req.command_id,
         "idempotency_key": req.idempotency_key,
         "tenant_id": req.tenant_id,
         "incident_id": req.incident_id,
         "agent_role": "FULFILLMENT_RECOVERY_PLANNER",
-        "command_type": "APPROVE_REPAIR_PLAN",
+        "command_type": "PERSIST_REPAIR_APPROVAL",
         "expected_plan_revision": req.source_revision,
-        "trace_id": generate_trace_id(),
+        "trace_id": trace_id,
         "payload": {
             "plan_id": req.plan_id,
             "source_revision": req.source_revision,
@@ -194,11 +211,37 @@ def approve_and_activate(
             "kms_key_version": envelope.kms_key_version,
             "kms_signature": envelope.kms_signature,
             "expires_at": envelope.expires_at,
+            "plan_diff": req.plan_diff.model_dump(),
         },
     })
-    result = _execute_command(command, caller)
-    return {"receipt": result.receipt, "idempotent_replay": result.idempotent_replay,
-            "additional_mutations": result.additional_mutations,
+    approval_result = _execute_command(approval_command, caller)
+    if approval_result.receipt.get("status") != "SUCCESS":
+        raise HTTPException(409, "REPAIR_APPROVAL_NOT_PERSISTED")
+    if not verify_kms_approval_envelope(envelope):
+        raise HTTPException(503, "MANAGED_KMS_REVERIFICATION_FAILED")
+    activation_command = LedgerCommand.model_validate({
+        "command_id": f"{req.command_id}-ACTIVATE",
+        "idempotency_key": f"{req.idempotency_key}:activate",
+        "tenant_id": req.tenant_id,
+        "incident_id": req.incident_id,
+        "agent_role": "FULFILLMENT_RECOVERY_PLANNER",
+        "command_type": "ACTIVATE_APPROVED_REPAIR_PLAN",
+        "expected_plan_revision": req.source_revision,
+        "trace_id": trace_id,
+        "payload": {
+            "approval_id": req.approval_id,
+            "plan_id": req.plan_id,
+            "source_revision": req.source_revision,
+            "proposed_revision": req.proposed_revision,
+        },
+    })
+    activation_result = _execute_command(activation_command, caller)
+    if activation_result.receipt.get("status") != "SUCCESS":
+        raise HTTPException(409, "APPROVED_REPAIR_PLAN_NOT_ACTIVATED")
+    return {"approval_receipt": approval_result.receipt,
+            "approval_idempotent_replay": approval_result.idempotent_replay,
+            "activation_receipt": activation_result.receipt,
+            "activation_idempotent_replay": activation_result.idempotent_replay,
             "approval_id": envelope.approval_id,
             "plan_diff_hash": envelope.plan_diff.plan_diff_hash,
             "kms_key_version": envelope.kms_key_version}
@@ -213,7 +256,9 @@ def execute_ledger_command(
 
     if command.trace_id != generate_trace_id():
         raise HTTPException(status_code=400, detail="TRACE_CONTEXT_COMMAND_MISMATCH")
-    if command.command_type.value == "APPROVE_REPAIR_PLAN":
+    if command.command_type.value in {
+        "PERSIST_REPAIR_APPROVAL", "ACTIVATE_APPROVED_REPAIR_PLAN"
+    }:
         raise HTTPException(403, "USE_HUMAN_APPROVAL_ROUTE")
     try:
         result = _execute_command(command, caller)

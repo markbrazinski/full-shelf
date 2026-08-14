@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Iterable
 
 from google.cloud import spanner
@@ -13,7 +13,7 @@ from .identity import VerifiedGoogleIdentity
 from .ledger_commands import (
     AllocateSafeStockPayload,
     ApplyRepairPlanPayload,
-    ApproveRepairPlanPayload,
+    ActivateApprovedRepairPlanPayload,
     ActivateMovementBarrierPayload,
     CreateNextDayDraftPayload,
     InvalidatePlanPayload,
@@ -21,11 +21,14 @@ from .ledger_commands import (
     LedgerCommandType,
     OpenRecallIncidentPayload,
     PersistCoordinatorPayload,
+    PersistRepairApprovalPayload,
     RecordRefusalPayload,
     RecordAcknowledgmentHoldPayload,
     SavePlanRevisionPayload,
     SetIncidentStatusPayload,
 )
+from .kms import compute_plan_diff_hash
+from .models import PlanDiff
 from .models import IncidentStatus
 from .state_machines import IncidentStateMachine
 
@@ -43,7 +46,8 @@ class SpannerLedgerCommandExecutor:
     _ALLOWED_ROLES = {
         LedgerCommandType.SAVE_PLAN_REVISION: {"FULFILLMENT_RECOVERY_PLANNER"},
         LedgerCommandType.APPLY_REPAIR_PLAN: {"FULFILLMENT_RECOVERY_PLANNER"},
-        LedgerCommandType.APPROVE_REPAIR_PLAN: {"FULFILLMENT_RECOVERY_PLANNER"},
+        LedgerCommandType.PERSIST_REPAIR_APPROVAL: {"FULFILLMENT_RECOVERY_PLANNER"},
+        LedgerCommandType.ACTIVATE_APPROVED_REPAIR_PLAN: {"FULFILLMENT_RECOVERY_PLANNER"},
         LedgerCommandType.INVALIDATE_PLAN: {"INCIDENT_COORDINATOR"},
         LedgerCommandType.ALLOCATE_SAFE_STOCK: {"FULFILLMENT_RECOVERY_PLANNER"},
         LedgerCommandType.PERSIST_COORDINATOR: {"INCIDENT_COORDINATOR"},
@@ -186,7 +190,7 @@ class SpannerLedgerCommandExecutor:
     def _active_revision(transaction: Any, tenant_id: str) -> str | None:
         rows = transaction.execute_sql(
             "SELECT revision FROM PlanRevisions "
-            "WHERE tenant_id = @tenant_id "
+            "WHERE tenant_id = @tenant_id AND status = 'ACTIVE' "
             "ORDER BY created_at DESC LIMIT 1",
             params={"tenant_id": tenant_id},
             param_types={"tenant_id": spanner.param_types.STRING},
@@ -244,12 +248,85 @@ class SpannerLedgerCommandExecutor:
         if command.command_type is LedgerCommandType.APPLY_REPAIR_PLAN:
             raise ValueError("HUMAN_APPROVAL_REQUIRED")
 
-        if command.command_type is LedgerCommandType.APPROVE_REPAIR_PLAN:
-            assert isinstance(payload, ApproveRepairPlanPayload)
+        if command.command_type is LedgerCommandType.PERSIST_REPAIR_APPROVAL:
+            assert isinstance(payload, PersistRepairApprovalPayload)
             if command.expected_plan_revision != payload.source_revision:
                 raise ValueError("REPAIR_SOURCE_REVISION_MISMATCH")
             if payload.source_revision == payload.proposed_revision:
                 raise ValueError("REPAIR_REVISION_MUST_ADVANCE")
+            diff = PlanDiff(
+                source_revision=payload.source_revision,
+                proposed_revision=payload.proposed_revision,
+                plan_diff_hash=payload.plan_diff_hash,
+                **payload.plan_diff.model_dump(),
+            )
+            if compute_plan_diff_hash(diff) != payload.plan_diff_hash:
+                raise ValueError("SIGNED_PLAN_DIFF_HASH_MISMATCH")
+            transaction.insert(
+                table="Approvals",
+                columns=[
+                    "tenant_id", "approval_id", "incident_id", "plan_id",
+                    "source_revision", "proposed_revision", "approver_subject",
+                    "approver_email", "oauth_audience", "plan_diff_hash",
+                    "plan_diff_json", "kms_key_version", "kms_signature", "expires_at",
+                    "verified_at", "trace_id",
+                ],
+                values=[[command.tenant_id, payload.approval_id, command.incident_id,
+                    payload.plan_id, payload.source_revision, payload.proposed_revision,
+                    payload.approver_subject, payload.approver_email,
+                    payload.oauth_audience, payload.plan_diff_hash,
+                    json.dumps(payload.plan_diff.model_dump(), sort_keys=True,
+                               separators=(",", ":")),
+                    payload.kms_key_version, payload.kms_signature,
+                    datetime.fromisoformat(payload.expires_at.replace("Z", "+00:00")),
+                    spanner.COMMIT_TIMESTAMP, command.trace_id]],
+            )
+            return 1
+
+        if command.command_type is LedgerCommandType.ACTIVATE_APPROVED_REPAIR_PLAN:
+            assert isinstance(payload, ActivateApprovedRepairPlanPayload)
+            if command.expected_plan_revision != payload.source_revision:
+                raise ValueError("REPAIR_SOURCE_REVISION_MISMATCH")
+            approval_rows = list(transaction.execute_sql(
+                "SELECT incident_id, plan_id, source_revision, proposed_revision, "
+                "plan_diff_hash, plan_diff_json, expires_at FROM Approvals "
+                "WHERE tenant_id = @tenant_id AND approval_id = @approval_id",
+                params={
+                    "tenant_id": command.tenant_id,
+                    "approval_id": payload.approval_id,
+                },
+                param_types={
+                    "tenant_id": spanner.param_types.STRING,
+                    "approval_id": spanner.param_types.STRING,
+                },
+            ))
+            if len(approval_rows) != 1:
+                raise ValueError("PERSISTED_REPAIR_APPROVAL_NOT_FOUND")
+            approval = approval_rows[0]
+            if tuple(approval[0:4]) != (
+                command.incident_id,
+                payload.plan_id,
+                payload.source_revision,
+                payload.proposed_revision,
+            ):
+                raise ValueError("PERSISTED_APPROVAL_SCOPE_MISMATCH")
+            expires_at = approval[6]
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            if expires_at <= datetime.now(timezone.utc):
+                raise ValueError("PERSISTED_APPROVAL_EXPIRED")
+            try:
+                plan_diff_values = json.loads(approval[5])
+                plan_diff = PlanDiff(
+                    source_revision=payload.source_revision,
+                    proposed_revision=payload.proposed_revision,
+                    plan_diff_hash=approval[4],
+                    **plan_diff_values,
+                )
+            except (TypeError, ValueError) as exc:
+                raise ValueError("PERSISTED_PLAN_DIFF_MALFORMED") from exc
+            if compute_plan_diff_hash(plan_diff) != approval[4]:
+                raise ValueError("PERSISTED_PLAN_DIFF_HASH_MISMATCH")
             source_orders = list(transaction.execute_sql(
                 "SELECT order_id, destination_agency_id, destination_agency_name, "
                 "cases, lot_id, assigned_vehicle_id, status FROM Orders "
@@ -261,37 +338,24 @@ class SpannerLedgerCommandExecutor:
                              "plan_id": spanner.param_types.STRING,
                              "source_revision": spanner.param_types.STRING},
             ))
-            if not {"O202", "O203"}.issubset({row[0] for row in source_orders}):
+            if plan_diff.reroute_order_id == plan_diff.pickup_order_id:
+                raise ValueError("SIGNED_REPAIR_TARGETS_MUST_BE_DISTINCT")
+            if not {plan_diff.reroute_order_id, plan_diff.pickup_order_id}.issubset(
+                {row[0] for row in source_orders}
+            ):
                 raise ValueError("SIGNED_REPAIR_TARGETS_NOT_FOUND")
             repaired_orders = []
             for source in source_orders:
                 order = list(source)
-                if order[0] == "O202":
-                    if order[3] != 22:
+                if order[0] == plan_diff.reroute_order_id:
+                    if order[3] != plan_diff.reroute_cases:
                         raise ValueError("SIGNED_REROUTE_QUANTITY_MISMATCH")
-                    order[5], order[6] = "TRUCK-02", "REROUTED"
-                elif order[0] == "O203":
-                    if order[3] != 20:
+                    order[5], order[6] = plan_diff.reroute_target_vehicle, "REROUTED"
+                elif order[0] == plan_diff.pickup_order_id:
+                    if order[3] != plan_diff.pickup_cases:
                         raise ValueError("SIGNED_PICKUP_QUANTITY_MISMATCH")
                     order[5], order[6] = None, "PARTNER_PICKUP_CONVERTED"
                 repaired_orders.append(order)
-            transaction.insert(
-                table="Approvals",
-                columns=[
-                    "tenant_id", "approval_id", "incident_id", "plan_id",
-                    "source_revision", "proposed_revision", "approver_subject",
-                    "approver_email", "oauth_audience", "plan_diff_hash",
-                    "kms_key_version", "kms_signature", "expires_at",
-                    "verified_at", "trace_id",
-                ],
-                values=[[command.tenant_id, payload.approval_id, command.incident_id,
-                    payload.plan_id, payload.source_revision, payload.proposed_revision,
-                    payload.approver_subject, payload.approver_email,
-                    payload.oauth_audience, payload.plan_diff_hash,
-                    payload.kms_key_version, payload.kms_signature,
-                    datetime.fromisoformat(payload.expires_at.replace("Z", "+00:00")),
-                    spanner.COMMIT_TIMESTAMP, command.trace_id]],
-            )
             updated = transaction.execute_update(
                 "UPDATE PlanRevisions SET status = 'SUPERSEDED' "
                 "WHERE tenant_id = @tenant_id AND plan_id = @plan_id "
@@ -341,7 +405,7 @@ class SpannerLedgerCommandExecutor:
                     order[0], order[1], order[2], order[3], order[4], order[5], order[6],
                 ] for order in repaired_orders],
             )
-            return 3
+            return 2
 
         if command.command_type is LedgerCommandType.INVALIDATE_PLAN:
             assert isinstance(payload, InvalidatePlanPayload)

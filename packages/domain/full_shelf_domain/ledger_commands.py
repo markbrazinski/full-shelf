@@ -12,7 +12,8 @@ from pydantic import BaseModel, ConfigDict, Field
 class LedgerCommandType(str, Enum):
     SAVE_PLAN_REVISION = "SAVE_PLAN_REVISION"
     APPLY_REPAIR_PLAN = "APPLY_REPAIR_PLAN"
-    APPROVE_REPAIR_PLAN = "APPROVE_REPAIR_PLAN"
+    PERSIST_REPAIR_APPROVAL = "PERSIST_REPAIR_APPROVAL"
+    ACTIVATE_APPROVED_REPAIR_PLAN = "ACTIVATE_APPROVED_REPAIR_PLAN"
     INVALIDATE_PLAN = "INVALIDATE_PLAN"
     ALLOCATE_SAFE_STOCK = "ALLOCATE_SAFE_STOCK"
     PERSIST_COORDINATOR = "PERSIST_COORDINATOR"
@@ -51,7 +52,15 @@ class ApplyRepairPlanPayload(StrictPayload):
     orders: list[PlanOrderPayload] = Field(min_length=1)
 
 
-class ApproveRepairPlanPayload(StrictPayload):
+class SignedRepairDiffPayload(StrictPayload):
+    reroute_order_id: str = Field(min_length=1, max_length=64)
+    reroute_cases: int = Field(gt=0)
+    reroute_target_vehicle: str = Field(min_length=1, max_length=64)
+    pickup_order_id: str = Field(min_length=1, max_length=64)
+    pickup_cases: int = Field(gt=0)
+
+
+class PersistRepairApprovalPayload(StrictPayload):
     plan_id: str = Field(min_length=1, max_length=64)
     source_revision: str = Field(min_length=1, max_length=32)
     proposed_revision: str = Field(min_length=1, max_length=32)
@@ -63,6 +72,14 @@ class ApproveRepairPlanPayload(StrictPayload):
     kms_key_version: str = Field(min_length=1, max_length=512)
     kms_signature: str = Field(min_length=1)
     expires_at: str = Field(min_length=1, max_length=64)
+    plan_diff: SignedRepairDiffPayload
+
+
+class ActivateApprovedRepairPlanPayload(StrictPayload):
+    approval_id: str = Field(min_length=1, max_length=64)
+    plan_id: str = Field(min_length=1, max_length=64)
+    source_revision: str = Field(min_length=1, max_length=32)
+    proposed_revision: str = Field(min_length=1, max_length=32)
 
 
 class InvalidatePlanPayload(StrictPayload):
@@ -160,7 +177,8 @@ class RecordRefusalPayload(StrictPayload):
 PAYLOAD_MODELS: Dict[LedgerCommandType, Type[StrictPayload]] = {
     LedgerCommandType.SAVE_PLAN_REVISION: SavePlanRevisionPayload,
     LedgerCommandType.APPLY_REPAIR_PLAN: ApplyRepairPlanPayload,
-    LedgerCommandType.APPROVE_REPAIR_PLAN: ApproveRepairPlanPayload,
+    LedgerCommandType.PERSIST_REPAIR_APPROVAL: PersistRepairApprovalPayload,
+    LedgerCommandType.ACTIVATE_APPROVED_REPAIR_PLAN: ActivateApprovedRepairPlanPayload,
     LedgerCommandType.INVALIDATE_PLAN: InvalidatePlanPayload,
     LedgerCommandType.ALLOCATE_SAFE_STOCK: AllocateSafeStockPayload,
     LedgerCommandType.PERSIST_COORDINATOR: PersistCoordinatorPayload,

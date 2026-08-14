@@ -1,11 +1,14 @@
 import importlib.util
 import os
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
 from full_shelf_domain.identity import VerifiedGoogleIdentity
 from full_shelf_domain.ledger_commands import LedgerCommand
+from full_shelf_domain.kms import compute_plan_diff_hash
+from full_shelf_domain.models import ApprovalEnvelope, PlanDiff
 
 
 ledger_main_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src", "main.py"))
@@ -155,6 +158,11 @@ def test_approval_route_requires_independent_human_token_before_kms(monkeypatch)
         "incident_id": "INC-ALT", "plan_id": "PLAN-ALT", "source_revision": "rev07",
         "proposed_revision": "rev08", "approval_id": "APP-ALT",
         "expires_at": "2099-01-01T00:00:00Z",
+        "plan_diff": {
+            "reroute_order_id": "ORDER-ALT-2", "reroute_cases": 12,
+            "reroute_target_vehicle": "VEHICLE-ALT-2",
+            "pickup_order_id": "ORDER-ALT-3", "pickup_cases": 7,
+        },
     })
     ledger_main.app.dependency_overrides.clear()
     assert response.status_code == 401
@@ -214,3 +222,80 @@ def test_command_executor_routes_audit_tenant_to_isolated_database(monkeypatch):
         "east-bay-food-bank",
         "audit-canonical",
     }
+
+
+def test_human_route_persists_approval_before_separate_activation(monkeypatch):
+    configure_boundary(monkeypatch)
+    monkeypatch.setenv("SPANNER_DATABASE_ID", "full-shelf-main")
+    operator = VerifiedGoogleIdentity(
+        subject="operator-sub",
+        email="operator@example.com",
+        audience="client.apps.googleusercontent.com",
+        issuer="https://accounts.google.com",
+        expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+    )
+    workload = VerifiedGoogleIdentity(
+        subject="orchestrator-sub",
+        email="orchestrator@example.iam.gserviceaccount.com",
+        audience="https://ledger.example.run.app",
+        issuer="https://accounts.google.com",
+        expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+    )
+    diff = PlanDiff(
+        source_revision="rev07", proposed_revision="rev08",
+        reroute_order_id="ORDER-ALT-2", reroute_cases=12,
+        reroute_target_vehicle="VEHICLE-ALT-2",
+        pickup_order_id="ORDER-ALT-3", pickup_cases=7,
+        plan_diff_hash="",
+    )
+    diff.plan_diff_hash = compute_plan_diff_hash(diff)
+    envelope = ApprovalEnvelope(
+        approval_id="APP-ALT", rev_id="rev08", principal_id=operator.subject,
+        incident_id="INC-ALT", plan_id="PLAN-ALT", source_revision="rev07",
+        proposed_revision="rev08", plan_diff=diff,
+        kms_key_version="projects/p/keys/k/versions/1", kms_signature="signed",
+        expires_at="2099-01-01T00:00:00Z",
+    )
+    calls = []
+
+    def execute(command, caller):
+        calls.append(command)
+        return SimpleNamespace(
+            receipt={"status": "SUCCESS", "command_type": command.command_type.value},
+            idempotent_replay=False,
+        )
+
+    ledger_main.app.dependency_overrides[
+        ledger_main.require_ledger_workload_identity
+    ] = lambda: workload
+    monkeypatch.setattr(ledger_main, "verify_human_operator", lambda token: operator)
+    monkeypatch.setattr(ledger_main, "create_signed_approval_envelope", lambda **kwargs: envelope)
+    monkeypatch.setattr(ledger_main, "verify_kms_approval_envelope", lambda value: True)
+    monkeypatch.setattr(ledger_main, "_execute_command", execute)
+    response = client.post(
+        "/api/v1/approvals/approve-and-activate",
+        headers={"X-Full-Shelf-Operator-Authorization": "Bearer human-token"},
+        json={
+            "command_id": "CMD-ALT", "idempotency_key": "alt",
+            "tenant_id": "east-bay-food-bank", "incident_id": "INC-ALT",
+            "plan_id": "PLAN-ALT", "source_revision": "rev07",
+            "proposed_revision": "rev08", "approval_id": "APP-ALT",
+            "expires_at": "2099-01-01T00:00:00Z",
+            "plan_diff": {
+                "reroute_order_id": "ORDER-ALT-2", "reroute_cases": 12,
+                "reroute_target_vehicle": "VEHICLE-ALT-2",
+                "pickup_order_id": "ORDER-ALT-3", "pickup_cases": 7,
+            },
+        },
+    )
+    ledger_main.app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert [command.command_type.value for command in calls] == [
+        "PERSIST_REPAIR_APPROVAL",
+        "ACTIVATE_APPROVED_REPAIR_PLAN",
+    ]
+    assert calls[0].payload["plan_diff"]["reroute_order_id"] == "ORDER-ALT-2"
+    assert calls[1].payload["approval_id"] == "APP-ALT"
+    assert response.json()["approval_receipt"]["status"] == "SUCCESS"
+    assert response.json()["activation_receipt"]["status"] == "SUCCESS"

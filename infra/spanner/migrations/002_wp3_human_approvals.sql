@@ -10,6 +10,7 @@ CREATE TABLE Approvals (
   approver_email STRING(320) NOT NULL,
   oauth_audience STRING(256) NOT NULL,
   plan_diff_hash STRING(64) NOT NULL,
+  plan_diff_json STRING(MAX) NOT NULL,
   kms_key_version STRING(512) NOT NULL,
   kms_signature STRING(MAX) NOT NULL,
   expires_at TIMESTAMP NOT NULL,

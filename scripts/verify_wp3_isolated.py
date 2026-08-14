@@ -75,11 +75,11 @@ def main() -> int:
         audience="https://ledger.example.run.app", issuer="https://accounts.google.com",
         expires_at=now + timedelta(minutes=30),
     )
-    command_values = {
+    approval_values = {
         "command_id": "CMD-WP3-ALTERED", "idempotency_key": "wp3:altered:approval",
         "tenant_id": args.tenant, "incident_id": incident_id,
         "agent_role": "FULFILLMENT_RECOVERY_PLANNER",
-        "command_type": "APPROVE_REPAIR_PLAN", "expected_plan_revision": source_revision,
+        "command_type": "PERSIST_REPAIR_APPROVAL", "expected_plan_revision": source_revision,
         "trace_id": "abcdef0123456789abcdef0123456789",
         "payload": {"plan_id": plan_id, "source_revision": source_revision,
                     "proposed_revision": proposed_revision, "approval_id": envelope.approval_id,
@@ -88,12 +88,40 @@ def main() -> int:
                     "oauth_audience": "altered-client.apps.googleusercontent.com",
                     "plan_diff_hash": envelope.plan_diff.plan_diff_hash,
                     "kms_key_version": envelope.kms_key_version,
-                    "kms_signature": envelope.kms_signature, "expires_at": envelope.expires_at},
+                    "kms_signature": envelope.kms_signature, "expires_at": envelope.expires_at,
+                    "plan_diff": {
+                        "reroute_order_id": envelope.plan_diff.reroute_order_id,
+                        "reroute_cases": envelope.plan_diff.reroute_cases,
+                        "reroute_target_vehicle": envelope.plan_diff.reroute_target_vehicle,
+                        "pickup_order_id": envelope.plan_diff.pickup_order_id,
+                        "pickup_cases": envelope.plan_diff.pickup_cases,
+                    }},
     }
     executor = SpannerLedgerCommandExecutor(database, allowed_tenant_ids={args.tenant})
-    first = executor.execute(LedgerCommand.model_validate(command_values), identity)
-    duplicate_values = dict(command_values, command_id="CMD-WP3-ALTERED-REDELIVERY")
-    duplicate = executor.execute(LedgerCommand.model_validate(duplicate_values), identity)
+    approval = executor.execute(LedgerCommand.model_validate(approval_values), identity)
+    activation_values = {
+        "command_id": "CMD-WP3-ALTERED-ACTIVATE",
+        "idempotency_key": "wp3:altered:approval:activate",
+        "tenant_id": args.tenant, "incident_id": incident_id,
+        "agent_role": "FULFILLMENT_RECOVERY_PLANNER",
+        "command_type": "ACTIVATE_APPROVED_REPAIR_PLAN",
+        "expected_plan_revision": source_revision,
+        "trace_id": "abcdef0123456789abcdef0123456789",
+        "payload": {"plan_id": plan_id, "source_revision": source_revision,
+                    "proposed_revision": proposed_revision,
+                    "approval_id": envelope.approval_id},
+    }
+    activation = executor.execute(LedgerCommand.model_validate(activation_values), identity)
+    duplicate_approval = executor.execute(
+        LedgerCommand.model_validate(dict(
+            approval_values, command_id="CMD-WP3-ALTERED-REDELIVERY"
+        )), identity
+    )
+    duplicate_activation = executor.execute(
+        LedgerCommand.model_validate(dict(
+            activation_values, command_id="CMD-WP3-ACTIVATE-REDELIVERY"
+        )), identity
+    )
 
     tenant_params = {"tenant": args.tenant}
     tenant_types = {"tenant": spanner.param_types.STRING}
@@ -112,17 +140,22 @@ def main() -> int:
     result = {
         "database": args.database, "tenant": args.tenant,
         "kms_key_version": envelope.kms_key_version,
-        "first_receipt": first.receipt["receipt_id"],
-        "duplicate_receipt": duplicate.receipt["receipt_id"],
-        "duplicate_additional_mutations": duplicate.additional_mutations,
+        "approval_receipt": approval.receipt["receipt_id"],
+        "activation_receipt": activation.receipt["receipt_id"],
+        "duplicate_approval_additional_mutations": duplicate_approval.additional_mutations,
+        "duplicate_activation_additional_mutations": duplicate_activation.additional_mutations,
         "approval_count": approvals, "receipt_count": receipts,
         "active_repaired_revision_count": active, "rerouted_order_count": rerouted,
         "partner_pickup_count": pickup, "tamper_rejected": True, "expiry_rejected": True,
     }
-    assert first.receipt["status"] == "SUCCESS" and first.additional_mutations == 3
-    assert duplicate.idempotent_replay and duplicate.additional_mutations == 0
-    assert first.receipt["receipt_id"] == duplicate.receipt["receipt_id"]
-    assert approvals == receipts == active == rerouted == pickup == 1
+    assert approval.receipt["status"] == "SUCCESS" and approval.additional_mutations == 1
+    assert activation.receipt["status"] == "SUCCESS" and activation.additional_mutations == 2
+    assert duplicate_approval.idempotent_replay and duplicate_approval.additional_mutations == 0
+    assert duplicate_activation.idempotent_replay and duplicate_activation.additional_mutations == 0
+    assert approval.receipt["receipt_id"] == duplicate_approval.receipt["receipt_id"]
+    assert activation.receipt["receipt_id"] == duplicate_activation.receipt["receipt_id"]
+    assert approvals == active == rerouted == pickup == 1
+    assert receipts == 2
     print(json.dumps(result, sort_keys=True))
     return 0
 

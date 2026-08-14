@@ -1,8 +1,11 @@
+import json
 from datetime import datetime, timezone
 
 from full_shelf_domain.identity import VerifiedGoogleIdentity
 from full_shelf_domain.ledger_commands import LedgerCommand, LedgerCommandType
 from full_shelf_domain.ledger_executor import SpannerLedgerCommandExecutor
+from full_shelf_domain.kms import compute_plan_diff_hash
+from full_shelf_domain.models import PlanDiff
 
 
 IDENTITY = VerifiedGoogleIdentity(
@@ -21,11 +24,13 @@ class FakeTransaction:
         existing_receipt=None,
         coordinator_children='["INC-TRUCK-ALT"]',
         source_orders=None,
+        approval_rows=None,
     ):
         self.active_revision = active_revision
         self.existing_receipt = existing_receipt
         self.coordinator_children = coordinator_children
         self.source_orders = source_orders or []
+        self.approval_rows = approval_rows or []
         self.inserts = []
         self.upserts = []
         self.updates = []
@@ -37,6 +42,8 @@ class FakeTransaction:
             return [(self.active_revision,)] if self.active_revision else []
         if "FROM Incidents" in sql:
             return []
+        if "FROM Approvals" in sql:
+            return self.approval_rows
         if "FROM Coordinators" in sql:
             return [(self.coordinator_children,)]
         if "FROM Orders" in sql:
@@ -262,29 +269,88 @@ def test_unsigned_repair_command_cannot_activate():
     assert transaction.updates == []
 
 
-def test_approved_repair_derives_only_signed_changes_from_source_orders():
+def _signed_diff():
+    diff = PlanDiff(
+        source_revision="rev42",
+        proposed_revision="rev43",
+        reroute_order_id="ORDER-REROUTE",
+        reroute_cases=22,
+        reroute_target_vehicle="VEHICLE-RECOVERY",
+        pickup_order_id="ORDER-PICKUP",
+        pickup_cases=20,
+        plan_diff_hash="",
+    )
+    diff.plan_diff_hash = compute_plan_diff_hash(diff)
+    return diff
+
+
+def test_repair_approval_commits_before_any_plan_activation():
+    diff = _signed_diff()
     command = coordinator_command(
-        command_type=LedgerCommandType.APPROVE_REPAIR_PLAN,
+        command_type=LedgerCommandType.PERSIST_REPAIR_APPROVAL,
         agent_role="FULFILLMENT_RECOVERY_PLANNER",
         payload={"plan_id": "PLAN-ALT", "source_revision": "rev42",
                  "proposed_revision": "rev43", "approval_id": "APP-ALT",
                  "approver_subject": "operator-sub", "approver_email": "operator@example.com",
                  "oauth_audience": "client.apps.googleusercontent.com",
-                 "plan_diff_hash": "a" * 64, "kms_key_version": "projects/p/keys/k/versions/1",
-                 "kms_signature": "signature", "expires_at": "2099-01-01T00:00:00Z"},
+                 "plan_diff_hash": diff.plan_diff_hash,
+                 "kms_key_version": "projects/p/keys/k/versions/1",
+                 "kms_signature": "signature", "expires_at": "2099-01-01T00:00:00Z",
+                 "plan_diff": {
+                     "reroute_order_id": diff.reroute_order_id,
+                     "reroute_cases": diff.reroute_cases,
+                     "reroute_target_vehicle": diff.reroute_target_vehicle,
+                     "pickup_order_id": diff.pickup_order_id,
+                     "pickup_cases": diff.pickup_cases,
+                 }},
+    )
+    transaction = FakeTransaction()
+    result = SpannerLedgerCommandExecutor(
+        FakeDatabase(transaction), allowed_tenant_ids={"audit-tenant"}
+    ).execute(command, IDENTITY)
+
+    assert result.additional_mutations == 1
+    assert [item["table"] for item in transaction.inserts] == ["Approvals", "Receipts"]
+    assert transaction.updates == []
+    assert json.loads(transaction.inserts[0]["values"][0][10]) == command.payload["plan_diff"]
+
+
+def test_separate_activation_reads_persisted_approval_and_derives_only_signed_changes():
+    diff = _signed_diff()
+    command = coordinator_command(
+        command_id="CMD-APPROVED-ACTIVATION",
+        idempotency_key="alt:approval:activate",
+        command_type=LedgerCommandType.ACTIVATE_APPROVED_REPAIR_PLAN,
+        agent_role="FULFILLMENT_RECOVERY_PLANNER",
+        payload={"plan_id": "PLAN-ALT", "source_revision": "rev42",
+                 "proposed_revision": "rev43", "approval_id": "APP-ALT"},
     )
     source = [
         ("O201", "AG1", "Agency 1", 18, "LOT-X", "TRUCK-01", "PLANNED"),
-        ("O202", "AG2", "Agency 2", 22, "LOT-X", "TRUCK-01", "PLANNED"),
-        ("O203", "AG3", "Agency 3", 20, "LOT-X", "TRUCK-01", "PLANNED"),
+        ("ORDER-REROUTE", "AG2", "Agency 2", 22, "LOT-X", "TRUCK-01", "PLANNED"),
+        ("ORDER-PICKUP", "AG3", "Agency 3", 20, "LOT-X", "TRUCK-01", "PLANNED"),
     ]
-    transaction = FakeTransaction(source_orders=source)
+    plan_diff_json = json.dumps({
+        "reroute_order_id": diff.reroute_order_id,
+        "reroute_cases": diff.reroute_cases,
+        "reroute_target_vehicle": diff.reroute_target_vehicle,
+        "pickup_order_id": diff.pickup_order_id,
+        "pickup_cases": diff.pickup_cases,
+    }, sort_keys=True, separators=(",", ":"))
+    transaction = FakeTransaction(
+        source_orders=source,
+        approval_rows=[(
+            "INC-ALT-777", "PLAN-ALT", "rev42", "rev43",
+            diff.plan_diff_hash, plan_diff_json,
+            datetime(2099, 1, 1, tzinfo=timezone.utc),
+        )],
+    )
     result = SpannerLedgerCommandExecutor(FakeDatabase(transaction), allowed_tenant_ids={"audit-tenant"}).execute(command, IDENTITY)
-    assert result.additional_mutations == 3
-    assert [item["table"] for item in transaction.inserts] == ["Approvals", "PlanRevisions", "Orders", "Receipts"]
-    inserted = transaction.inserts[2]["values"]
+    assert result.additional_mutations == 2
+    assert [item["table"] for item in transaction.inserts] == ["PlanRevisions", "Orders", "Receipts"]
+    inserted = transaction.inserts[1]["values"]
     assert inserted[0][-2:] == ["TRUCK-01", "PLANNED"]
-    assert inserted[1][-2:] == ["TRUCK-02", "REROUTED"]
+    assert inserted[1][-2:] == ["VEHICLE-RECOVERY", "REROUTED"]
     assert inserted[2][-2:] == [None, "PARTNER_PICKUP_CONVERTED"]
 
 

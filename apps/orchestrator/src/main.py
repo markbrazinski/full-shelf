@@ -155,16 +155,25 @@ def execute_ledger_command(
     return result
 
 
+class HumanRepairPlanDiff(BaseModel):
+    reroute_order_id: str = Field(min_length=1, max_length=64)
+    reroute_cases: int = Field(gt=0)
+    reroute_target_vehicle: str = Field(min_length=1, max_length=64)
+    pickup_order_id: str = Field(min_length=1, max_length=64)
+    pickup_cases: int = Field(gt=0)
+
+
 class HumanApprovalProposal(BaseModel):
-    command_id: str
-    idempotency_key: str
+    command_id: str = Field(min_length=1, max_length=48)
+    idempotency_key: str = Field(min_length=1, max_length=112)
     tenant_id: str
     incident_id: str
     plan_id: str
     source_revision: str
     proposed_revision: str
-    approval_id: str
+    approval_id: str = Field(min_length=1, max_length=48)
     expires_at: str
+    plan_diff: HumanRepairPlanDiff
 
 
 class RecallArmorPreflightRequest(BaseModel):
