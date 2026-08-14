@@ -190,6 +190,27 @@ class PersistWaitingCoordinatorRequest(BaseModel):
     child_incident_ids: list[str] = Field(min_length=1)
 
 
+class DeadlineTaskCallbackPayload(BaseModel):
+    tenant_id: str = Field(min_length=1, max_length=64)
+    incident_id: str = Field(min_length=1, max_length=64)
+    hold_incident_id: str = Field(min_length=1, max_length=64)
+    coordinator_id: str = Field(min_length=1, max_length=64)
+    lot_id: str = Field(min_length=1, max_length=64)
+    site_id: str = Field(min_length=1, max_length=64)
+    unconfirmed_cases: int = Field(gt=0)
+    task_decision_id: str = Field(min_length=1, max_length=500)
+    correlation_trace_id: str = Field(min_length=32, max_length=32)
+
+
+class SiteEscalationRequest(BaseModel):
+    incident_id: str = Field(min_length=1, max_length=64)
+    hold_incident_id: str = Field(min_length=1, max_length=64)
+    coordinator_id: str = Field(min_length=1, max_length=64)
+    lot_id: str = Field(min_length=1, max_length=64)
+    site_id: str = Field(min_length=1, max_length=64)
+    unconfirmed_cases: int = Field(gt=0)
+
+
 def _verify_operator(authorization: Optional[str]):
     try:
         return GoogleOidcVerifier(
@@ -546,7 +567,7 @@ def persist_coordinator_waiting(
 @app.post("/api/v1/incidents/site01-deadline")
 def handle_site01_deadline_callback(
     req: Request,
-    payload: Dict[str, Any] = None,
+    payload: DeadlineTaskCallbackPayload,
     authorization: Optional[str] = Header(None)
 ):
     """Authenticated Cloud Task callback for Site 01 acknowledgment deadline hold."""
@@ -556,10 +577,10 @@ def handle_site01_deadline_callback(
     if not task_name or queue_name != "full-shelf-deadlines":
         raise HTTPException(400, "CLOUD_TASK_DELIVERY_CONTEXT_REQUIRED")
 
-    incident_id = (payload or {}).get("incident_id", "INC-RECALL-01")
-    site_id = (payload or {}).get("site_id", "SITE-01")
-    tenant_id = (payload or {}).get("tenant_id", "east-bay-food-bank")
-    task_decision_id = (payload or {}).get("task_decision_id")
+    incident_id = payload.incident_id
+    site_id = payload.site_id
+    tenant_id = payload.tenant_id
+    task_decision_id = payload.task_decision_id
     _resolve_authority_scope(tenant_id)
     if not task_decision_id or not (
         task_name == task_decision_id
@@ -569,12 +590,12 @@ def handle_site01_deadline_callback(
 
     now = datetime.now(timezone.utc).isoformat()
     trace_id = generate_trace_id()
-    payload_trace_id = (payload or {}).get("correlation_trace_id")
+    payload_trace_id = payload.correlation_trace_id
     if payload_trace_id and payload_trace_id != trace_id:
         raise HTTPException(400, "CLOUD_TASK_TRACE_CONTEXT_MISMATCH")
     ledger_result = execute_ledger_command(
-        command_id=f"CMD-SITE01-{task_decision_id[-40:]}",
-        idempotency_key=f"cloud-task:{task_decision_id}",
+        command_id=f"CMD-TASK-{hashlib.sha256(task_decision_id.encode()).hexdigest()[:24]}",
+        idempotency_key=f"cloud-task:{hashlib.sha256(task_decision_id.encode()).hexdigest()}",
         tenant_id=tenant_id,
         incident_id=incident_id,
         agent_role="PARTNER_OPERATIONS_AGENT",
@@ -582,11 +603,11 @@ def handle_site01_deadline_callback(
         trace_id=trace_id,
         payload={
             "incident_id": incident_id,
-            "hold_incident_id": f"{incident_id}-HOLD-SITE01",
-            "coordinator_id": "COORD-2026-0807",
-            "lot_id": "LTC-4471",
+            "hold_incident_id": payload.hold_incident_id,
+            "coordinator_id": payload.coordinator_id,
+            "lot_id": payload.lot_id,
             "site_id": site_id,
-            "unconfirmed_cases": 8,
+            "unconfirmed_cases": payload.unconfirmed_cases,
             "task_name": task_name,
             "delivery_subject": caller.subject,
             "delivery_email": caller.email,
@@ -598,7 +619,7 @@ def handle_site01_deadline_callback(
         "status": "DEADLINE_ACK_HOLD_PERSISTED",
         "site_id": site_id,
         "incident_id": incident_id,
-        "unconfirmed_cases": 8,
+        "unconfirmed_cases": payload.unconfirmed_cases,
         "authenticated_task": True,
         "task_name": task_name,
         "delivery_identity": caller.email,
@@ -612,6 +633,7 @@ def handle_site01_deadline_callback(
 
 @app.post("/api/v1/orchestrator/site01-escalation/schedule")
 def schedule_site01_escalation(
+    proposal: SiteEscalationRequest,
     x_api_key: Optional[str] = Header(None, alias="X-Full-Shelf-API-Key"),
     tenant_id: str = Query("east-bay-food-bank"),
 ):
@@ -623,12 +645,13 @@ def schedule_site01_escalation(
         with db.snapshot(multi_use=True) as snapshot:
             recall = list(snapshot.execute_sql(
                 "SELECT status FROM Incidents WHERE tenant_id = @t "
-                "AND incident_id = 'INC-RECALL-01'",
-                params={"t": tenant_id},
-                param_types={"t": spanner.param_types.STRING},
+                "AND incident_id = @incident_id",
+                params={"t": tenant_id, "incident_id": proposal.incident_id},
+                param_types={"t": spanner.param_types.STRING,
+                             "incident_id": spanner.param_types.STRING},
             ))
             holds = list(snapshot.execute_sql(
-                "SELECT details FROM Incidents WHERE tenant_id = @t "
+                "SELECT incident_id, details FROM Incidents WHERE tenant_id = @t "
                 "AND incident_type = 'DEADLINE_HOLD' "
                 "AND status = 'ACKNOWLEDGMENT_HOLD_ACTIVE'",
                 params={"t": tenant_id},
@@ -639,10 +662,12 @@ def schedule_site01_escalation(
     hold_open = False
     for row in holds:
         try:
-            details = json.loads(row[0] or "{}")
+            details = json.loads(row[1] or "{}")
         except (TypeError, json.JSONDecodeError):
             continue
-        if details.get("site_id") == "SITE-01" and details.get("unconfirmed_cases") == 8:
+        if (row[0] == proposal.hold_incident_id
+                and details.get("site_id") == proposal.site_id
+                and details.get("unconfirmed_cases") == proposal.unconfirmed_cases):
             hold_open = True
             break
     if not recall or recall[0][0] != "PARTIALLY_CONTAINED" or not hold_open:
@@ -651,7 +676,13 @@ def schedule_site01_escalation(
     trace_id = generate_trace_id()
     decision_id = f"site01-{trace_id}"
     task = schedule_site01_deadline_task(
-        "INC-RECALL-01",
+        tenant_id=tenant_id,
+        incident_id=proposal.incident_id,
+        hold_incident_id=proposal.hold_incident_id,
+        coordinator_id=proposal.coordinator_id,
+        lot_id=proposal.lot_id,
+        site_id=proposal.site_id,
+        unconfirmed_cases=proposal.unconfirmed_cases,
         task_id=decision_id,
         oidc_audience=MANAGED_CALLBACK_AUDIENCE,
         delivery_service_account=MANAGED_CALLBACK_SERVICE_ACCOUNT_EMAIL,
@@ -1024,7 +1055,13 @@ def execute_hero_loop(
 
     # Step 7: Schedule Cloud Task for Site 01 deadline
     task_res = schedule_site01_deadline_task(
-        "INC-RECALL-01",
+        tenant_id=tenant_id,
+        incident_id="INC-RECALL-01",
+        hold_incident_id="INC-RECALL-01-HOLD-SITE01",
+        coordinator_id="COORD-2026-0807",
+        lot_id="LTC-4471",
+        site_id="SITE-01",
+        unconfirmed_cases=8,
         task_id=f"site01-{trace_id}",
         oidc_audience=MANAGED_CALLBACK_AUDIENCE,
         delivery_service_account=MANAGED_CALLBACK_SERVICE_ACCOUNT_EMAIL,

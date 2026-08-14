@@ -24,6 +24,20 @@ CALLER = VerifiedGoogleIdentity(
 )
 
 
+def _task_payload(task_id):
+    return {
+        "tenant_id": "east-bay-food-bank",
+        "incident_id": "INC-RECALL-01",
+        "hold_incident_id": "INC-RECALL-01-HOLD-SITE01",
+        "coordinator_id": "COORD-2026-0807",
+        "lot_id": "LTC-4471",
+        "site_id": "SITE-01",
+        "unconfirmed_cases": 8,
+        "task_decision_id": task_id,
+        "correlation_trace_id": "0123456789abcdef0123456789abcdef",
+    }
+
+
 def test_task_callback_rejects_unauthenticated_before_ledger():
     client = TestClient(main.app)
     with patch.object(
@@ -35,8 +49,7 @@ def test_task_callback_rejects_unauthenticated_before_ledger():
                 "X-CloudTasks-TaskName": "task-forged",
                 "X-CloudTasks-QueueName": "full-shelf-deadlines",
             },
-            json={"incident_id": "INC-RECALL-01", "site_id": "SITE-01",
-                  "task_decision_id": "task-forged"},
+            json=_task_payload("task-forged"),
         )
     assert response.status_code == 401
     ledger.assert_not_called()
@@ -205,9 +218,7 @@ def test_task_callback_uses_verified_identity_and_cannot_bypass_ledger():
                 "X-CloudTasks-QueueName": "full-shelf-deadlines",
                 "traceparent": "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01",
             },
-            json={"incident_id": "INC-RECALL-01", "site_id": "SITE-01",
-                  "task_decision_id": "task-alt",
-                  "correlation_trace_id": "0123456789abcdef0123456789abcdef"},
+            json=_task_payload("task-alt"),
         )
     assert response.status_code == 200
     command = ledger.call_args.kwargs
@@ -227,7 +238,13 @@ def test_task_creation_is_explicitly_audience_bound_without_local_fallback():
     client.create_task.return_value.name = "projects/p/locations/l/queues/q/tasks/t"
     with patch("google.cloud.tasks_v2.CloudTasksClient", return_value=client):
         result = main.schedule_site01_deadline_task(
-            "INC-RECALL-01",
+            tenant_id="audit-tenant",
+            incident_id="INC-RECALL-ALT",
+            hold_incident_id="INC-RECALL-ALT-HOLD-SITE-X",
+            coordinator_id="COORD-ALT",
+            lot_id="LOT-ALT",
+            site_id="SITE-X",
+            unconfirmed_cases=3,
             task_id="t",
             orchestrator_url="https://orchestrator.example.run.app",
             oidc_audience="https://orchestrator.example.run.app",
@@ -243,6 +260,10 @@ def test_task_creation_is_explicitly_audience_bound_without_local_fallback():
     assert task["http_request"]["headers"]["traceparent"].startswith(
         "00-0123456789abcdef0123456789abcdef-"
     )
+    body = json.loads(task["http_request"]["body"])
+    assert body["tenant_id"] == "audit-tenant"
+    assert body["site_id"] == "SITE-X"
+    assert body["unconfirmed_cases"] == 3
     assert result["correlation_trace_id"] == "0123456789abcdef0123456789abcdef"
 
 
@@ -252,15 +273,12 @@ def test_task_redelivery_reuses_deterministic_ledger_idempotency_key():
         "receipt": {"receipt_id": "RCT-TASK-REPLAY", "status": "SUCCESS"},
         "idempotent_replay": True,
     }
-    request = {
-        "incident_id": "INC-RECALL-01",
-        "site_id": "SITE-01",
-        "task_decision_id": "task-redelivery",
-    }
+    request = _task_payload("task-redelivery")
     headers = {
         "Authorization": "Bearer signed",
         "X-CloudTasks-TaskName": "task-redelivery",
         "X-CloudTasks-QueueName": "full-shelf-deadlines",
+        "traceparent": "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01",
     }
     with patch.object(main, "_verify_managed_callback", return_value=CALLER), patch.object(
         main, "execute_ledger_command", return_value=result
@@ -272,4 +290,46 @@ def test_task_redelivery_reuses_deterministic_ledger_idempotency_key():
     assert ledger.call_count == 2
     first_key = ledger.call_args_list[0].kwargs["idempotency_key"]
     second_key = ledger.call_args_list[1].kwargs["idempotency_key"]
-    assert first_key == second_key == "cloud-task:task-redelivery"
+    assert first_key == second_key
+    assert first_key.startswith("cloud-task:")
+
+
+def test_application_escalation_schedules_task_from_authoritative_isolated_state():
+    client = TestClient(main.app)
+    db = MagicMock()
+    snapshot = MagicMock()
+    snapshot.execute_sql.side_effect = [
+        [("PARTIALLY_CONTAINED",)],
+        [("INC-HOLD-ALT", json.dumps({"site_id": "SITE-X", "unconfirmed_cases": 3}))],
+    ]
+    db.snapshot.return_value.__enter__.return_value = snapshot
+    task_result = {
+        "task_name": "projects/p/locations/l/queues/q/tasks/task-alt",
+        "queue": "projects/p/locations/l/queues/q",
+        "target_url": "https://orchestrator.example.run.app/api/v1/incidents/site01-deadline",
+        "oidc_audience": "https://orchestrator.example.run.app",
+        "delivery_service_account": "delivery@example.iam.gserviceaccount.com",
+        "correlation_trace_id": "0123456789abcdef0123456789abcdef",
+    }
+    proposal = {
+        "incident_id": "INC-RECALL-ALT", "hold_incident_id": "INC-HOLD-ALT",
+        "coordinator_id": "COORD-ALT", "lot_id": "LOT-ALT",
+        "site_id": "SITE-X", "unconfirmed_cases": 3,
+    }
+    with patch.object(main, "verify_judge_key"), patch.object(
+        main, "get_spanner_database", return_value=db
+    ), patch.object(
+        main, "schedule_site01_deadline_task", return_value=task_result
+    ) as schedule:
+        response = client.post(
+            "/api/v1/orchestrator/site01-escalation/schedule?tenant_id=east-bay-food-bank",
+            json=proposal,
+        )
+
+    assert response.status_code == 200
+    assert response.json()["task_name"].endswith("/tasks/task-alt")
+    assert schedule.call_args.kwargs["incident_id"] == "INC-RECALL-ALT"
+    assert schedule.call_args.kwargs["coordinator_id"] == "COORD-ALT"
+    assert schedule.call_args.kwargs["site_id"] == "SITE-X"
+    assert schedule.call_args.kwargs["unconfirmed_cases"] == 3
+    assert snapshot.execute_sql.call_args_list[0].kwargs["params"]["incident_id"] == "INC-RECALL-ALT"

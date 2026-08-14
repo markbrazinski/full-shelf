@@ -328,8 +328,14 @@ class IncidentLifecycleManager:
 
 
 def schedule_site01_deadline_task(
-    incident_id: str = "INC-RECALL-01",
     *,
+    tenant_id: str,
+    incident_id: str,
+    hold_incident_id: str,
+    coordinator_id: str,
+    lot_id: str,
+    site_id: str,
+    unconfirmed_cases: int,
     task_id: str,
     orchestrator_url: Optional[str] = None,
     oidc_audience: Optional[str] = None,
@@ -337,6 +343,9 @@ def schedule_site01_deadline_task(
     trace_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Create one real, explicitly audience-bound Site 01 deadline task."""
+    if not all((tenant_id, incident_id, hold_incident_id, coordinator_id,
+                lot_id, site_id)) or unconfirmed_cases <= 0:
+        raise ValueError("TASK_AUTHORITY_SCOPE_REQUIRED")
     client = tasks_v2.CloudTasksClient()
     parent = client.queue_path(PROJECT_ID, "us-central1", "full-shelf-deadlines")
     target_url = orchestrator_url or os.getenv("ORCHESTRATOR_URL", "https://full-shelf-orchestrator-620464070103.us-central1.run.app")
@@ -358,8 +367,12 @@ def schedule_site01_deadline_task(
             },
             "body": json.dumps({
                 "incident_id": incident_id,
-                "site_id": "SITE-01",
-                "tenant_id": "east-bay-food-bank",
+                "hold_incident_id": hold_incident_id,
+                "coordinator_id": coordinator_id,
+                "lot_id": lot_id,
+                "site_id": site_id,
+                "unconfirmed_cases": unconfirmed_cases,
+                "tenant_id": tenant_id,
                 "task_decision_id": task_id,
                 "correlation_trace_id": correlation_trace_id,
             }).encode("utf-8"),
