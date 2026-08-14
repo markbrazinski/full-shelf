@@ -1,12 +1,13 @@
 import json
 import os
+import re
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional, List
 import httpx
 
-from google import genai
 from google.cloud import pubsub_v1, spanner, tasks_v2
 from full_shelf_observability import generate_trace_id
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 
 PROJECT_ID = os.getenv("GCP_PROJECT_ID", "preflight-hackathon")
@@ -14,8 +15,8 @@ MODEL_ARMOR_LOCATION = os.getenv("MODEL_ARMOR_LOCATION", "us-central1")
 MODEL_ARMOR_TEMPLATE_ID = os.getenv("MODEL_ARMOR_TEMPLATE_ID", "full-shelf-recall-input-v1")
 TOPIC_ID = os.getenv("PUBSUB_TOPIC_ID", "full-shelf-incidents")
 PLAN_LEDGER_URL = os.getenv("PLAN_LEDGER_URL", "https://full-shelf-plan-ledger-620464070103.us-central1.run.app")
-MODEL_ID = "gemini-3.5-flash"
-VERTEX_LOCATION = "global"
+MODEL_ID = os.getenv("GEMINI_MODEL_ID", "gemini-3.5-flash")
+VERTEX_LOCATION = os.getenv("VERTEX_LOCATION", "global")
 
 VALID_LIFECYCLE_STATES = [
     "DETECTED",
@@ -27,18 +28,28 @@ VALID_LIFECYCLE_STATES = [
 ]
 
 
-def verify_gemini_35_availability() -> Dict[str, Any]:
-    """Asserts that Gemini 3.5 Flash or newer is active on Vertex AI. Fails startup if unavailable."""
-    client = genai.Client(vertexai=True, project=PROJECT_ID, location=VERTEX_LOCATION)
-    res = client.models.generate_content(model=MODEL_ID, contents="ping")
-    if not res.text:
-        raise RuntimeError(f"Model verification failed for {MODEL_ID}")
-    return {
-        "status": "HEALTHY",
-        "model_id": MODEL_ID,
-        "vertex_location": VERTEX_LOCATION,
-        "response": res.text.strip()
-    }
+def is_eligible_gemini_model(model_id: str) -> bool:
+    """Return true only for a Gemini major/minor identifier at least 3.5."""
+    match = re.match(r"^gemini-(\d+)\.(\d+)(?:-|$)", model_id)
+    return bool(match and (int(match.group(1)), int(match.group(2))) >= (3, 5))
+
+
+class RecallExtractionSchema(BaseModel):
+    """Strict advisory extraction returned by the load-bearing ADK agent."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    lot_id: str = Field(min_length=1, max_length=64)
+    product_name: str = Field(min_length=1, max_length=128)
+    hazard: str = Field(min_length=1, max_length=128)
+    action_required: str = Field(min_length=1, max_length=128)
+    source_anchor: str = Field(min_length=1, max_length=256)
+
+
+class AdkExtractionFailure(RuntimeError):
+    def __init__(self, reason_code: str):
+        super().__init__(reason_code)
+        self.reason_code = reason_code
 
 
 def inspect_recall_notice_with_model_armor(
@@ -124,13 +135,39 @@ def inspect_recall_notice_with_model_armor(
         }
 
 
-def extract_recall_entities_with_gemini_35(raw_notice: str) -> Dict[str, Any]:
-    """Extracts recall parameters using Google ADK Agent and Runner with Gemini on Vertex AI."""
+def extract_recall_entities_with_gemini_35(
+    raw_notice: str,
+    *,
+    correlation_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Run schema-bound recall extraction through a real Google ADK Runner."""
     import asyncio
+    from importlib.metadata import version
+
     from google.adk.agents import Agent
     from google.adk.runners import Runner
     from google.adk.sessions import InMemorySessionService
     from google.genai import types
+
+    correlation_id = correlation_id or generate_trace_id()
+    execution: Dict[str, Any] = {
+        "adk_session_id": None,
+        "adk_run_id": None,
+        "adk_event_id": None,
+    }
+    adk_version = version("google-adk")
+
+    if not is_eligible_gemini_model(MODEL_ID):
+        return {
+            "status": "MANUAL_REVIEW_REQUIRED",
+            "reason_code": "INELIGIBLE_MODEL_CONFIGURATION",
+            "model_used": MODEL_ID,
+            "vertex_location": VERTEX_LOCATION,
+            "adk_framework": f"google-adk/{adk_version}",
+            "correlation_id": correlation_id,
+            "downstream_allowed": False,
+            **execution,
+        }
 
     os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "1"
     os.environ["GOOGLE_CLOUD_PROJECT"] = PROJECT_ID
@@ -138,17 +175,17 @@ def extract_recall_entities_with_gemini_35(raw_notice: str) -> Dict[str, Any]:
 
     agent = Agent(
         name="RecallExtractionAgent",
-        model="gemini-2.5-flash",
+        model=MODEL_ID,
+        output_schema=RecallExtractionSchema,
+        generate_content_config=types.GenerateContentConfig(
+            temperature=0,
+            max_output_tokens=512,
+        ),
         instruction="""
-        You are an automated Food Safety Reasoning Agent powering Full Shelf.
-        Extract recall parameters from the provided notice text into exact JSON:
-        Keys:
-        - "lot_id": string (e.g. LTC-4471)
-        - "product_name": string (e.g. Romaine Lettuce)
-        - "hazard": string (e.g. E. coli O157:H7)
-        - "action_required": string (e.g. PAUSE_DISPATCH_AND_QUARANTINE)
-        - "source_anchor": string (e.g. FDA Enforcement Report #2026-0807-L4)
-        Return ONLY raw valid JSON. No markdown backticks, no commentary.
+        Extract the requested fields only from the supplied recall notice.
+        Every value must be explicitly supported by text in that notice.
+        Do not infer missing values, use remembered examples, or invent a
+        canonical scenario. Return the configured structured response only.
         """
     )
 
@@ -159,56 +196,90 @@ def extract_recall_entities_with_gemini_35(raw_notice: str) -> Dict[str, Any]:
             session_service=session_service,
             app_name="FullShelfApp"
         )
-        session = await session_service.create_session(user_id="orchestrator-sa", app_name="FullShelfApp")
+        session = await session_service.create_session(
+            user_id="orchestrator-workload",
+            app_name="FullShelfApp",
+        )
+        execution["adk_session_id"] = session.id
         user_msg = types.Content(
             role="user",
             parts=[types.Part.from_text(text=raw_notice)]
         )
-        extracted_text = ""
-        async for event in runner.run_async(user_id="orchestrator-sa", session_id=session.id, new_message=user_msg):
-            if hasattr(event, "content") and event.content:
-                for part in getattr(event.content, "parts", []):
-                    if hasattr(part, "text") and part.text:
-                        extracted_text += part.text
-        return session.id, extracted_text
+        final_texts = []
+        usage = None
+        async for event in runner.run_async(
+            user_id="orchestrator-workload",
+            session_id=session.id,
+            new_message=user_msg,
+        ):
+            if event.invocation_id:
+                if execution["adk_run_id"] not in {None, event.invocation_id}:
+                    raise AdkExtractionFailure("MULTIPLE_ADK_RUN_IDENTIFIERS")
+                execution["adk_run_id"] = event.invocation_id
+            if event.error_code:
+                raise AdkExtractionFailure("ADK_MODEL_ERROR")
+            if event.author != agent.name or not event.is_final_response():
+                continue
+            text = "".join(
+                part.text or ""
+                for part in (event.content.parts if event.content else [])
+            ).strip()
+            if text:
+                final_texts.append(text)
+                execution["adk_event_id"] = event.id
+                usage = event.usage_metadata
+        if not execution["adk_run_id"]:
+            raise AdkExtractionFailure("ADK_RUN_IDENTIFIER_MISSING")
+        if len(final_texts) != 1:
+            raise AdkExtractionFailure("ADK_FINAL_RESPONSE_COUNT_INVALID")
+        return final_texts[0], usage
 
     try:
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
+        raw_response, usage = asyncio.run(_run_adk_extraction())
+        extracted = RecallExtractionSchema.model_validate_json(raw_response)
+        normalized_notice = raw_notice.casefold()
+        for field_name in RecallExtractionSchema.model_fields:
+            value = getattr(extracted, field_name)
+            if value.casefold() not in normalized_notice:
+                raise AdkExtractionFailure("SOURCE_ANCHOR_VALIDATION_FAILED")
 
-        if loop and loop.is_running():
-            import nest_asyncio
-            nest_asyncio.apply()
-            session_id, raw_response = loop.run_until_complete(_run_adk_extraction())
-        else:
-            session_id, raw_response = asyncio.run(_run_adk_extraction())
-
-        text = raw_response.strip()
-        if text.startswith("```json"):
-            text = text.split("```json")[1].split("```")[0].strip()
-        elif text.startswith("```"):
-            text = text.split("```")[1].split("```")[0].strip()
-
-        extracted = json.loads(text)
-        if "lot_id" not in extracted:
-            raise ValueError("Extracted JSON missing mandatory 'lot_id' field")
-
-        extracted["notice_label"] = "REPRESENTATIVE DEMO NOTICE"
-        extracted["model_used"] = MODEL_ID
-        extracted["vertex_location"] = VERTEX_LOCATION
-        extracted["adk_session_id"] = session_id
-        extracted["adk_framework"] = "GOOGLE_ADK_2.6"
-        extracted["validation_status"] = "VALIDATED_AGAINST_SOURCE_ANCHOR"
-        return extracted
-    except Exception as e:
-        return {
-            "status": "EXTRACTION_FAILED_MANUAL_REVIEW_REQUIRED",
-            "error_detail": str(e),
-            "notice_label": "REPRESENTATIVE DEMO NOTICE",
+        result = {
+            **extracted.model_dump(),
+            "status": "EXTRACTION_VALIDATED",
             "model_used": MODEL_ID,
-            "validation_status": "MANUAL_REVIEW_REQUIRED"
+            "vertex_location": VERTEX_LOCATION,
+            "adk_framework": f"google-adk/{adk_version}",
+            "adk_session_backend": "InMemorySessionService",
+            "validation_status": "SCHEMA_AND_SOURCE_ANCHORS_VALIDATED",
+            "correlation_id": correlation_id,
+            "downstream_allowed": True,
+            **execution,
+        }
+        if usage:
+            result["token_usage"] = {
+                "prompt_tokens": usage.prompt_token_count,
+                "output_tokens": usage.candidates_token_count,
+                "total_tokens": usage.total_token_count,
+            }
+        return result
+    except ValidationError:
+        reason_code = "INVALID_STRUCTURED_OUTPUT"
+    except AdkExtractionFailure as exc:
+        reason_code = exc.reason_code
+    except Exception:
+        reason_code = "ADK_INVOCATION_FAILED"
+
+    return {
+            "status": "MANUAL_REVIEW_REQUIRED",
+            "reason_code": reason_code,
+            "model_used": MODEL_ID,
+            "vertex_location": VERTEX_LOCATION,
+            "adk_framework": f"google-adk/{adk_version}",
+            "adk_session_backend": "InMemorySessionService",
+            "validation_status": "MANUAL_REVIEW_REQUIRED",
+            "correlation_id": correlation_id,
+            "downstream_allowed": False,
+            **execution,
         }
 
 

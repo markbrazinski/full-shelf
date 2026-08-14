@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Dict, Any, Optional, List
 from fastapi import FastAPI, Header, HTTPException, Query, BackgroundTasks, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import httpx
 
 from google.cloud import spanner
@@ -18,7 +18,6 @@ from full_shelf_domain.identity import (
     MissingIdentityToken, UnauthorizedIdentity, fetch_google_id_token,
 )
 from full_shelf_domain.recall import (
-    verify_gemini_35_availability,
     inspect_recall_notice_with_model_armor,
     extract_recall_entities_with_gemini_35,
     publish_recall_event_to_pubsub,
@@ -26,6 +25,7 @@ from full_shelf_domain.recall import (
     IncidentLifecycleManager,
     MODEL_ID,
     VERTEX_LOCATION,
+    is_eligible_gemini_model,
 )
 
 app = FastAPI(
@@ -134,7 +134,7 @@ class HumanApprovalProposal(BaseModel):
 
 
 class RecallArmorPreflightRequest(BaseModel):
-    notice_text: str
+    notice_text: str = Field(min_length=1, max_length=20000)
 
 
 def _verify_operator(authorization: Optional[str]):
@@ -209,16 +209,13 @@ def verify_judge_key(x_api_key: Optional[str] = Header(None, alias="X-Full-Shelf
 
 @app.on_event("startup")
 def startup_checks():
-    """Startup check asserts Gemini 3.5+ availability on Vertex AI."""
+    """Reject an ineligible configured model without triggering a paid health call."""
     if not PLAN_LEDGER_URL or not PLAN_LEDGER_AUDIENCE:
         raise RuntimeError("PLAN_LEDGER_URL and PLAN_LEDGER_AUDIENCE must be configured")
     print(f"Orchestrator container started. Model configured: {MODEL_ID}, Location: {VERTEX_LOCATION}")
-    try:
-        if "3.5" not in MODEL_ID and "4" not in MODEL_ID and "flash" not in MODEL_ID:
-            raise RuntimeError(f"Configured model {MODEL_ID} is ineligible. Gemini 3.5 or newer is required.")
-        print("Gemini 3.5 Flash model eligibility verified.")
-    except Exception as ex:
-        print(f"Startup model check note: {ex}")
+    if not is_eligible_gemini_model(MODEL_ID):
+        raise RuntimeError(f"Configured model {MODEL_ID} is ineligible. Gemini 3.5 or newer is required.")
+    print("Configured model identifier satisfies the Gemini 3.5+ floor.")
 
 
 @app.get("/")
@@ -551,7 +548,18 @@ def execute_hero_loop(
         }
 
     # Step 2: Gemini 3.5 Flash Entity Extraction via ADK Runner
-    extracted = extract_recall_entities_with_gemini_35(raw_notice)
+    extracted = extract_recall_entities_with_gemini_35(
+        raw_notice,
+        correlation_id=trace_id,
+    )
+    _persist_model_invocation_evidence(extracted, route="execute-hero-loop")
+    if not extracted.get("downstream_allowed"):
+        return {
+            "hero_loop_status": "HALTED_FOR_MANUAL_REVIEW",
+            "model_armor_screening": model_armor,
+            "gemini_extraction": extracted,
+            "trace_id": trace_id,
+        }
 
     # Step 3: Lifecycle -> SCOPING & Spanner Graph Custody Traversal
     IncidentLifecycleManager.validate_transition("DETECTED", "SCOPING")
@@ -744,7 +752,10 @@ def execute_hero_loop(
         "model_verification": {
             "model_id": MODEL_ID,
             "vertex_location": VERTEX_LOCATION,
-            "status": "ACTIVE_VERIFIED"
+            "adk_session_id": extracted["adk_session_id"],
+            "adk_run_id": extracted["adk_run_id"],
+            "adk_event_id": extracted["adk_event_id"],
+            "classification": "OBSERVED_LIVE"
         },
         "model_armor_screening": model_armor,
         "gemini_35_extraction": extracted,
@@ -828,6 +839,79 @@ def model_armor_preflight(
         "model_armor_screening": screening,
         "next_authorized_stage": next_authorized_stage,
         "gemini_adk_invoked": False,
+        "ledger_mutation_attempted": False,
+    }
+
+
+def _persist_model_invocation_evidence(
+    extraction: Dict[str, Any],
+    *,
+    route: str,
+) -> Dict[str, Any]:
+    """Persist sanitized ADK identifiers to managed application logging."""
+    record = {
+        "event": "ADK_MODEL_INVOCATION_COMPLETED",
+        "route": route,
+        "status": extraction.get("status"),
+        "reason_code": extraction.get("reason_code"),
+        "model_id": extraction.get("model_used"),
+        "vertex_location": extraction.get("vertex_location"),
+        "adk_framework": extraction.get("adk_framework"),
+        "adk_session_backend": extraction.get("adk_session_backend"),
+        "adk_session_id": extraction.get("adk_session_id"),
+        "adk_run_id": extraction.get("adk_run_id"),
+        "adk_event_id": extraction.get("adk_event_id"),
+        "request_correlation_id": extraction.get("correlation_id"),
+        "validation_status": extraction.get("validation_status"),
+        "downstream_allowed": extraction.get("downstream_allowed", False),
+    }
+    print(json.dumps(record, sort_keys=True))
+    return record
+
+
+@app.post("/api/v1/orchestrator/recall/extraction-preflight")
+def extraction_preflight(
+    request: RecallArmorPreflightRequest,
+    x_api_key: Optional[str] = Header(None, alias="X-Full-Shelf-API-Key"),
+):
+    """Exercise the deployed Model Armor -> ADK boundary without mutation."""
+    verify_judge_key(x_api_key)
+    request_correlation_id = generate_trace_id()
+    screening = inspect_recall_notice_with_model_armor(
+        request.notice_text,
+        correlation_id=request_correlation_id,
+    )
+    if screening.get("status") != "APPROVED" or screening.get("safety_verdict") != "PASSED":
+        return {
+            "preflight_status": "HALTED_BY_MODEL_ARMOR",
+            "request_correlation_id": request_correlation_id,
+            "model_armor_screening": screening,
+            "gemini_adk_invoked": False,
+            "ledger_mutation_attempted": False,
+        }
+
+    extraction = extract_recall_entities_with_gemini_35(
+        request.notice_text,
+        correlation_id=request_correlation_id,
+    )
+    persisted_record = _persist_model_invocation_evidence(
+        extraction,
+        route="extraction-preflight",
+    )
+    if not extraction.get("downstream_allowed"):
+        status = "MANUAL_REVIEW_REQUIRED"
+        next_authorized_stage = None
+    else:
+        status = "READY_FOR_POLICY_REVIEW"
+        next_authorized_stage = "DETERMINISTIC_POLICY_REVIEW"
+    return {
+        "preflight_status": status,
+        "request_correlation_id": request_correlation_id,
+        "model_armor_screening": screening,
+        "extraction": extraction,
+        "model_invocation_record": persisted_record,
+        "identifiers_persisted_to": "CLOUD_LOGGING",
+        "next_authorized_stage": next_authorized_stage,
         "ledger_mutation_attempted": False,
     }
 
@@ -1025,13 +1109,13 @@ def get_system_evidence(tenant_id: str = "east-bay-food-bank"):
             "orchestrator_service": {
                 "name": "full-shelf-orchestrator",
                 "url": "https://full-shelf-orchestrator-620464070103.us-central1.run.app",
-                "service_account": "full-shelf-ledger-sa@preflight-hackathon.iam.gserviceaccount.com",
+                "service_account": "full-shelf-orchestrator-sa@preflight-hackathon.iam.gserviceaccount.com",
                 "classification": "OBSERVED_LIVE"
             },
             "plan_ledger_service": {
                 "name": "full-shelf-plan-ledger",
                 "url": "https://full-shelf-plan-ledger-620464070103.us-central1.run.app",
-                "service_account": "full-shelf-orchestrator-sa@preflight-hackathon.iam.gserviceaccount.com",
+                "service_account": "full-shelf-ledger-sa@preflight-hackathon.iam.gserviceaccount.com",
                 "classification": "OBSERVED_LIVE"
             },
             "spanner_database": {
@@ -1046,7 +1130,7 @@ def get_system_evidence(tenant_id: str = "east-bay-food-bank"):
                 "vertex_location": VERTEX_LOCATION,
                 "sdk": "google-adk",
                 "framework": "Google ADK 2.6 Agent & Runner Framework on Vertex AI",
-                "classification": "OBSERVED_LIVE"
+                "classification": "STRUCTURALLY_VERIFIED"
             },
             "model_armor": {
                 "template": f"projects/{PROJECT_ID}/locations/us-central1/templates/full-shelf-recall-input-v1",
@@ -1153,6 +1237,7 @@ def get_demo_beats_projections():
                 "title": "Gemini 3.5+ Extraction & Incident Opened",
                 "time": "1:52–2:10",
                 "model_id": MODEL_ID,
+                "model_execution_status": "REQUIRES_CORRELATED_LIVE_EXECUTION",
                 "incident_status": "DETECTED_SCOPING"
             },
             {

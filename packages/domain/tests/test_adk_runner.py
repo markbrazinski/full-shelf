@@ -1,65 +1,153 @@
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
-from full_shelf_domain.recall import extract_recall_entities_with_gemini_35
+
+from full_shelf_domain.recall import (
+    MODEL_ID,
+    RecallExtractionSchema,
+    extract_recall_entities_with_gemini_35,
+    is_eligible_gemini_model,
+)
 
 
-def test_adk_runner_extraction_success():
-    notice = "FDA Enforcement Report #2026-0807-L4: Urgent recall issued for Lot LTC-4471 (Romaine Lettuce) due to contamination with E. coli O157:H7. Action: PAUSE_DISPATCH_AND_QUARANTINE."
+NOTICE = (
+    "Supplier Safety Bulletin SB-8842: recall Lot ALT-8842 for Green Beans "
+    "because of Listeria monocytogenes. Action: PAUSE_DISTRIBUTION."
+)
+VALID_JSON = (
+    '{"lot_id":"ALT-8842","product_name":"Green Beans",'
+    '"hazard":"Listeria monocytogenes","action_required":"PAUSE_DISTRIBUTION",'
+    '"source_anchor":"Supplier Safety Bulletin SB-8842"}'
+)
 
-    mock_event = MagicMock()
-    mock_part = MagicMock()
-    mock_part.text = '{"lot_id": "LTC-4471", "product_name": "Romaine Lettuce", "hazard": "E. coli O157:H7", "action_required": "PAUSE_DISPATCH_AND_QUARANTINE", "source_anchor": "FDA Enforcement Report #2026-0807-L4"}'
-    mock_event.content.parts = [mock_part]
 
-    async def _mock_run_async(*args, **kwargs):
-        yield mock_event
+def event(
+    text=VALID_JSON,
+    *,
+    invocation_id="adk-run-123",
+    event_id="adk-event-456",
+    error_code=None,
+):
+    return SimpleNamespace(
+        invocation_id=invocation_id,
+        error_code=error_code,
+        author="RecallExtractionAgent",
+        content=SimpleNamespace(parts=[SimpleNamespace(text=text)]),
+        id=event_id,
+        usage_metadata=SimpleNamespace(
+            prompt_token_count=40,
+            candidates_token_count=25,
+            total_token_count=65,
+        ),
+        is_final_response=lambda: True,
+    )
 
+
+def invoke(events=None, *, runner_error=None):
+    mock_agent = SimpleNamespace(name="RecallExtractionAgent")
     mock_runner = MagicMock()
-    mock_runner.run_async = _mock_run_async
 
-    mock_session = MagicMock()
-    mock_session.id = "test-adk-session-12345"
+    async def run_async(*args, **kwargs):
+        if runner_error:
+            raise runner_error
+        for item in events or [event()]:
+            yield item
 
-    async def _mock_create_session(*args, **kwargs):
+    mock_runner.run_async = run_async
+    mock_session = SimpleNamespace(id="adk-session-789")
+
+    async def create_session(*args, **kwargs):
         return mock_session
 
     mock_session_service = MagicMock()
-    mock_session_service.create_session = _mock_create_session
+    mock_session_service.create_session = create_session
 
-    with patch("google.adk.runners.Runner", return_value=mock_runner), \
-         patch("google.adk.sessions.InMemorySessionService", return_value=mock_session_service):
-        extracted = extract_recall_entities_with_gemini_35(notice)
-        assert extracted["lot_id"] == "LTC-4471"
-        assert extracted["product_name"] == "Romaine Lettuce"
-        assert extracted["adk_framework"] == "GOOGLE_ADK_2.6"
-        assert extracted["validation_status"] == "VALIDATED_AGAINST_SOURCE_ANCHOR"
+    with patch("google.adk.agents.Agent", return_value=mock_agent) as agent_cls, patch(
+        "google.adk.runners.Runner", return_value=mock_runner
+    ), patch(
+        "google.adk.sessions.InMemorySessionService",
+        return_value=mock_session_service,
+    ):
+        result = extract_recall_entities_with_gemini_35(
+            NOTICE,
+            correlation_id="corr-wp5-test",
+        )
+    return result, agent_cls
 
 
-def test_adk_runner_extraction_invalid_json_handled():
-    notice = "Invalid notice without JSON"
+def test_locked_model_floor_parser():
+    assert is_eligible_gemini_model("gemini-3.5-flash")
+    assert is_eligible_gemini_model("gemini-4.0-pro")
+    assert not is_eligible_gemini_model("gemini-3.4-flash")
+    assert not is_eligible_gemini_model("gemini-2.5-flash")
+    assert not is_eligible_gemini_model("flash")
 
-    mock_event = MagicMock()
-    mock_part = MagicMock()
-    mock_part.text = 'Not valid JSON'
-    mock_event.content.parts = [mock_part]
 
-    async def _mock_run_async(*args, **kwargs):
-        yield mock_event
+def test_adk_runner_is_load_bearing_and_preserves_real_identifiers():
+    extracted, agent_cls = invoke()
 
-    mock_runner = MagicMock()
-    mock_runner.run_async = _mock_run_async
+    assert extracted["status"] == "EXTRACTION_VALIDATED"
+    assert extracted["lot_id"] == "ALT-8842"
+    assert extracted["product_name"] == "Green Beans"
+    assert extracted["model_used"] == "gemini-3.5-flash"
+    assert extracted["adk_session_id"] == "adk-session-789"
+    assert extracted["adk_run_id"] == "adk-run-123"
+    assert extracted["adk_event_id"] == "adk-event-456"
+    assert extracted["correlation_id"] == "corr-wp5-test"
+    assert extracted["downstream_allowed"] is True
+    assert extracted["validation_status"] == "SCHEMA_AND_SOURCE_ANCHORS_VALIDATED"
+    assert extracted["token_usage"] == {
+        "prompt_tokens": 40,
+        "output_tokens": 25,
+        "total_tokens": 65,
+    }
+    assert agent_cls.call_args.kwargs["model"] == MODEL_ID
+    assert agent_cls.call_args.kwargs["output_schema"] is RecallExtractionSchema
 
-    mock_session = MagicMock()
-    mock_session.id = "test-adk-session-invalid"
 
-    async def _mock_create_session(*args, **kwargs):
-        return mock_session
+@pytest.mark.parametrize(
+    "text",
+    [
+        "not json",
+        '{"lot_id":"ALT-8842"}',
+        VALID_JSON[:-1] + ',"unapproved":"field"}',
+    ],
+)
+def test_invalid_structured_output_requires_manual_review(text):
+    extracted, _ = invoke([event(text=text)])
+    assert extracted["status"] == "MANUAL_REVIEW_REQUIRED"
+    assert extracted["reason_code"] == "INVALID_STRUCTURED_OUTPUT"
+    assert extracted["downstream_allowed"] is False
+    assert "error_detail" not in extracted
 
-    mock_session_service = MagicMock()
-    mock_session_service.create_session = _mock_create_session
 
-    with patch("google.adk.runners.Runner", return_value=mock_runner), \
-         patch("google.adk.sessions.InMemorySessionService", return_value=mock_session_service):
-        extracted = extract_recall_entities_with_gemini_35(notice)
-        assert extracted["status"] == "EXTRACTION_FAILED_MANUAL_REVIEW_REQUIRED"
-        assert extracted["validation_status"] == "MANUAL_REVIEW_REQUIRED"
+def test_fabricated_value_fails_source_anchor_validation():
+    fabricated = VALID_JSON.replace("Green Beans", "Canonical Romaine")
+    extracted, _ = invoke([event(text=fabricated)])
+    assert extracted["status"] == "MANUAL_REVIEW_REQUIRED"
+    assert extracted["reason_code"] == "SOURCE_ANCHOR_VALIDATION_FAILED"
+    assert extracted["downstream_allowed"] is False
+
+
+def test_adk_model_error_requires_manual_review():
+    extracted, _ = invoke([event(error_code="MODEL_ERROR")])
+    assert extracted["status"] == "MANUAL_REVIEW_REQUIRED"
+    assert extracted["reason_code"] == "ADK_MODEL_ERROR"
+    assert extracted["downstream_allowed"] is False
+
+
+def test_adk_runtime_failure_requires_manual_review_without_fallback():
+    extracted, _ = invoke(runner_error=RuntimeError("sensitive upstream text"))
+    assert extracted["status"] == "MANUAL_REVIEW_REQUIRED"
+    assert extracted["reason_code"] == "ADK_INVOCATION_FAILED"
+    assert extracted["adk_session_id"] == "adk-session-789"
+    assert extracted["downstream_allowed"] is False
+    assert "sensitive upstream text" not in str(extracted)
+
+
+def test_missing_adk_run_identifier_requires_manual_review():
+    extracted, _ = invoke([event(invocation_id="")])
+    assert extracted["status"] == "MANUAL_REVIEW_REQUIRED"
+    assert extracted["reason_code"] == "ADK_RUN_IDENTIFIER_MISSING"
+    assert extracted["downstream_allowed"] is False

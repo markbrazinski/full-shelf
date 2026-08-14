@@ -1,9 +1,59 @@
 openapi: 3.0.3
 info:
   title: Full Shelf ADK Orchestrator API
-  version: 1.0.0
+  version: 1.1.0
   description: ADK Gemini agent orchestrator service (Read-Only agent reasoning).
 paths:
+  /api/v1/orchestrator/recall/extraction-preflight:
+    post:
+      summary: Exercise the managed Model Armor to Google ADK extraction boundary
+      description: >-
+        Judge-protected, read-only WP5 proof surface. A successful structured
+        extraction stops at deterministic policy review and performs no ledger
+        mutation. Invalid output or managed invocation failure requires manual
+        review.
+      parameters:
+        - in: header
+          name: X-Full-Shelf-API-Key
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [notice_text]
+              properties:
+                notice_text:
+                  type: string
+                  minLength: 1
+                  maxLength: 20000
+      responses:
+        '200':
+          description: Correlated extraction result or fail-closed manual-review state
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - preflight_status
+                  - request_correlation_id
+                  - ledger_mutation_attempted
+                properties:
+                  preflight_status:
+                    enum:
+                      - READY_FOR_POLICY_REVIEW
+                      - MANUAL_REVIEW_REQUIRED
+                      - HALTED_BY_MODEL_ARMOR
+                  request_correlation_id: { type: string }
+                  identifiers_persisted_to:
+                    type: string
+                    enum: [CLOUD_LOGGING]
+                  ledger_mutation_attempted:
+                    type: boolean
+                    enum: [false]
   /api/v1/orchestrator/preview:
     get:
       summary: Fetch agent-synthesized preview of the day
