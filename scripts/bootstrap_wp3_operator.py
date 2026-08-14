@@ -13,8 +13,12 @@ import json
 import secrets
 import threading
 import webbrowser
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
+
+import httpx
 
 from google.auth.transport.requests import Request as GoogleAuthRequest
 from google.oauth2 import id_token
@@ -74,6 +78,8 @@ def _page(client_id: str, nonce: str) -> bytes:
 class BootstrapServer(ThreadingHTTPServer):
     client_id: str
     nonce: str
+    approval_payload: dict[str, Any] | None
+    orchestrator_url: str | None
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -120,7 +126,10 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", "0"))
             if length <= 0 or length > MAX_REQUEST_BYTES:
                 raise ValueError("invalid request size")
-            if self.headers.get("Origin") != f"http://127.0.0.1:{self.server.server_port}":
+            if self.headers.get("Origin") not in {
+                f"http://127.0.0.1:{self.server.server_port}",
+                f"http://localhost:{self.server.server_port}",
+            }:
                 raise ValueError("invalid origin")
             payload = json.loads(self.rfile.read(length))
             credential = payload.get("credential")
@@ -149,11 +158,31 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(email, str) or not email:
                 raise ValueError("missing email")
 
+            approval_result = None
+            if self.server.approval_payload is not None:
+                response = httpx.post(
+                    f"{self.server.orchestrator_url.rstrip('/')}/api/v1/orchestrator/approvals/approve-and-activate",
+                    headers={"Authorization": f"Bearer {credential}"},
+                    json=self.server.approval_payload,
+                    timeout=60,
+                )
+                response.raise_for_status()
+                result = response.json()
+                approval_result = {
+                    "approval_receipt_id": result["approval_receipt"]["receipt_id"],
+                    "activation_receipt_id": result["activation_receipt"]["receipt_id"],
+                    "plan_diff_hash": result["plan_diff_hash"],
+                    "kms_key_version": result["kms_key_version"],
+                }
+
             print("\nGoogle operator verified")
             print(f"OAuth client ID: {self.server.client_id}")
             print(f"Operator sub: {subject}")
             print(f"Operator email: {email}")
             print("Raw ID token: not retained")
+            if approval_result:
+                print("Deployed approval committed")
+                print(json.dumps(approval_result, sort_keys=True))
             self._headers(200, "application/json")
             self.wfile.write(b'{"ok":true}')
         except Exception as exc:
@@ -174,6 +203,20 @@ def main() -> int:
         help="Google Auth Platform Web application client ID",
     )
     parser.add_argument("--port", type=int, default=8787)
+    parser.add_argument(
+        "--approval-payload",
+        type=Path,
+        help="Optional JSON payload to submit to the deployed orchestrator in memory",
+    )
+    parser.add_argument(
+        "--approval-fixture",
+        choices=["canonical", "altered"],
+        help="Build a fresh approval payload from an isolated audit fixture",
+    )
+    parser.add_argument(
+        "--orchestrator-url",
+        default="https://full-shelf-orchestrator-620464070103.us-central1.run.app",
+    )
     args = parser.parse_args()
 
     if not args.client_id.endswith(".apps.googleusercontent.com"):
@@ -184,7 +227,39 @@ def main() -> int:
     server = BootstrapServer(("127.0.0.1", args.port), Handler)
     server.client_id = args.client_id
     server.nonce = secrets.token_urlsafe(32)
-    url = f"http://127.0.0.1:{args.port}/"
+    if args.approval_payload and args.approval_fixture:
+        parser.error("choose only one of --approval-payload or --approval-fixture")
+    if args.approval_fixture:
+        fixture_name = (
+            "audit_canonical_shaped.json"
+            if args.approval_fixture == "canonical"
+            else "audit_altered.json"
+        )
+        fixture = json.loads(
+            (Path(__file__).resolve().parents[1] / "test-fixtures" / fixture_name)
+            .read_text()
+        )
+        approval = fixture["approval"]
+        suffix = args.approval_fixture.upper()
+        server.approval_payload = {
+            "command_id": f"CMD-DELTA-{suffix}",
+            "idempotency_key": f"delta:{args.approval_fixture}:human-approval",
+            "tenant_id": fixture["tenant_id"],
+            "incident_id": approval["incident_id"],
+            "plan_id": fixture["operating_plan"]["plan_id"],
+            "source_revision": "rev07",
+            "proposed_revision": "rev08",
+            "approval_id": approval["approval_id"],
+            "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=20))
+            .isoformat().replace("+00:00", "Z"),
+            "plan_diff": approval["plan_diff"],
+        }
+    else:
+        server.approval_payload = (
+            json.loads(args.approval_payload.read_text()) if args.approval_payload else None
+        )
+    server.orchestrator_url = args.orchestrator_url if server.approval_payload else None
+    url = f"http://localhost:{args.port}/"
     print(f"Opening {url}")
     print("The server will stop after one verification attempt.")
     webbrowser.open(url)
