@@ -16,7 +16,7 @@ Builder verdict authority: none; final acceptance requires a fresh independent a
 | WP6 — Scheduler, Pub/Sub, continuity | `d199c68`, `619684d` | 114 safe tests passed; 114 collected | Revision `orchestrator-00036-xjl`; fresh Scheduler/Pub/Sub/OIDC delivery created one constrained next-day draft and idempotent duplicate retained one target receipt | DEPLOYED OBSERVED | None; builder testimony ready for strategy review |
 | WP7 — Cloud Tasks escalation | `d199c68`, `619684d` | 114 safe tests passed; 114 collected | Revision `orchestrator-00036-xjl`; deployed decision created real task, managed OIDC callback committed one ledger receipt, and rejection/idempotency probes observed | DEPLOYED OBSERVED | None; builder testimony ready for strategy review |
 | WP8 — Dynamic Spanner Graph | `05c2ec6` | 118 safe tests passed; 118 collected | Revision `orchestrator-00037-mpr`; canonical 96-case depth-2 and altered 51-case depth-4 managed GQL executions observed | DEPLOYED OBSERVED | None; builder testimony ready for strategy review |
-| WP9 — Event-backed SSE | — | — | — | NOT STARTED | WP8 gate |
+| WP9 — Event-backed SSE | `1a3ace8` | 123 safe tests passed; 123 collected | Revision `orchestrator-00038-s85`; same-connection new commit and exact-cursor reconnect without duplicate observed | DEPLOYED OBSERVED | None; builder testimony ready for strategy review |
 | WP10 — Evidence, Trace, provenance | — | — | — | NOT STARTED | WP9 gate |
 | WP11 — Isolated regression suite | — | — | — | NOT STARTED | WP10 gate |
 | WP12 — Deployment and handoff | — | — | — | NOT STARTED | WP1–WP11 gates |

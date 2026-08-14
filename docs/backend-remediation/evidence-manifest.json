@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "recorded_at": "2026-08-14T02:27:27Z",
+  "recorded_at": "2026-08-14T02:34:49Z",
   "builder_acceptance_authority": false,
   "branch": "repair/backend-acceptance-20260813",
   "baseline_commit": "bfd1e1040824da379d69add8755682bc8eafebd6",
@@ -139,6 +139,20 @@
       "max_path_depth": 4
     }
   },
+  "wp9": {
+    "source_revision": "1a3ace8062a88faf93c8c8c8966c8569b48422e5",
+    "local_tests": {
+      "collected": 123,
+      "passed": 123,
+      "failed": 0,
+      "warnings": 18
+    },
+    "build_id": "fe41b4c9-5768-4fe2-aab0-95186c15b8ed",
+    "orchestrator_revision": "full-shelf-orchestrator-00038-s85",
+    "image_digest": "sha256:6694df648962ae629114f30e8f63644afb7e7cd7194fba3bf714305b63d5838f",
+    "same_connection_receipt": "RCT-B98C0B3C40844BDCB1084F9B",
+    "resumed_connection_receipt": "RCT-208D1843F053D04DD4612FB7"
+  },
   "claims": [
     {
       "capability": "WP0 baseline and repair map",
@@ -169,6 +183,12 @@
       "classification": "OBSERVED_LIVE",
       "observed_at": "2026-08-14T02:27:27Z",
       "limitation": "Builder-observed deployed canonical and isolated altered executions; final acceptance remains with a fresh independent auditor."
+    },
+    {
+      "capability": "WP9 durable event-backed SSE",
+      "classification": "OBSERVED_LIVE",
+      "observed_at": "2026-08-14T02:34:49Z",
+      "limitation": "Builder-observed same-connection and exact-cursor reconnect executions; final acceptance remains with a fresh independent auditor."
     }
   ]
 }
