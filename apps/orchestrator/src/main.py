@@ -1119,26 +1119,31 @@ def _generate_next_day_plan(
     plan_id = f"PLAN-{operating_date.isoformat()}"
     coordinator_id = f"COORD-{operating_date.isoformat()}"
 
+    read_phase = "snapshot_open"
     try:
         with db.snapshot() as snapshot:
+            read_phase = "incident"
             incident_rows = list(snapshot.execute_sql(
                 "SELECT status FROM Incidents WHERE tenant_id = @t "
                 "AND incident_id = 'INC-RECALL-01'",
                 params={"t": tenant_id},
                 param_types={"t": spanner.param_types.STRING},
             ))
+            read_phase = "barrier"
             barrier_rows = list(snapshot.execute_sql(
                 "SELECT barrier_id, lot_id, status FROM MovementBarriers "
                 "WHERE tenant_id = @t AND status = 'ACTIVE' ORDER BY barrier_id",
                 params={"t": tenant_id},
                 param_types={"t": spanner.param_types.STRING},
             ))
+            read_phase = "shortfall"
             shortfall_rows = list(snapshot.execute_sql(
                 "SELECT shortfall_id, agency_id, cases, status FROM RecoveryShortfalls "
                 "WHERE tenant_id = @t AND status = 'OPEN' ORDER BY shortfall_id",
                 params={"t": tenant_id},
                 param_types={"t": spanner.param_types.STRING},
             ))
+            read_phase = "hold"
             hold_rows = list(snapshot.execute_sql(
                 "SELECT incident_id, details, status FROM Incidents WHERE tenant_id = @t "
                 "AND incident_type = 'DEADLINE_HOLD' "
@@ -1146,12 +1151,14 @@ def _generate_next_day_plan(
                 params={"t": tenant_id},
                 param_types={"t": spanner.param_types.STRING},
             ))
+            read_phase = "safe_inventory"
             safe_lots = list(snapshot.execute_sql(
                 "SELECT lot_id, total_cases FROM Lots WHERE tenant_id = @t "
                 "AND hazard_status = 'CLEAR_SAFE' ORDER BY lot_id",
                 params={"t": tenant_id},
                 param_types={"t": spanner.param_types.STRING},
             ))
+            read_phase = "fleet"
             fleet = list(snapshot.execute_sql(
                 "SELECT vehicle_id, max_capacity_cases, current_load_cases FROM Vehicles "
                 "WHERE tenant_id = @t AND is_operational = TRUE ORDER BY vehicle_id",
@@ -1160,8 +1167,8 @@ def _generate_next_day_plan(
             ))
     except Exception as exc:
         logger.error(
-            "authoritative_continuity_read_failed exception_type=%s status_code=%s",
-            type(exc).__name__,
+            "authoritative_continuity_read_failed phase=%s exception_type=%s status_code=%s",
+            read_phase, type(exc).__name__,
             getattr(exc, "code", "UNAVAILABLE"),
         )
         raise HTTPException(503, "AUTHORITATIVE_CONTINUITY_READ_UNAVAILABLE") from exc
