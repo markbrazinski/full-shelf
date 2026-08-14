@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "recorded_at": "2026-08-14T03:26:30Z",
+  "recorded_at": "2026-08-14T03:42:18Z",
   "builder_acceptance_authority": false,
   "branch": "repair/backend-acceptance-20260813",
   "baseline_commit": "bfd1e1040824da379d69add8755682bc8eafebd6",
@@ -202,6 +202,62 @@
     "canonical_receipts_after": 17,
     "canonical_receipt_delta": 0
   },
+  "wp12": {
+    "source_revision": "454bfeffa11722315cdaa015d0e5e6dfb656c9bb",
+    "orchestrator": {
+      "build_id": "0aaa79bb-87a0-4253-9334-c46472f204bc",
+      "revision": "full-shelf-orchestrator-00042-xhj",
+      "image_digest": "sha256:f2dd5e6d76b18b6b31601c2efae1b28892fd7d10059b888d5da64fcc10253e58"
+    },
+    "plan_ledger": {
+      "build_id": "f3366439-f107-4051-915d-4d944a652479",
+      "revision": "full-shelf-plan-ledger-00022-rv2",
+      "image_digest": "sha256:62a51e73bec6ac58dcbeecbede637513f49add3773b5f10b00f703fd68fdc11e"
+    },
+    "canonical_receipts_after_replay": 17,
+    "replays": [
+      {
+        "scenario": "canonical_graph",
+        "cloud_trace_id": "aaaabbbbccccddddeeeeffff00001111",
+        "span_count": 4,
+        "lot_id": "LTC-4471",
+        "unique_current_cases": 96,
+        "max_path_depth": 2
+      },
+      {
+        "scenario": "altered_graph",
+        "cloud_trace_id": "bbbbccccddddeeeeffff000011112222",
+        "span_count": 4,
+        "lot_id": "ALT-LOT-9001",
+        "unique_current_cases": 51,
+        "max_path_depth": 4
+      },
+      {
+        "scenario": "canonical_model_armor_adk",
+        "cloud_trace_id": "ccccddddeeeeffff0000111122223333",
+        "span_count": 6,
+        "model_armor_insert_id": "fa3f350d-8c9d-46c8-a6ba-60aa476b7b79",
+        "model_id": "gemini-3.5-flash",
+        "lot_id": "LTC-4471",
+        "ledger_mutation_attempted": false
+      },
+      {
+        "scenario": "altered_model_armor_adk",
+        "cloud_trace_id": "ddddeeeeffff00001111222233334444",
+        "span_count": 6,
+        "model_armor_insert_id": "2f8c08d9-32e8-4f6b-8e38-f56cc64b434d",
+        "model_id": "gemini-3.5-flash",
+        "lot_id": "ALT-8842",
+        "ledger_mutation_attempted": false
+      },
+      {
+        "scenario": "final_system_evidence",
+        "cloud_trace_id": "eeeeffff000011112222333344445555",
+        "span_count": 8,
+        "failed_checks": 0
+      }
+    ]
+  },
   "claims": [
     {
       "capability": "WP0 baseline and repair map",
@@ -250,6 +306,12 @@
       "classification": "STRUCTURALLY_VERIFIED",
       "observed_at": "2026-08-14T03:26:30Z",
       "limitation": "Builder-run isolated local suite with live read-only canonical receipt reconciliation; final acceptance remains with a fresh independent auditor."
+    },
+    {
+      "capability": "WP12 exact-commit deployment and safe canonical/altered replay",
+      "classification": "OBSERVED_LIVE",
+      "observed_at": "2026-08-14T03:42:18Z",
+      "limitation": "Builder-observed safe interpretation and graph replays with zero ledger mutations; shared canonical authority was not reset for a fresh mutating hero-loop replay, and final acceptance remains with a fresh independent auditor."
     }
   ]
 }
