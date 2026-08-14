@@ -53,7 +53,7 @@ def test_task_callback_uses_verified_identity_and_cannot_bypass_ledger():
             "/api/v1/incidents/site01-deadline",
             headers={
                 "Authorization": "Bearer signed",
-                "X-CloudTasks-TaskName": "projects/p/locations/l/queues/q/tasks/task-alt",
+                "X-CloudTasks-TaskName": "task-alt",
                 "X-CloudTasks-QueueName": "full-shelf-deadlines",
             },
             json={"incident_id": "INC-RECALL-01", "site_id": "SITE-01",

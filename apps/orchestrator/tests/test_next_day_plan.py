@@ -65,6 +65,8 @@ def test_next_day_plan_is_dynamic_authoritative_and_ledger_bound():
     assert command["command_type"] == "CREATE_NEXT_DAY_DRAFT"
     assert command["expected_plan_revision"] == "rev08"
     assert command["payload"]["human_approval_required"] is True
+    executed_sql = [call.args[0] for call in snapshot.execute_sql.call_args_list]
+    assert any("hazard_status = 'CLEAR_SAFE'" in sql for sql in executed_sql)
 
 
 def test_pubsub_next_day_delivery_requires_verified_identity_and_uses_publish_date():

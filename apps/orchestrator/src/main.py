@@ -424,7 +424,10 @@ def handle_site01_deadline_callback(
         "east-bay-food-bank", "INC-RECALL-01", "SITE-01"
     ):
         raise HTTPException(403, "CLOUD_TASK_SCOPE_NOT_ALLOWED")
-    if not task_decision_id or not task_name.endswith(f"/tasks/{task_decision_id}"):
+    if not task_decision_id or not (
+        task_name == task_decision_id
+        or task_name.endswith(f"/tasks/{task_decision_id}")
+    ):
         raise HTTPException(400, "CLOUD_TASK_NAME_PAYLOAD_MISMATCH")
 
     now = datetime.now(timezone.utc).isoformat()
@@ -1140,7 +1143,7 @@ def _generate_next_day_plan(
             ))
             safe_lots = list(snapshot.execute_sql(
                 "SELECT lot_id, total_cases FROM Lots WHERE tenant_id = @t "
-                "AND hazard_status = 'SAFE' ORDER BY lot_id",
+                "AND hazard_status = 'CLEAR_SAFE' ORDER BY lot_id",
                 params={"t": tenant_id},
                 param_types={"t": spanner.param_types.STRING},
             ))
