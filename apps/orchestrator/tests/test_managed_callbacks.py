@@ -201,6 +201,25 @@ def test_authenticated_duplicate_next_day_deliveries_return_2xx():
     assert generate.call_count == 2
 
 
+def test_next_day_scope_resolver_selects_only_oldest_pending_scope():
+    db = MagicMock()
+    snapshot = MagicMock()
+    snapshot.execute_sql.return_value = [("audit-canonical-20260814-oldest",)]
+    db.snapshot.return_value.__enter__.return_value = snapshot
+    resolver = MagicMock()
+    with patch.dict(main.os.environ, {"AUDIT_SPANNER_DATABASE_ID": "audit-db"}), patch.object(
+        main.AuthorityScopeResolver, "from_environment", return_value=resolver
+    ), patch.object(main, "get_spanner_database", return_value=db):
+        tenant_id = main._latest_qualification_tenant(profile="canonical")
+
+    assert tenant_id == "audit-canonical-20260814-oldest"
+    sql = snapshot.execute_sql.call_args.args[0]
+    assert "NOT EXISTS" in sql
+    assert "next_day.revision = 'rev01'" in sql
+    assert "ORDER BY candidate.created_at ASC" in sql
+    resolver.resolve.assert_called_once_with(tenant_id)
+
+
 def test_recall_pubsub_redelivery_uses_stable_ledger_command_and_isolated_scope():
     client = TestClient(main.app)
     event = {
@@ -409,7 +428,7 @@ def test_task_delivery_emits_committed_idempotency_evidence():
     }
     with patch.object(main, "_verify_managed_callback", return_value=CALLER), patch.object(
         main, "execute_ledger_command", return_value=result
-    ), patch.object(main.logger, "info") as log_info:
+    ), patch.object(main.logger, "warning") as log_warning:
         response = client.post(
             "/api/v1/incidents/site01-deadline",
             headers={
@@ -425,7 +444,7 @@ def test_task_delivery_emits_committed_idempotency_evidence():
         )
 
     assert response.status_code == 200
-    log_info.assert_called_once_with(
+    log_warning.assert_called_once_with(
         "cloud_task_delivery task_name=%s event_idempotency_key=%s "
         "receipt_id=%s idempotent_replay=%s",
         "task-evidence",

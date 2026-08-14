@@ -6,15 +6,15 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
-import subprocess
 import time
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
 import httpx
-from google.cloud import secretmanager, spanner
+import google.auth
+from google.auth.transport.requests import Request as GoogleAuthRequest
+from google.cloud import logging_v2, secretmanager, spanner
 
 from full_shelf_domain.recall import schedule_site01_deadline_task
 
@@ -174,8 +174,7 @@ def main() -> int:
         duplicate_task_names.append(task["task_name"])
 
     receipt_count_before_duplicates = len(receipts)
-    gcloud_env = os.environ.copy()
-    gcloud_env.setdefault("CLOUDSDK_PYTHON", "/opt/homebrew/bin/python3.12")
+    logging_client = logging_v2.Client(project=PROJECT)
     duplicate_deadline = time.monotonic() + args.timeout
     while time.monotonic() < duplicate_deadline:
         after_duplicate_receipts = _rows(
@@ -185,15 +184,18 @@ def main() -> int:
             "ORDER BY timestamp, receipt_id",
             tenant_id,
         )
-        log_result = subprocess.run([
-            "gcloud", "logging", "read",
-            "resource.type=cloud_run_revision AND "
-            "resource.labels.service_name=full-shelf-orchestrator AND "
-            f'textPayload:"duplicate-{task_prefix}-"',
-            f"--project={PROJECT}", "--freshness=20m",
-            "--format=value(textPayload)", "--limit=50",
-        ], check=True, env=gcloud_env, text=True, capture_output=True)
-        logs = log_result.stdout
+        entries = logging_client.list_entries(
+            filter_=(
+                'resource.type="cloud_run_revision" AND '
+                'resource.labels.service_name="full-shelf-orchestrator" AND '
+                f'textPayload:"duplicate-{task_prefix}-"'
+            ),
+            order_by=logging_v2.DESCENDING,
+            max_results=50,
+        )
+        logs = "\n".join(
+            entry.payload for entry in entries if isinstance(entry.payload, str)
+        )
         if (
             len(after_duplicate_receipts) == receipt_count_before_duplicates
             and f"duplicate-{task_prefix}-a" in logs
@@ -207,11 +209,19 @@ def main() -> int:
     else:
         raise SystemExit("two managed duplicate task deliveries were not observed")
 
-    subprocess.run([
-        "gcloud", "scheduler", "jobs", "run",
-        f"full-shelf-delta-{args.fixture}-next-day",
-        "--location=us-central1", f"--project={PROJECT}", "--quiet",
-    ], check=True, env=gcloud_env)
+    credentials, _ = google.auth.default(scopes=[
+        "https://www.googleapis.com/auth/cloud-platform"
+    ])
+    credentials.refresh(GoogleAuthRequest())
+    scheduler_response = httpx.post(
+        "https://cloudscheduler.googleapis.com/v1/"
+        f"projects/{PROJECT}/locations/us-central1/jobs/"
+        f"full-shelf-delta-{args.fixture}-next-day:run",
+        headers={"Authorization": f"Bearer {credentials.token}"},
+        json={},
+        timeout=30,
+    )
+    scheduler_response.raise_for_status()
     next_day_deadline = time.monotonic() + args.timeout
     while time.monotonic() < next_day_deadline:
         next_day = _rows(

@@ -357,10 +357,14 @@ def _latest_qualification_tenant(*, profile: str) -> str:
     prefix = f"audit-{profile}-"
     with get_spanner_database(database_id).snapshot() as snapshot:
         rows = list(snapshot.execute_sql(
-            "SELECT tenant_id FROM PlanRevisions "
-            "WHERE STARTS_WITH(tenant_id, @prefix) AND revision = 'rev08' "
-            "AND status = 'INVALIDATED_RECALL' "
-            "ORDER BY created_at DESC LIMIT 1",
+            "SELECT candidate.tenant_id FROM PlanRevisions AS candidate "
+            "WHERE STARTS_WITH(candidate.tenant_id, @prefix) "
+            "AND candidate.revision = 'rev08' "
+            "AND candidate.status = 'INVALIDATED_RECALL' "
+            "AND NOT EXISTS (SELECT 1 FROM PlanRevisions AS next_day "
+            "WHERE next_day.tenant_id = candidate.tenant_id "
+            "AND next_day.revision = 'rev01') "
+            "ORDER BY candidate.created_at ASC LIMIT 1",
             params={"prefix": prefix},
             param_types={"prefix": spanner.param_types.STRING},
         ))
@@ -733,7 +737,7 @@ def handle_site01_deadline_callback(
             "delivery_audience": caller.audience,
         },
     )
-    logger.info(
+    logger.warning(
         "cloud_task_delivery task_name=%s event_idempotency_key=%s "
         "receipt_id=%s idempotent_replay=%s",
         task_name,
