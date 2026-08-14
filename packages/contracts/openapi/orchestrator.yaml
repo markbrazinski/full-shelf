@@ -1,113 +1,148 @@
 openapi: 3.0.3
 info:
   title: Full Shelf ADK Orchestrator API
-  version: 1.3.0
-  description: ADK Gemini agent orchestrator service (Read-Only agent reasoning).
+  version: 1.4.0
+  description: Read-only orchestration, managed event ingress, and durable projections.
 paths:
   /api/v1/orchestrator/pubsub/push:
     post:
-      summary: Receive a Google OIDC-authenticated Pub/Sub push delivery
+      summary: Receive an OIDC-authenticated managed Pub/Sub delivery
       description: >-
-        Requires an exact-audience Google ID token from the configured managed
-        delivery service account. Planning events are persisted and applied
-        only through authenticated ledger commands.
+        Accepts PLAN_DAY_REQUESTED, PLAN_NEXT_DAY_REQUESTED, or
+        RECALL_NOTICE_RECEIVED. Recall notices pass managed Model Armor before
+        ADK/Gemini or any recall ledger mutation. Duplicate deliveries resolve
+        to stable command receipts.
       security: [{ googleManagedOidc: [] }]
       responses:
         '200': { description: Accepted or idempotently replayed managed event }
+        '400': { description: Invalid envelope or event contract }
         '401': { description: Missing, invalid, expired, or wrong-audience token }
-        '403': { description: Valid but unauthorized identity or tenant }
+        '403': { description: Valid but unauthorized managed identity or tenant }
+        '409': { description: Authoritative coordinator or plan precondition failed }
+        '503': { description: Required managed or authoritative read failed closed }
   /api/v1/incidents/site01-deadline:
     post:
-      summary: Receive a Google OIDC-authenticated Cloud Tasks delivery
+      summary: Receive an OIDC-authenticated Cloud Tasks acknowledgment deadline
       security: [{ googleManagedOidc: [] }]
       responses:
-        '200': { description: Ledger-committed acknowledgment escalation receipt }
+        '200': { description: Stable ledger-committed acknowledgment-hold receipt }
+        '400': { description: Task headers and scoped payload do not match }
         '401': { description: Missing, invalid, expired, or wrong-audience token }
-        '403': { description: Valid but unauthorized identity or scope }
-  /api/v1/orchestrator/site01-escalation/schedule:
+        '403': { description: Valid but unauthorized managed identity or tenant }
+  /api/v1/orchestrator/recall/trigger:
     post:
-      summary: Make the Site 01 escalation decision and create a real Cloud Task
+      summary: Publish one scoped recall event for managed Pub/Sub delivery
+      security: [{ judgeApiKey: [] }]
       parameters:
-        - in: header
-          name: X-Full-Shelf-API-Key
-          required: true
-          schema: { type: string }
+        - $ref: '#/components/parameters/TenantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RecallTrigger' }
       responses:
-        '200': { description: Managed task name and OIDC delivery configuration }
+        '200': { description: Pub/Sub message ID; not evidence of downstream execution }
+        '403': { description: Judge key or tenant rejected }
+  /api/v1/orchestrator/recall/execute-hero-loop:
+    post:
+      deprecated: true
+      summary: Retired direct mutation path
+      responses:
+        '410': { description: Use managed recall trigger }
+  /api/v1/orchestrator/recall/model-armor-preflight:
+    post:
+      summary: Exercise only the managed sanitizeUserPrompt boundary
+      security: [{ judgeApiKey: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Notice' }
+      responses:
+        '200': { description: Managed allow, block, or fail-closed result with zero downstream mutation }
   /api/v1/orchestrator/recall/extraction-preflight:
     post:
-      summary: Exercise the managed Model Armor to Google ADK extraction boundary
-      description: >-
-        Judge-protected, read-only WP5 proof surface. A successful structured
-        extraction stops at deterministic policy review and performs no ledger
-        mutation. Invalid output or managed invocation failure requires manual
-        review.
-      parameters:
-        - in: header
-          name: X-Full-Shelf-API-Key
-          required: true
-          schema: { type: string }
+      summary: Exercise managed Model Armor then ADK/Gemini without mutation
+      security: [{ judgeApiKey: [] }]
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              required: [notice_text]
-              properties:
-                notice_text:
-                  type: string
-                  minLength: 1
-                  maxLength: 20000
+            schema: { $ref: '#/components/schemas/Notice' }
       responses:
-        '200':
-          description: Correlated extraction result or fail-closed manual-review state
-          content:
-            application/json:
-              schema:
-                type: object
-                required:
-                  - preflight_status
-                  - request_correlation_id
-                  - ledger_mutation_attempted
-                properties:
-                  preflight_status:
-                    enum:
-                      - READY_FOR_POLICY_REVIEW
-                      - MANUAL_REVIEW_REQUIRED
-                      - HALTED_BY_MODEL_ARMOR
-                  request_correlation_id: { type: string }
-                  identifiers_persisted_to:
-                    type: string
-                    enum: [CLOUD_LOGGING]
-                  ledger_mutation_attempted:
-                    type: boolean
-                    enum: [false]
-  /api/v1/orchestrator/preview:
+        '200': { description: Correlated extraction or fail-closed/manual-review result }
+  /api/v1/orchestrator/custody/graph:
     get:
-      summary: Fetch agent-synthesized preview of the day
+      summary: Execute parameterized variable-depth Spanner Graph custody traversal
+      security: [{ judgeApiKey: [] }]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - in: query
+          name: lot_id
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 64 }
       responses:
-        '200':
-          description: Natural language & structured preview
-  /api/v1/orchestrator/incident/assess:
+        '200': { description: Managed GQL result with confirmed and unconfirmed totals }
+        '404': { description: No custody paths found }
+        '503': { description: Managed graph read failed closed }
+  /api/v1/orchestrator/site01-escalation/schedule:
     post:
-      summary: Agent assessment of disruption event
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                event_type: { type: string }
-                event_details: { type: object }
+      summary: Validate authoritative hold state and create one deterministic Cloud Task
+      security: [{ judgeApiKey: [] }]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
       responses:
-        '200':
-          description: Proposed recovery actions and reasoning
+        '200': { description: Managed task name and bound OIDC delivery configuration }
+        '409': { description: Recall or acknowledgment-hold precondition failed }
+  /api/v1/projections/stream:
+    get:
+      summary: Live-tail committed receipts with durable Last-Event-ID resume
+      security: [{ judgeApiKey: [] }]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - in: header
+          name: Last-Event-ID
+          schema: { type: string }
+      responses:
+        '200': { description: text/event-stream projection updates and heartbeats }
+        '400': { description: Invalid receipt cursor }
+  /api/v1/evidence/system:
+    get:
+      summary: Read classified evidence for an explicitly resolved authority scope
+      security: [{ judgeApiKey: [] }]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      responses:
+        '200': { description: Evidence claims remain classified per source and execution }
 components:
+  parameters:
+    TenantId:
+      in: query
+      name: tenant_id
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 64 }
+  schemas:
+    RecallTrigger:
+      type: object
+      additionalProperties: false
+      required: [coordinator_id, incident_id, lot_id, notice_text]
+      properties:
+        coordinator_id: { type: string, minLength: 1, maxLength: 64 }
+        incident_id: { type: string, minLength: 1, maxLength: 64 }
+        lot_id: { type: string, minLength: 1, maxLength: 64 }
+        notice_text: { type: string, minLength: 1, maxLength: 20000 }
+    Notice:
+      type: object
+      additionalProperties: false
+      required: [notice_text]
+      properties:
+        notice_text: { type: string, minLength: 1, maxLength: 20000 }
   securitySchemes:
     googleManagedOidc:
       type: http
       scheme: bearer
       bearerFormat: Google ID token
+    judgeApiKey:
+      type: apiKey
+      in: header
+      name: X-Full-Shelf-API-Key

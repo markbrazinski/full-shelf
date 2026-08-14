@@ -1,16 +1,35 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "FullShelfIncident",
   "type": "object",
+  "additionalProperties": false,
   "properties": {
-    "incident_id": { "type": "string" },
-    "parent_coordinator_id": { "type": "string" },
-    "tenant_id": { "type": "string" },
-    "incident_type": { "type": "string", "enum": ["TRUCK_BREAKDOWN", "FOOD_SAFETY_RECALL"] },
-    "status": { "type": "string", "enum": ["ACTIVE", "RESOLVED", "PARTIALLY_CONTAINED", "CONTAINED"] },
-    "affected_lot_id": { "type": "string" },
+    "incident_id": { "type": "string", "minLength": 1 },
+    "parent_coordinator_id": { "type": "string", "minLength": 1 },
+    "tenant_id": { "type": "string", "minLength": 1 },
+    "incident_type": {
+      "type": "string",
+      "enum": ["TRUCK_BREAKDOWN", "FOOD_SAFETY_RECALL", "DEADLINE_HOLD"]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "DETECTED", "SCOPING", "CONTAINMENT_IN_PROGRESS",
+        "PARTIALLY_CONTAINED", "CONTAINED", "CLOSED",
+        "ACTIVE", "RESOLVED", "ACKNOWLEDGMENT_HOLD_ACTIVE"
+      ]
+    },
+    "terminal_state": {
+      "type": "string",
+      "enum": ["NONE", "PARTIALLY_CONTAINED", "CONTAINED", "CLOSED"]
+    },
+    "affected_lot_id": { "type": ["string", "null"] },
+    "details": { "type": "object" },
     "created_at": { "type": "string", "format": "date-time" },
-    "resolved_at": { "type": "string", "format": "date-time" }
+    "resolved_at": { "type": ["string", "null"], "format": "date-time" }
   },
-  "required": ["incident_id", "parent_coordinator_id", "tenant_id", "incident_type", "status", "created_at"]
+  "required": [
+    "incident_id", "parent_coordinator_id", "tenant_id", "incident_type",
+    "status", "terminal_state", "created_at"
+  ]
 }

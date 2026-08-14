@@ -11,7 +11,6 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class LedgerCommandType(str, Enum):
     SAVE_PLAN_REVISION = "SAVE_PLAN_REVISION"
-    APPLY_REPAIR_PLAN = "APPLY_REPAIR_PLAN"
     PERSIST_REPAIR_APPROVAL = "PERSIST_REPAIR_APPROVAL"
     ACTIVATE_APPROVED_REPAIR_PLAN = "ACTIVATE_APPROVED_REPAIR_PLAN"
     INVALIDATE_PLAN = "INVALIDATE_PLAN"
@@ -87,13 +86,6 @@ class OperatingPlanDefinition(StrictPayload):
 class SavePlanRevisionPayload(OperatingPlanDefinition):
     source_event_id: str = Field(min_length=1, max_length=256)
     source_publish_time: str = Field(min_length=1, max_length=64)
-
-
-class ApplyRepairPlanPayload(StrictPayload):
-    plan_id: str = Field(min_length=1, max_length=64)
-    source_revision: str = Field(min_length=1, max_length=32)
-    proposed_revision: str = Field(min_length=1, max_length=32)
-    orders: list[PlanOrderPayload] = Field(min_length=1)
 
 
 class SignedRepairDiffPayload(StrictPayload):
@@ -237,7 +229,6 @@ class RecordRefusalPayload(StrictPayload):
 
 PAYLOAD_MODELS: Dict[LedgerCommandType, Type[StrictPayload]] = {
     LedgerCommandType.SAVE_PLAN_REVISION: SavePlanRevisionPayload,
-    LedgerCommandType.APPLY_REPAIR_PLAN: ApplyRepairPlanPayload,
     LedgerCommandType.PERSIST_REPAIR_APPROVAL: PersistRepairApprovalPayload,
     LedgerCommandType.ACTIVATE_APPROVED_REPAIR_PLAN: ActivateApprovedRepairPlanPayload,
     LedgerCommandType.INVALIDATE_PLAN: InvalidatePlanPayload,

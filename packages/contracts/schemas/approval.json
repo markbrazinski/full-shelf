@@ -1,23 +1,41 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "FullShelfApprovalEnvelope",
   "type": "object",
+  "additionalProperties": false,
   "properties": {
-    "approval_id": { "type": "string" },
-    "rev_id": { "type": "string" },
-    "principal_id": { "type": "string" },
-    "incident_id": { "type": "string" },
-    "plan_id": { "type": "string" },
-    "source_revision": { "type": "string" },
-    "proposed_revision": { "type": "string" },
-    "plan_diff": { "type": "object" },
-    "kms_key_version": { "type": "string" },
-    "kms_signature": { "type": "string" },
+    "approval_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "rev_id": { "const": "rev08" },
+    "principal_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "incident_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "plan_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "source_revision": { "const": "rev07" },
+    "proposed_revision": { "const": "rev08" },
+    "plan_diff": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source_revision": { "const": "rev07" },
+        "proposed_revision": { "const": "rev08" },
+        "reroute_order_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "reroute_cases": { "type": "integer", "minimum": 1 },
+        "reroute_target_vehicle": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "pickup_order_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "pickup_cases": { "type": "integer", "minimum": 1 },
+        "plan_diff_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      },
+      "required": [
+        "source_revision", "proposed_revision", "reroute_order_id", "reroute_cases",
+        "reroute_target_vehicle", "pickup_order_id", "pickup_cases", "plan_diff_hash"
+      ]
+    },
+    "kms_key_version": { "type": "string", "minLength": 1, "maxLength": 512 },
+    "kms_signature": { "type": "string", "minLength": 1 },
     "expires_at": { "type": "string", "format": "date-time" }
   },
   "required": [
-    "approval_id", "rev_id", "principal_id", "incident_id",
-    "plan_id", "source_revision", "proposed_revision", "plan_diff",
-    "kms_key_version", "kms_signature", "expires_at"
+    "approval_id", "rev_id", "principal_id", "incident_id", "plan_id",
+    "source_revision", "proposed_revision", "plan_diff", "kms_key_version",
+    "kms_signature", "expires_at"
   ]
 }

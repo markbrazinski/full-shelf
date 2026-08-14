@@ -1,107 +1,116 @@
 openapi: 3.0.3
 info:
   title: Full Shelf Plan Ledger API
-  version: 1.0.0
-  description: Deterministic mutation service, policy engine, and Spanner authority for Full Shelf.
+  version: 1.1.0
+  description: Private deterministic mutation authority backed by Cloud Spanner.
 security:
-  - googleOidc: []
+  - googleWorkloadOidc: []
 paths:
   /api/v1/approvals/approve-and-activate:
     post:
-      summary: Independently verify the human operator, KMS-sign, persist approval, and activate
+      summary: Verify human OAuth and KMS, persist approval, then activate separately
+      description: >-
+        Workload OIDC and an independently verified allowlisted human Google ID
+        token are both required. A successful response contains distinct
+        persisted-approval and activation receipts.
       parameters:
         - name: X-Full-Shelf-Operator-Authorization
           in: header
           required: true
           schema: { type: string }
-      responses:
-        '200': { description: Committed approval and activation receipt }
-        '401': { description: Human Google ID token missing or invalid }
-        '403': { description: Human operator not allowlisted }
-        '409': { description: Revision or authoritative-state precondition failed }
-        '503': { description: Identity or managed KMS failed closed }
-  /api/v1/commands/execute:
-    post:
-      summary: Execute an authenticated, validated, idempotent ledger command
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              $ref: ../schemas/ledger_command.json
+            schema: { $ref: '#/components/schemas/HumanApprovalRequest' }
       responses:
-        '200':
-          description: Stable transactional command receipt and replay metadata
-        '409':
-          description: Deterministic policy or state precondition rejected the command
+        '200': { description: Separate committed approval and activation receipts }
+        '401': { description: Workload or human Google ID token missing or invalid }
+        '403': { description: Workload, operator, or tenant not allowlisted }
+        '409': { description: Revision, capacity, approval, or authoritative-state precondition failed }
+        '503': { description: Identity, KMS, or authoritative dependency failed closed }
+  /api/v1/commands/execute:
+    post:
+      summary: Execute one authenticated, validated, idempotent ledger command
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: ../schemas/ledger_command.json }
+      responses:
+        '200': { description: Stable transactional command receipt and replay metadata }
+        '400': { description: Trace context does not match the command }
+        '403': { description: Command type not allowed for the caller or tenant }
+        '409': { description: Deterministic policy or revision precondition rejected }
   /api/v1/plans/preview:
     get:
-      summary: Get morning distribution plan preview
+      summary: Read an authoritative plan projection
       parameters:
-        - name: tenant_id
-          in: query
-          required: true
-          schema:
-            type: string
-            default: east-bay-food-bank
+        - $ref: '#/components/parameters/TenantId'
       responses:
-        '200':
-          description: Plan preview response
+        '200': { description: Current authoritative plan projection }
+        '503': { description: Authoritative plan read unavailable }
   /api/v1/actions/execute:
     post:
       deprecated: true
-      summary: Retired legacy action route; use authenticated human approval route
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                action_id: { type: string }
-                tenant_id: { type: string }
-                agent_role: { type: string }
-                action_type: { type: string }
-                plan_id: { type: string }
-                expected_revision: { type: string }
-                parameters: { type: object }
-                approval_envelope: { type: object }
-                idempotency_key: { type: string }
+      summary: Retired one-step approval and mutation route
       responses:
-        '410':
-          description: Authenticated human approval route required
+        '410': { description: Use authenticated persisted human approval route }
   /api/v1/incidents/recall:
     post:
       deprecated: true
-      summary: Legacy recall route; use the command endpoint
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                lot_id: { type: string }
-                hazard: { type: string }
-                substitute_lot_id: { type: string }
+      summary: Retired direct recall mutation route
       responses:
-        '410':
-          description: Complete deterministic command envelope required
-  /api/v1/evidence/system:
-    get:
-      summary: Get System Evidence report for auditability
-      parameters:
-        - name: tenant_id
-          in: query
-          required: true
-          schema:
-            type: string
-      responses:
-        '200':
-          description: System Evidence drawer report
+        '410': { description: Use authenticated managed Pub/Sub and command paths }
 components:
+  parameters:
+    TenantId:
+      in: query
+      name: tenant_id
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 64 }
+  schemas:
+    HumanApprovalRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - command_id
+        - idempotency_key
+        - tenant_id
+        - incident_id
+        - plan_id
+        - source_revision
+        - proposed_revision
+        - approval_id
+        - expires_at
+        - plan_diff
+      properties:
+        command_id: { type: string, minLength: 1, maxLength: 48 }
+        idempotency_key: { type: string, minLength: 1, maxLength: 112 }
+        tenant_id: { type: string, minLength: 1, maxLength: 64 }
+        incident_id: { type: string, minLength: 1, maxLength: 64 }
+        plan_id: { type: string, minLength: 1, maxLength: 64 }
+        source_revision: { type: string, enum: [rev07] }
+        proposed_revision: { type: string, enum: [rev08] }
+        approval_id: { type: string, minLength: 1, maxLength: 48 }
+        expires_at: { type: string, format: date-time }
+        plan_diff:
+          type: object
+          additionalProperties: false
+          required:
+            - reroute_order_id
+            - reroute_cases
+            - reroute_target_vehicle
+            - pickup_order_id
+            - pickup_cases
+          properties:
+            reroute_order_id: { type: string, minLength: 1, maxLength: 64 }
+            reroute_cases: { type: integer, minimum: 1 }
+            reroute_target_vehicle: { type: string, minLength: 1, maxLength: 64 }
+            pickup_order_id: { type: string, minLength: 1, maxLength: 64 }
+            pickup_cases: { type: integer, minimum: 1 }
   securitySchemes:
-    googleOidc:
+    googleWorkloadOidc:
       type: http
       scheme: bearer
       bearerFormat: Google-signed OIDC ID token

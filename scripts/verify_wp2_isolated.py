@@ -86,7 +86,7 @@ def seed_audit_authority(database) -> None:
 def command(command_id, idempotency_key, command_type, payload, expected="rev42"):
     agent_role = (
         "FULFILLMENT_RECOVERY_PLANNER"
-        if command_type in {"SAVE_PLAN_REVISION", "APPLY_REPAIR_PLAN", "ALLOCATE_SAFE_STOCK"}
+        if command_type in {"SAVE_PLAN_REVISION", "ALLOCATE_SAFE_STOCK"}
         else "INCIDENT_COORDINATOR"
     )
     return LedgerCommand.model_validate(

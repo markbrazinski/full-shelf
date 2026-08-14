@@ -12,7 +12,6 @@ from google.cloud import spanner
 from .identity import VerifiedGoogleIdentity
 from .ledger_commands import (
     AllocateSafeStockPayload,
-    ApplyRepairPlanPayload,
     ActivateApprovedRepairPlanPayload,
     ActivateMovementBarrierPayload,
     CreateNextDayDraftPayload,
@@ -45,7 +44,6 @@ class SpannerLedgerCommandExecutor:
 
     _ALLOWED_ROLES = {
         LedgerCommandType.SAVE_PLAN_REVISION: {"FULFILLMENT_RECOVERY_PLANNER"},
-        LedgerCommandType.APPLY_REPAIR_PLAN: {"FULFILLMENT_RECOVERY_PLANNER"},
         LedgerCommandType.PERSIST_REPAIR_APPROVAL: {"FULFILLMENT_RECOVERY_PLANNER"},
         LedgerCommandType.ACTIVATE_APPROVED_REPAIR_PLAN: {"FULFILLMENT_RECOVERY_PLANNER"},
         LedgerCommandType.INVALIDATE_PLAN: {"INCIDENT_COORDINATOR"},
@@ -377,9 +375,6 @@ class SpannerLedgerCommandExecutor:
             return mutation_count + 1 + len(payload.lots) + len(payload.vehicles) \
                 + len(payload.orders) + len(payload.custody_nodes) \
                 + len(payload.custody_edges) + 1
-
-        if command.command_type is LedgerCommandType.APPLY_REPAIR_PLAN:
-            raise ValueError("HUMAN_APPROVAL_REQUIRED")
 
         if command.command_type is LedgerCommandType.PERSIST_REPAIR_APPROVAL:
             assert isinstance(payload, PersistRepairApprovalPayload)

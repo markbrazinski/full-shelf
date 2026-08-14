@@ -1,20 +1,25 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "FullShelfPlan",
   "type": "object",
+  "additionalProperties": false,
   "properties": {
-    "plan_id": { "type": "string" },
-    "tenant_id": { "type": "string" },
-    "revision": { "type": "string" },
-    "status": { "type": "string", "enum": ["ACTIVE", "SUPERSEDED", "INVALIDATED_RECALL"] },
+    "plan_id": { "type": "string", "minLength": 1 },
+    "tenant_id": { "type": "string", "minLength": 1 },
+    "revision": { "type": "string", "pattern": "^rev[0-9]{2}$" },
+    "status": {
+      "type": "string",
+      "enum": ["ACTIVE", "SUPERSEDED", "INVALIDATED_RECALL", "DRAFT_WITH_CONSTRAINTS"]
+    },
     "orders": {
       "type": "array",
       "items": {
         "type": "object",
+        "additionalProperties": false,
         "properties": {
           "order_id": { "type": "string" },
           "destination_agency_id": { "type": "string" },
-          "cases": { "type": "integer" },
+          "cases": { "type": "integer", "minimum": 1 },
           "lot_id": { "type": "string" },
           "status": { "type": "string" }
         },
@@ -22,7 +27,33 @@
       }
     },
     "vehicle_assignments": { "type": "object" },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "constraint_type": {
+            "enum": ["MOVEMENT_BARRIER", "RECOVERY_SHORTFALL", "ACKNOWLEDGMENT_HOLD"]
+          },
+          "subject_id": { "type": "string" },
+          "details": { "type": "object" },
+          "status": { "const": "ACTIVE" }
+        },
+        "required": ["constraint_type", "subject_id", "details", "status"]
+      }
+    },
+    "human_approval_required": { "type": "boolean" },
     "created_at": { "type": "string", "format": "date-time" }
   },
-  "required": ["plan_id", "tenant_id", "revision", "status", "orders", "created_at"]
+  "required": ["plan_id", "tenant_id", "revision", "status", "orders", "created_at"],
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "DRAFT_WITH_CONSTRAINTS" } } },
+      "then": {
+        "required": ["constraints", "human_approval_required"],
+        "properties": { "human_approval_required": { "const": true } }
+      }
+    }
+  ]
 }

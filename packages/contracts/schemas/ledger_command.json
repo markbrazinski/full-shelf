@@ -13,7 +13,6 @@
       "type": "string",
       "enum": [
         "SAVE_PLAN_REVISION",
-        "APPLY_REPAIR_PLAN",
         "PERSIST_REPAIR_APPROVAL",
         "ACTIVATE_APPROVED_REPAIR_PLAN",
         "INVALIDATE_PLAN",

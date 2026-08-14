@@ -1,6 +1,8 @@
 import json
 from datetime import datetime, timezone
 
+import pytest
+
 from full_shelf_domain.identity import VerifiedGoogleIdentity
 from full_shelf_domain.ledger_commands import LedgerCommand, LedgerCommandType
 from full_shelf_domain.ledger_executor import SpannerLedgerCommandExecutor
@@ -327,26 +329,14 @@ def test_next_day_draft_atomically_persists_event_constraints_plan_and_coordinat
     ]
 
 
-def test_unsigned_repair_command_cannot_activate():
-    command = coordinator_command(
-        command_type=LedgerCommandType.APPLY_REPAIR_PLAN,
-        agent_role="FULFILLMENT_RECOVERY_PLANNER",
-        payload={"plan_id": "PLAN-ALT", "source_revision": "rev42",
-                 "proposed_revision": "rev43", "orders": [{
-                     "order_id": "ALT", "destination_agency_id": "AG-ALT",
-                     "destination_agency_name": "Altered", "cases": 1,
-                     "lot_id": "LOT-ALT", "assigned_vehicle_id": None,
-                     "status": "PLANNED"}]},
-    )
-    transaction = FakeTransaction()
-    try:
-        SpannerLedgerCommandExecutor(FakeDatabase(transaction), allowed_tenant_ids={"audit-tenant"}).execute(command, IDENTITY)
-    except ValueError as exc:
-        assert str(exc) == "HUMAN_APPROVAL_REQUIRED"
-    else:
-        raise AssertionError("unsigned repair reached activation")
-    assert transaction.inserts == []
-    assert transaction.updates == []
+def test_unsigned_repair_command_is_not_a_valid_command_contract():
+    with pytest.raises(ValueError):
+        coordinator_command(
+            command_type="APPLY_REPAIR_PLAN",
+            agent_role="FULFILLMENT_RECOVERY_PLANNER",
+            payload={"plan_id": "PLAN-ALT", "source_revision": "rev42",
+                     "proposed_revision": "rev43", "orders": []},
+        )
 
 
 def _signed_diff():
