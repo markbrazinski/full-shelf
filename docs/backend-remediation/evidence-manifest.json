@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "recorded_at": "2026-08-13T21:20:19Z",
+  "recorded_at": "2026-08-14T02:12:34Z",
   "builder_acceptance_authority": false,
   "branch": "repair/backend-acceptance-20260813",
   "baseline_commit": "bfd1e1040824da379d69add8755682bc8eafebd6",
@@ -40,7 +40,22 @@
       "subject": "101789932459049570050"
     }
   },
-  "executions": [],
+  "executions": [
+    {
+      "work_package": "WP6",
+      "source_event_id": "21435755642283426",
+      "receipt_id": "RCT-0914BC7309C85D7517A475E2",
+      "cloud_run_trace_id": "fef3e4434d0e0506f9d89aea65d42daf",
+      "ledger_trace_id": "d0a9f10e76b70cbb83c8a22e35565287"
+    },
+    {
+      "work_package": "WP7",
+      "task_decision_id": "site01-6f611b539351b7c6655ee99d2de880d6",
+      "receipt_id": "RCT-19F3D0BAA928D4849F77E123",
+      "cloud_run_trace_id": "d05bdc027d78d4d5b625b6acfce91ae5",
+      "ledger_trace_id": "4a9accd3ef749e44eafcb3662fa37014"
+    }
+  ],
   "wp1": {
     "source_revision": "47633924608eef9fd2b743e647952591d40fea3c",
     "local_tests": {
@@ -74,6 +89,34 @@
       "direct_spanner_dml": "PERMISSION_DENIED"
     }
   },
+  "wp6_wp7": {
+    "source_revision": "619684d472d4a5ef1a928c1509d487f4e04275a1",
+    "local_tests": {
+      "collected": 114,
+      "passed": 114,
+      "failed": 0,
+      "warnings": 18
+    },
+    "build_id": "63b65274-8b42-4537-8651-2c90ea1cba84",
+    "orchestrator_revision": "full-shelf-orchestrator-00036-xjl",
+    "image_digest": "sha256:4361f30a4e698506ece3b5c6161ef5739cb3709edff8c0dceadef520235af2e0",
+    "wp6": {
+      "plan_id": "PLAN-2026-08-14",
+      "revision": "rev01",
+      "status": "DRAFT_WITH_CONSTRAINTS",
+      "human_approval_required": true,
+      "target_plan_rows": 1,
+      "target_constraint_rows": 3,
+      "target_event_rows": 1,
+      "target_receipt_rows": 1
+    },
+    "wp7": {
+      "task_name": "projects/preflight-hackathon/locations/us-central1/queues/full-shelf-deadlines/tasks/site01-6f611b539351b7c6655ee99d2de880d6",
+      "event_rows": 1,
+      "receipt_rows": 1,
+      "idempotent_replay": true
+    }
+  },
   "claims": [
     {
       "capability": "WP0 baseline and repair map",
@@ -86,6 +129,18 @@
       "classification": "OBSERVED_LIVE",
       "observed_at": "2026-08-13T21:20:19Z",
       "limitation": "Builder-observed package evidence; final acceptance remains with a fresh independent auditor."
+    },
+    {
+      "capability": "WP6 managed next-day continuity",
+      "classification": "OBSERVED_LIVE",
+      "observed_at": "2026-08-14T02:04:35Z",
+      "limitation": "Builder-observed package evidence; retained legacy messages produced only separate zero-mutation denial receipts."
+    },
+    {
+      "capability": "WP7 managed Cloud Tasks escalation",
+      "classification": "OBSERVED_LIVE",
+      "observed_at": "2026-08-14T02:06:20Z",
+      "limitation": "Builder-observed package evidence; Cloud Tasks Data Access audit logging was not enabled, and the managed callback is correlated through the real task resource, request log, verified claims, and ledger receipt."
     }
   ]
 }

@@ -13,8 +13,8 @@ Builder verdict authority: none; final acceptance requires a fresh independent a
 | WP3 — Human approval and KMS | `3de6e36` | 88 safe tests passed; 88 collected | Revisions `orchestrator-00025-lhf` / `plan-ledger-00018-vpg`; real operator, isolated KMS/Spanner replay, ledger-runtime KMS sign, and deployed zero-mutation denials observed | DEPLOYED OBSERVED | None; successful canonical activation deliberately not used as a test |
 | WP4 — Managed Model Armor | `483ee89` | 95 safe tests passed; 95 collected | Revision `orchestrator-00026-tnx`; deployed benign allow, injection block, managed sanitize logs, and zero-mutation reconciliation observed | DEPLOYED OBSERVED | None; builder testimony ready for strategy review |
 | WP5 — Gemini 3.5 through ADK | `d65d1cf`, `e968bf4`, `61d4a18` | 107 safe tests passed; 107 collected | Revision `orchestrator-00029-9cx`; deployed valid extraction and ambiguous-input manual review, persisted ADK IDs, and zero-mutation reconciliation observed | DEPLOYED OBSERVED | None; builder testimony ready for strategy review |
-| WP6 — Scheduler, Pub/Sub, continuity | — | — | — | NOT STARTED | WP5 gate |
-| WP7 — Cloud Tasks escalation | — | — | — | NOT STARTED | WP6 gate |
+| WP6 — Scheduler, Pub/Sub, continuity | `d199c68`, `619684d` | 114 safe tests passed; 114 collected | Revision `orchestrator-00036-xjl`; fresh Scheduler/Pub/Sub/OIDC delivery created one constrained next-day draft and idempotent duplicate retained one target receipt | DEPLOYED OBSERVED | None; builder testimony ready for strategy review |
+| WP7 — Cloud Tasks escalation | `d199c68`, `619684d` | 114 safe tests passed; 114 collected | Revision `orchestrator-00036-xjl`; deployed decision created real task, managed OIDC callback committed one ledger receipt, and rejection/idempotency probes observed | DEPLOYED OBSERVED | None; builder testimony ready for strategy review |
 | WP8 — Dynamic Spanner Graph | — | — | — | NOT STARTED | WP7 gate |
 | WP9 — Event-backed SSE | — | — | — | NOT STARTED | WP8 gate |
 | WP10 — Evidence, Trace, provenance | — | — | — | NOT STARTED | WP9 gate |
