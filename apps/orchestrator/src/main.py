@@ -43,6 +43,7 @@ logger = logging.getLogger("full_shelf.orchestrator")
 PROJECT_ID = os.getenv("GCP_PROJECT_ID", "preflight-hackathon")
 SPANNER_INSTANCE = os.getenv("SPANNER_INSTANCE_ID", "fef-smoke-spanner")
 SPANNER_DATABASE = os.getenv("SPANNER_DATABASE_ID", "full-shelf-main")
+GRAPH_AUDIT_DATABASE = os.getenv("GRAPH_AUDIT_DATABASE_ID", "")
 PLAN_LEDGER_URL = os.getenv("PLAN_LEDGER_URL", "")
 PLAN_LEDGER_AUDIENCE = os.getenv("PLAN_LEDGER_AUDIENCE", "")
 MANAGED_CALLBACK_AUDIENCE = os.getenv("MANAGED_CALLBACK_AUDIENCE", "")
@@ -205,12 +206,99 @@ def approve_and_activate(
     return result
 
 
-@lru_cache(maxsize=1)
-def get_spanner_database():
-    """Reuse one thread-safe Spanner client/session pool per service instance."""
+@lru_cache(maxsize=2)
+def get_spanner_database(database_id: Optional[str] = None):
+    """Reuse thread-safe Spanner session pools for explicitly configured databases."""
     spanner_client = spanner.Client(project=PROJECT_ID)
     instance = spanner_client.instance(SPANNER_INSTANCE)
-    return instance.database(SPANNER_DATABASE)
+    return instance.database(database_id or SPANNER_DATABASE)
+
+
+CUSTODY_GRAPH_GQL = """
+GRAPH CustodyGraph
+MATCH (src:Node)-[e:TRANSFERRED_TO
+  WHERE e.tenant_id = @tenant_id AND e.lot_id = @lot_id
+]->{1,8}(dst:Node)
+WHERE src.tenant_id = @tenant_id AND src.node_type = 'WAREHOUSE'
+RETURN
+  src.node_id AS root_node_id,
+  src.node_type AS root_node_type,
+  src.name AS root_name,
+  src.on_hand_cases AS root_cases,
+  dst.node_id AS node_id,
+  dst.node_type AS node_type,
+  dst.name AS node_name,
+  dst.on_hand_cases AS node_cases,
+  ARRAY_LENGTH(e) AS path_depth
+ORDER BY path_depth, node_id
+""".strip()
+
+
+def _run_managed_custody_graph(db, *, tenant_id: str, lot_id: str) -> Dict[str, Any]:
+    """Execute the custody reconstruction wholly in Spanner Graph.
+
+    The only reconciliation performed here is identity-based de-duplication of the
+    managed query result. There is intentionally no relational scan or local graph
+    traversal fallback.
+    """
+    with db.snapshot() as snapshot:
+        rows = list(snapshot.execute_sql(
+            CUSTODY_GRAPH_GQL,
+            params={"tenant_id": tenant_id, "lot_id": lot_id},
+            param_types={
+                "tenant_id": spanner.param_types.STRING,
+                "lot_id": spanner.param_types.STRING,
+            },
+        ))
+
+    if not rows:
+        raise LookupError("GRAPH_TOPOLOGY_NOT_FOUND")
+
+    root = {
+        "node_id": rows[0][0],
+        "node_type": rows[0][1],
+        "name": rows[0][2],
+        "on_hand_cases": rows[0][3],
+        "path_depth": 0,
+    }
+    nodes = {root["node_id"]: root}
+    paths = []
+    for row in rows:
+        if row[0] != root["node_id"] or row[3] != root["on_hand_cases"]:
+            raise ValueError("INCONSISTENT_GRAPH_ROOT")
+        node = {
+            "node_id": row[4],
+            "node_type": row[5],
+            "name": row[6],
+            "on_hand_cases": row[7],
+            "path_depth": row[8],
+        }
+        prior = nodes.get(node["node_id"])
+        if prior and prior["on_hand_cases"] != node["on_hand_cases"]:
+            raise ValueError("INCONSISTENT_GRAPH_NODE")
+        if not prior or node["path_depth"] < prior["path_depth"]:
+            nodes[node["node_id"]] = node
+        paths.append({
+            "root_node_id": row[0],
+            "destination_node_id": row[4],
+            "path_depth": row[8],
+        })
+
+    positions = sorted(nodes.values(), key=lambda item: (item["path_depth"], item["node_id"]))
+    return {
+        "tenant_id": tenant_id,
+        "lot_id": lot_id,
+        "query_engine": "SPANNER_GRAPH_GQL",
+        "query_shape": CUSTODY_GRAPH_GQL,
+        "query_parameters": {"tenant_id": tenant_id, "lot_id": lot_id},
+        "paths": paths,
+        "current_positions": positions,
+        "unique_current_cases": sum(position["on_hand_cases"] for position in positions),
+        "max_path_depth": max(path["path_depth"] for path in paths),
+        "node_count": len(positions),
+        "intermediate_subtotals_readded": False,
+        "classification": "OBSERVED_LIVE",
+    }
 
 
 def get_judge_api_key() -> str:
@@ -660,6 +748,39 @@ def handle_pubsub_push(
 # GATE E, F, G, H — RECALL HERO LOOP
 # -------------------------------------------------------------------
 
+@app.get("/api/v1/orchestrator/custody/graph")
+def get_custody_graph_reconstruction(
+    scenario: str = Query("canonical", pattern="^(canonical|altered)$"),
+    x_api_key: Optional[str] = Header(None, alias="X-Full-Shelf-API-Key"),
+):
+    """Run a parameterized, variable-depth managed Spanner Graph reconstruction."""
+    verify_judge_key(x_api_key)
+    if scenario == "canonical":
+        database_id = SPANNER_DATABASE
+        tenant_id = "east-bay-food-bank"
+        lot_id = "LTC-4471"
+    else:
+        if not GRAPH_AUDIT_DATABASE:
+            raise HTTPException(status_code=503, detail="ALTERED_GRAPH_AUDIT_DATABASE_NOT_CONFIGURED")
+        database_id = GRAPH_AUDIT_DATABASE
+        tenant_id = "wp8-altered-audit"
+        lot_id = "ALT-LOT-9001"
+
+    try:
+        result = _run_managed_custody_graph(
+            get_spanner_database(database_id),
+            tenant_id=tenant_id,
+            lot_id=lot_id,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="AUTHORITATIVE_GRAPH_READ_UNAVAILABLE") from exc
+
+    result["scenario"] = scenario
+    result["database_id"] = database_id
+    return result
+
 @app.post("/api/v1/orchestrator/recall/execute-hero-loop")
 def execute_hero_loop(
     x_api_key: Optional[str] = Header(None, alias="X-Full-Shelf-API-Key"),
@@ -714,16 +835,12 @@ def execute_hero_loop(
         },
     )
 
-    graph_nodes = []
-    unique_cases_total = 0
     try:
-        with db.snapshot() as snapshot:
-            gql = "GRAPH CustodyGraph MATCH (a:Node)-[e:TRANSFERRED_TO]->(b:Node) RETURN a.node_id AS source, e.edge_id AS type, b.node_id AS target, b.on_hand_cases AS cases"
-            results = snapshot.execute_sql(gql)
-            for row in results:
-                src, t_type, tgt, cases = row[0], row[1], row[2], row[3]
-                graph_nodes.append({"source": src, "transfer_type": t_type, "target": tgt, "cases": cases})
-                unique_cases_total += cases
+        graph_reconstruction = _run_managed_custody_graph(
+            db,
+            tenant_id=tenant_id,
+            lot_id="LTC-4471",
+        )
     except Exception as exc:
         raise HTTPException(status_code=503, detail="AUTHORITATIVE_GRAPH_READ_UNAVAILABLE") from exc
 
@@ -899,12 +1016,7 @@ def execute_hero_loop(
         "model_armor_screening": model_armor,
         "gemini_35_extraction": extracted,
         "gemini_entity_extraction": extracted,
-        "spanner_graph_reconstruction": {
-            "query": "GRAPH CustodyGraph MATCH (n:Node) RETURN ...",
-            "nodes": graph_nodes,
-            "unique_cases_total": unique_cases_total,
-            "site01_double_counted": False
-        },
+        "spanner_graph_reconstruction": graph_reconstruction,
         "safe_stock_allocation": {
             "safe_lot_id": "LTC-5090",
             "agency_01": 18,
