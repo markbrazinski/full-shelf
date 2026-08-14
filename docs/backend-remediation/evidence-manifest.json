@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "recorded_at": "2026-08-14T03:19:18Z",
+  "recorded_at": "2026-08-14T03:26:30Z",
   "builder_acceptance_authority": false,
   "branch": "repair/backend-acceptance-20260813",
   "baseline_commit": "bfd1e1040824da379d69add8755682bc8eafebd6",
@@ -187,6 +187,21 @@
     "task_name": "projects/preflight-hackathon/locations/us-central1/queues/full-shelf-deadlines/tasks/site01-3333444455556666777788889999aaaa",
     "receipt_id": "RCT-E3A117925CF6FDA66B50970C"
   },
+  "wp11": {
+    "source_revision": "a9ac78fb10563bfb9e6908a1cf70666679a8e7ba",
+    "audit_database": "full-shelf-audit-wp6-20260813",
+    "audit_database_state": "READY",
+    "local_tests": {
+      "collected": 133,
+      "passed": 133,
+      "failed": 0,
+      "skipped": 0,
+      "warnings": 15
+    },
+    "canonical_receipts_before": 17,
+    "canonical_receipts_after": 17,
+    "canonical_receipt_delta": 0
+  },
   "claims": [
     {
       "capability": "WP0 baseline and repair map",
@@ -229,6 +244,12 @@
       "classification": "OBSERVED_LIVE",
       "observed_at": "2026-08-14T03:19:18Z",
       "limitation": "Builder-observed endpoint and fresh hero-loop escalation trace readbacks; final acceptance remains with a fresh independent auditor."
+    },
+    {
+      "capability": "WP11 isolated regression suite",
+      "classification": "STRUCTURALLY_VERIFIED",
+      "observed_at": "2026-08-14T03:26:30Z",
+      "limitation": "Builder-run isolated local suite with live read-only canonical receipt reconciliation; final acceptance remains with a fresh independent auditor."
     }
   ]
 }
