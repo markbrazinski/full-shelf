@@ -153,6 +153,8 @@ def main() -> None:
                 "incident_id": "INC-ALT-777",
                 "coordinator_id": "COORD-ALT-777",
                 "lot_id": "LOT-ALT-908",
+                "source_event_id": "wp2-isolated-recall",
+                "source_publish_time": "2026-08-14T15:00:00Z",
                 "details": {"hazard": "ALTERED_TEST_HAZARD", "cases": 13},
             },
         ),

@@ -1,5 +1,7 @@
 import importlib.util
 import os
+import base64
+import json
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
@@ -38,6 +40,152 @@ def test_task_callback_rejects_unauthenticated_before_ledger():
         )
     assert response.status_code == 401
     ledger.assert_not_called()
+
+
+def _pubsub_envelope(event, message_id="scheduler-message-1"):
+    return {
+        "message": {
+            "messageId": message_id,
+            "publishTime": "2026-08-14T12:30:00Z",
+            "data": base64.b64encode(json.dumps(event).encode()).decode(),
+        }
+    }
+
+
+def _minimal_operating_plan():
+    return {
+        "tenant_name": "Audit day", "plan_id": "PLAN-AUDIT",
+        "revision": "rev07", "status": "ACTIVE",
+        "lots": [{"lot_id": "LOT-A", "code": "LOT-A", "produce_type": "Greens",
+                  "hazard_status": "CLEAR_SAFE", "total_cases": 4}],
+        "vehicles": [{"vehicle_id": "VEHICLE-A", "name": "Vehicle A",
+                      "max_capacity_cases": 10, "current_load_cases": 4,
+                      "is_operational": True}],
+        "orders": [{"order_id": "ORDER-A", "destination_agency_id": "AG-A",
+                    "destination_agency_name": "Agency A", "cases": 4,
+                    "lot_id": "LOT-A", "assigned_vehicle_id": "VEHICLE-A",
+                    "status": "SCHEDULED"}],
+        "custody_nodes": [
+            {"node_id": "NODE-WH", "node_type": "WAREHOUSE", "name": "Warehouse",
+             "on_hand_cases": 2},
+            {"node_id": "NODE-AG", "node_type": "AGENCY", "name": "Agency",
+             "on_hand_cases": 2},
+        ],
+        "custody_edges": [{"edge_id": "EDGE-A", "source_node_id": "NODE-WH",
+                           "target_node_id": "NODE-AG", "lot_id": "LOT-A",
+                           "case_count": 2, "is_sub_distribution": False}],
+    }
+
+
+def test_pubsub_daily_delivery_requires_google_identity_before_plan_logic():
+    client = TestClient(main.app)
+    event = {"event_type": "PLAN_DAY_REQUESTED", "tenant_id": "east-bay-food-bank",
+             "operating_plan": _minimal_operating_plan()}
+    with patch.object(
+        main, "_verify_managed_callback", side_effect=main.HTTPException(401, "required")
+    ), patch.object(main, "_generate_daily_morning_plan") as generate:
+        response = client.post("/api/v1/orchestrator/pubsub/push", json=_pubsub_envelope(event))
+
+    assert response.status_code == 401
+    generate.assert_not_called()
+
+
+def test_authenticated_duplicate_daily_deliveries_return_stable_2xx_result():
+    client = TestClient(main.app)
+    event = {"event_type": "PLAN_DAY_REQUESTED", "tenant_id": "east-bay-food-bank",
+             "operating_plan": _minimal_operating_plan()}
+    results = [
+        {"status": "DAILY_PLAN_GENERATED_REV07", "idempotent_replay": False},
+        {"status": "DAILY_PLAN_EXISTS_IDEMPOTENT", "idempotent_replay": True},
+    ]
+    with patch.object(main, "_verify_managed_callback", return_value=CALLER), patch.object(
+        main, "_generate_daily_morning_plan", side_effect=results
+    ) as generate:
+        first = client.post(
+            "/api/v1/orchestrator/pubsub/push",
+            headers={"Authorization": "Bearer signed"},
+            json=_pubsub_envelope(event),
+        )
+        duplicate = client.post(
+            "/api/v1/orchestrator/pubsub/push",
+            headers={"Authorization": "Bearer signed"},
+            json=_pubsub_envelope(event),
+        )
+
+    assert first.status_code == duplicate.status_code == 200
+    assert first.json()["daily_plan_result"]["status"] == "DAILY_PLAN_GENERATED_REV07"
+    assert duplicate.json()["daily_plan_result"]["idempotent_replay"] is True
+    assert generate.call_count == 2
+    assert generate.call_args_list[0].kwargs["source_event_id"] == "scheduler-message-1"
+
+
+def test_authenticated_duplicate_next_day_deliveries_return_2xx():
+    client = TestClient(main.app)
+    event = {"event_type": "PLAN_NEXT_DAY_REQUESTED", "tenant_id": "east-bay-food-bank"}
+    stable = {
+        "status": "NEXT_DAY_DRAFT_CREATED", "idempotent_replay": True,
+        "ledger_receipt": {"receipt_id": "RCT-STABLE", "status": "SUCCESS"},
+    }
+    with patch.object(main, "_verify_managed_callback", return_value=CALLER), patch.object(
+        main, "_generate_next_day_plan", return_value=stable
+    ) as generate:
+        first = client.post(
+            "/api/v1/orchestrator/pubsub/push",
+            headers={"Authorization": "Bearer signed"},
+            json=_pubsub_envelope(event, "next-day-message-1"),
+        )
+        duplicate = client.post(
+            "/api/v1/orchestrator/pubsub/push",
+            headers={"Authorization": "Bearer signed"},
+            json=_pubsub_envelope(event, "next-day-message-1"),
+        )
+
+    assert first.status_code == duplicate.status_code == 200
+    assert first.json()["next_day_plan_result"]["ledger_receipt"]["receipt_id"] == "RCT-STABLE"
+    assert generate.call_count == 2
+
+
+def test_recall_pubsub_redelivery_uses_stable_ledger_command_and_isolated_scope():
+    client = TestClient(main.app)
+    event = {
+        "event_type": "RECALL_NOTICE_RECEIVED",
+        "tenant_id": "east-bay-food-bank",
+        "coordinator_id": "COORD-ALT",
+        "incident_id": "INC-RECALL-ALT",
+        "lot_id": "LOT-RECALL-ALT",
+        "notice_text": "Representative recall notice",
+    }
+    db = MagicMock()
+    snapshot = MagicMock()
+    snapshot.execute_sql.return_value = [("WAITING_FOR_EVENTS", "CHK-ALT", "rev08")]
+    db.snapshot.return_value.__enter__.return_value = snapshot
+    results = [
+        {"receipt": {"receipt_id": "RCT-RECALL", "status": "SUCCESS"},
+         "idempotent_replay": False},
+        {"receipt": {"receipt_id": "RCT-RECALL", "status": "SUCCESS"},
+         "idempotent_replay": True},
+    ]
+    with patch.object(main, "_verify_managed_callback", return_value=CALLER), patch.object(
+        main, "get_spanner_database", return_value=db
+    ), patch.object(main, "execute_ledger_command", side_effect=results) as ledger:
+        first = client.post(
+            "/api/v1/orchestrator/pubsub/push",
+            headers={"Authorization": "Bearer signed"},
+            json=_pubsub_envelope(event, "recall-message-1"),
+        )
+        duplicate = client.post(
+            "/api/v1/orchestrator/pubsub/push",
+            headers={"Authorization": "Bearer signed"},
+            json=_pubsub_envelope(event, "recall-message-1"),
+        )
+
+    assert first.status_code == duplicate.status_code == 200
+    assert first.json()["incident"]["incident_id"] == "INC-RECALL-ALT"
+    assert duplicate.json()["idempotent_redelivery"] is True
+    assert duplicate.json()["ledger_receipt"]["receipt_id"] == "RCT-RECALL"
+    assert ledger.call_args_list[0].kwargs["tenant_id"] == "east-bay-food-bank"
+    assert ledger.call_args_list[0].kwargs["payload"]["source_event_id"] == "recall-message-1"
+    assert ledger.call_args_list[0].kwargs["idempotency_key"] == ledger.call_args_list[1].kwargs["idempotency_key"]
 
 
 def test_task_callback_uses_verified_identity_and_cannot_bypass_ledger():

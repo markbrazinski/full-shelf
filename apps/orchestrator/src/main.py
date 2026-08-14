@@ -1,4 +1,5 @@
 import json
+import hashlib
 import logging
 import os
 import base64
@@ -29,6 +30,7 @@ from full_shelf_domain.authority import (
     AuthorityScopeResolver,
     UnauthorizedAuthorityScope,
 )
+from full_shelf_domain.ledger_commands import OperatingPlanDefinition
 from full_shelf_domain.recall import (
     inspect_recall_notice_with_model_armor,
     extract_recall_entities_with_gemini_35,
@@ -178,6 +180,14 @@ class HumanApprovalProposal(BaseModel):
 
 class RecallArmorPreflightRequest(BaseModel):
     notice_text: str = Field(min_length=1, max_length=20000)
+
+
+class PersistWaitingCoordinatorRequest(BaseModel):
+    coordinator_id: str = Field(min_length=1, max_length=64)
+    incident_id: str = Field(min_length=1, max_length=64)
+    checkpoint: str = Field(min_length=1, max_length=64)
+    active_plan_revision: str = Field(pattern=r"^rev08$")
+    child_incident_ids: list[str] = Field(min_length=1)
 
 
 def _verify_operator(authorization: Optional[str]):
@@ -406,71 +416,47 @@ def healthz_check():
 # GATE B — DAILY PLAN CREATION
 # -------------------------------------------------------------------
 
-def _generate_daily_morning_plan(tenant_id: str) -> Dict[str, Any]:
-    """Generates canonical morning plan rev07 from authoritative inputs."""
+def _generate_daily_morning_plan(
+    *,
+    tenant_id: str,
+    operating_plan: OperatingPlanDefinition,
+    source_event_id: str,
+    source_publish_time: str,
+) -> Dict[str, Any]:
+    """Commit a validated morning plan definition through the private ledger."""
     trace_id = generate_trace_id()
-    scope = _resolve_authority_scope(tenant_id)
-    db = get_spanner_database(scope.database_id)
+    _resolve_authority_scope(tenant_id)
+    plan_scope_digest = hashlib.sha256(
+        f"{tenant_id}\x00{operating_plan.plan_id}\x00rev07".encode("utf-8")
+    ).hexdigest()[:24]
 
-    # Check if rev07 already exists (idempotency check)
-    existing_rev = None
-    with db.snapshot() as snapshot:
-        rows = list(snapshot.execute_sql(
-            "SELECT revision, status FROM PlanRevisions WHERE tenant_id = @t AND revision = 'rev07'",
-            params={"t": tenant_id},
-            param_types={"t": spanner.param_types.STRING}
-        ))
-        if rows:
-            existing_rev = rows[0][0]
-
-    plan_details = {
-        "plan_id": "PLAN-2026-08-07",
-        "revision": "rev07",
-        "status": "ACTIVE",
-        "provenance": "GENERATED 05:30 · APPROVED 06:45 · ACTIVE rev07",
-        "provenance_times": {
-            "generated_at": "05:30",
-            "approved_at": "06:45",
-            "activated_at": "07:30"
-        },
-        "deliveries": [
-            {"order_id": "O201", "agency": "Agency 01", "cases": 18, "lot_id": "LTC-4471", "vehicle": "TRUCK-01"},
-            {"order_id": "O202", "agency": "Agency 02", "cases": 22, "lot_id": "LTC-4471", "vehicle": "TRUCK-01"},
-            {"order_id": "O203", "agency": "Agency 03", "cases": 20, "lot_id": "LTC-4471", "vehicle": "TRUCK-01"},
-            {"order_id": "O204", "agency": "Agency 04", "cases": 15, "lot_id": "LTC-5090", "vehicle": "TRUCK-02"},
-            {"order_id": "O205", "agency": "Agency 05", "cases": 21, "lot_id": "LTC-5090", "vehicle": "TRUCK-02"}
-        ],
-        "vehicles": [
-            {"vehicle_id": "TRUCK-01", "capacity": 60, "assigned": 60},
-            {"vehicle_id": "TRUCK-02", "capacity": 60, "assigned": 36}
-        ]
-    }
-
-    # Commit or reconcile the existing revision through the ledger so every
-    # accepted planning trigger has a stable transactional receipt.
     try:
         ledger_result = execute_ledger_command(
-            command_id="CMD-DAILY-PLAN-2026-08-07-REV07",
-            idempotency_key=f"{tenant_id}:PLAN-2026-08-07:rev07:create",
+            command_id=f"CMD-DAY-{plan_scope_digest}",
+            idempotency_key=f"daily-plan:{plan_scope_digest}",
             tenant_id=tenant_id,
-            incident_id="INC-DAILY-PLAN-2026-08-07",
+            incident_id=f"INC-DAY-{plan_scope_digest}",
             agent_role="FULFILLMENT_RECOVERY_PLANNER",
             command_type="SAVE_PLAN_REVISION",
             expected_plan_revision="rev07",
             trace_id=trace_id,
             payload={
-                "plan_id": "PLAN-2026-08-07",
-                "revision": "rev07",
-                "status": "ACTIVE",
+                **operating_plan.model_dump(),
+                "source_event_id": source_event_id,
+                "source_publish_time": source_publish_time,
             },
         )
     except Exception as exc:
         raise HTTPException(status_code=502, detail="PLAN_LEDGER_DAILY_PLAN_COMMIT_FAILED") from exc
 
     return {
-        "status": "DAILY_PLAN_EXISTS_IDEMPOTENT" if existing_rev else "DAILY_PLAN_GENERATED_REV07",
+        "status": (
+            "DAILY_PLAN_EXISTS_IDEMPOTENT"
+            if ledger_result["idempotent_replay"]
+            else "DAILY_PLAN_GENERATED_REV07"
+        ),
         "revision": "rev07",
-        "plan_details": plan_details,
+        "plan_details": operating_plan.model_dump(),
         "idempotent_replay": ledger_result["idempotent_replay"],
         "ledger_receipt": ledger_result["receipt"],
         "trace_id": trace_id
@@ -479,11 +465,18 @@ def _generate_daily_morning_plan(tenant_id: str) -> Dict[str, Any]:
 
 @app.post("/api/v1/orchestrator/daily-plan/generate")
 def generate_daily_morning_plan(
+    operating_plan: OperatingPlanDefinition,
     tenant_id: str = Query("east-bay-food-bank"),
     x_api_key: Optional[str] = Header(None, alias="X-Full-Shelf-API-Key"),
 ):
     verify_judge_key(x_api_key)
-    return _generate_daily_morning_plan(tenant_id)
+    now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    return _generate_daily_morning_plan(
+        tenant_id=tenant_id,
+        operating_plan=operating_plan,
+        source_event_id=f"manual-{generate_trace_id()}",
+        source_publish_time=now,
+    )
 
 
 # -------------------------------------------------------------------
@@ -505,6 +498,7 @@ def s2s_dispatch(
 
 @app.post("/api/v1/orchestrator/coordinator/persist-waiting")
 def persist_coordinator_waiting(
+    proposal: PersistWaitingCoordinatorRequest,
     tenant_id: str = "east-bay-food-bank",
     x_api_key: Optional[str] = Header(None, alias="X-Full-Shelf-API-Key"),
 ):
@@ -513,15 +507,18 @@ def persist_coordinator_waiting(
     _resolve_authority_scope(tenant_id)
     now = datetime.now(timezone.utc)
     trace_id = generate_trace_id()
-    coord_id = "COORD-2026-0807"
-    checkpoint = "CHK-REV08-WAIT"
-    active_rev = "rev08"
+    coord_id = proposal.coordinator_id
+    checkpoint = proposal.checkpoint
+    active_rev = proposal.active_plan_revision
+    command_digest = hashlib.sha256(
+        f"{tenant_id}\x00{coord_id}\x00{checkpoint}".encode("utf-8")
+    ).hexdigest()[:24]
 
     ledger_result = execute_ledger_command(
-        command_id=f"CMD-{coord_id}-WAITING",
-        idempotency_key=f"{tenant_id}:{coord_id}:waiting:{checkpoint}",
+        command_id=f"CMD-WAIT-{command_digest}",
+        idempotency_key=f"coordinator-wait:{command_digest}",
         tenant_id=tenant_id,
-        incident_id="INC-TRUCK-01",
+        incident_id=proposal.incident_id,
         agent_role="INCIDENT_COORDINATOR",
         command_type="PERSIST_COORDINATOR",
         expected_plan_revision=active_rev,
@@ -531,7 +528,7 @@ def persist_coordinator_waiting(
             "state": "WAITING_FOR_EVENTS",
             "checkpoint": checkpoint,
             "active_plan_revision": active_rev,
-            "child_incident_ids": ["INC-TRUCK-01"],
+            "child_incident_ids": proposal.child_incident_ids,
         },
     )
 
@@ -721,7 +718,18 @@ def handle_pubsub_push(
         }
 
     if event_type == "PLAN_DAY_REQUESTED":
-        day_res = _generate_daily_morning_plan(tenant_id=tenant_id)
+        try:
+            operating_plan = OperatingPlanDefinition.model_validate(
+                event_data.get("operating_plan")
+            )
+        except Exception as exc:
+            raise HTTPException(400, "OPERATING_PLAN_DEFINITION_REQUIRED") from exc
+        day_res = _generate_daily_morning_plan(
+            tenant_id=tenant_id,
+            operating_plan=operating_plan,
+            source_event_id=message_id,
+            source_publish_time=publish_time,
+        )
         return {
             "status": "SCHEDULER_DAILY_PLAN_GENERATED",
             "message_id": message_id,
@@ -732,7 +740,15 @@ def handle_pubsub_push(
             "trace_id": trace_id
         }
 
-    coord_id = "COORD-2026-0807"
+    if event_type != "RECALL_NOTICE_RECEIVED":
+        raise HTTPException(status_code=400, detail="UNSUPPORTED_PUBSUB_EVENT_TYPE")
+    coord_id = event_data.get("coordinator_id")
+    incident_id = event_data.get("incident_id")
+    lot_id = event_data.get("lot_id")
+    if not all(isinstance(value, str) and value for value in (
+        coord_id, incident_id, lot_id
+    )):
+        raise HTTPException(400, "RECALL_EVENT_SCOPE_REQUIRED")
     coord_state = None
     active_rev = None
 
@@ -754,39 +770,25 @@ def handle_pubsub_push(
     if coord_state is None or active_rev is None:
         raise HTTPException(status_code=409, detail="WAITING_COORDINATOR_NOT_FOUND")
 
-    incident_exists = False
-    try:
-        with db.snapshot() as snapshot:
-            res = snapshot.execute_sql(
-                "SELECT status FROM Incidents WHERE tenant_id = @tenant_id "
-                "AND incident_id = 'INC-RECALL-01'",
-                params={"tenant_id": tenant_id},
-                param_types={"tenant_id": spanner.param_types.STRING},
-            )
-            for row in res:
-                incident_exists = True
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail="AUTHORITATIVE_INCIDENT_READ_UNAVAILABLE") from exc
-
-    if not incident_exists:
-        ledger_result = execute_ledger_command(
-            command_id=f"CMD-PUBSUB-{message_id}",
-            idempotency_key=f"pubsub:{message_id}:open-recall",
-            tenant_id=tenant_id,
-            incident_id="INC-RECALL-01",
-            agent_role="INCIDENT_COORDINATOR",
-            command_type="OPEN_RECALL_INCIDENT",
-            expected_plan_revision=active_rev,
-            trace_id=trace_id,
-            payload={
-                "incident_id": "INC-RECALL-01",
-                "coordinator_id": coord_id,
-                "lot_id": event_data.get("lot_id", "LTC-4471"),
-                "details": event_data,
-            },
-        )
-    else:
-        ledger_result = None
+    message_digest = hashlib.sha256(message_id.encode("utf-8")).hexdigest()[:24]
+    ledger_result = execute_ledger_command(
+        command_id=f"CMD-PUBSUB-{message_digest}",
+        idempotency_key=f"pubsub:{message_digest}:open-recall",
+        tenant_id=tenant_id,
+        incident_id=incident_id,
+        agent_role="INCIDENT_COORDINATOR",
+        command_type="OPEN_RECALL_INCIDENT",
+        expected_plan_revision=active_rev,
+        trace_id=trace_id,
+        payload={
+            "incident_id": incident_id,
+            "coordinator_id": coord_id,
+            "lot_id": lot_id,
+            "source_event_id": message_id,
+            "source_publish_time": publish_time,
+            "details": event_data,
+        },
+    )
 
     return {
         "status": "PUB_SUB_WAKE_RESUMED",
@@ -796,12 +798,12 @@ def handle_pubsub_push(
         "new_state": "RECALL_WOKEN_DETECTED",
         "rehydrated_revision": active_rev,
         "incident": {
-            "incident_id": "INC-RECALL-01",
+            "incident_id": incident_id,
             "status": "DETECTED",
-            "affected_lot_id": "LTC-4471"
+            "affected_lot_id": lot_id,
         },
-        "idempotent_redelivery": incident_exists,
-        "ledger_receipt": ledger_result["receipt"] if ledger_result else None,
+        "idempotent_redelivery": ledger_result["idempotent_replay"],
+        "ledger_receipt": ledger_result["receipt"],
         "trace_id": trace_id
     }
 

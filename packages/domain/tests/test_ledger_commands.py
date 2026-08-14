@@ -25,6 +25,8 @@ def make_command(**overrides):
             "incident_id": "INC-ALT-777",
             "coordinator_id": "COORD-ALT-777",
             "lot_id": "LOT-ALT-908",
+            "source_event_id": "recall-message-alt",
+            "source_publish_time": "2026-08-14T15:00:00Z",
             "details": {"hazard": "ALTERED_TEST_HAZARD", "cases": 13},
         },
     }
@@ -63,6 +65,8 @@ def test_command_rejects_unknown_payload_fields():
             "incident_id": "INC-ALT-777",
             "coordinator_id": "COORD-ALT-777",
             "lot_id": "LOT-ALT-908",
+            "source_event_id": "recall-message-alt",
+            "source_publish_time": "2026-08-14T15:00:00Z",
             "details": {},
             "authoritative_status_override": "CLOSED",
         }

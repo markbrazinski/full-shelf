@@ -170,6 +170,76 @@ def test_duplicate_returns_stable_receipt_and_zero_additional_mutations():
     assert transaction.upserts == []
 
 
+def test_daily_scheduler_command_atomically_initializes_isolated_operating_plan():
+    class DailyTransaction(FakeTransaction):
+        def execute_sql(self, sql, params, param_types):
+            if "idempotency_key" in sql:
+                return []
+            if "SELECT revision FROM PlanRevisions" in sql:
+                return []
+            if "SELECT status FROM PlanRevisions" in sql:
+                return []
+            if "FROM Tenants" in sql:
+                return []
+            raise AssertionError(f"Unexpected SQL: {sql}")
+
+    command = coordinator_command(
+        command_id="CMD-DAY-ALT",
+        idempotency_key="daily-plan:alt",
+        incident_id="INC-DAY-ALT",
+        agent_role="FULFILLMENT_RECOVERY_PLANNER",
+        command_type=LedgerCommandType.SAVE_PLAN_REVISION,
+        expected_plan_revision="rev07",
+        payload={
+            "tenant_name": "Altered isolated operating day",
+            "plan_id": "PLAN-ALT-DAY",
+            "revision": "rev07",
+            "status": "ACTIVE",
+            "source_event_id": "scheduler-message-1",
+            "source_publish_time": "2026-08-14T12:30:00Z",
+            "lots": [{
+                "lot_id": "LOT-ALT", "code": "LOT-ALT",
+                "produce_type": "Spinach", "hazard_status": "CLEAR_SAFE",
+                "total_cases": 12,
+            }],
+            "vehicles": [{
+                "vehicle_id": "VEHICLE-ALT", "name": "Vehicle Alt",
+                "max_capacity_cases": 20, "current_load_cases": 12,
+                "is_operational": True,
+            }],
+            "orders": [{
+                "order_id": "ORDER-ALT", "destination_agency_id": "AGENCY-ALT",
+                "destination_agency_name": "Agency Alt", "cases": 12,
+                "lot_id": "LOT-ALT", "assigned_vehicle_id": "VEHICLE-ALT",
+                "status": "SCHEDULED",
+            }],
+            "custody_nodes": [
+                {"node_id": "NODE-WH", "node_type": "WAREHOUSE",
+                 "name": "Warehouse", "on_hand_cases": 5},
+                {"node_id": "NODE-AGENCY", "node_type": "AGENCY",
+                 "name": "Agency", "on_hand_cases": 7},
+            ],
+            "custody_edges": [{
+                "edge_id": "EDGE-1", "source_node_id": "NODE-WH",
+                "target_node_id": "NODE-AGENCY", "lot_id": "LOT-ALT",
+                "case_count": 7, "is_sub_distribution": False,
+            }],
+        },
+    )
+    transaction = DailyTransaction(active_revision=None)
+    result = SpannerLedgerCommandExecutor(
+        FakeDatabase(transaction), allowed_tenant_ids={"audit-tenant"}
+    ).execute(command, IDENTITY)
+
+    assert result.receipt["status"] == "SUCCESS"
+    assert result.additional_mutations == 9
+    assert [item["table"] for item in transaction.inserts] == [
+        "Tenants", "PlanRevisions", "Lots", "Vehicles", "Orders",
+        "CustodyNodes", "CustodyEdges", "InboundEvents", "Receipts",
+    ]
+    assert transaction.updates == []
+
+
 def test_open_recall_preserves_existing_coordinator_child_incident():
     command = coordinator_command(
         command_id="CMD-OPEN-ALT",
@@ -180,6 +250,8 @@ def test_open_recall_preserves_existing_coordinator_child_incident():
             "incident_id": "INC-RECALL-ALT",
             "coordinator_id": "COORD-ALT-001",
             "lot_id": "LOT-ALT-908",
+            "source_event_id": "recall-message-alt",
+            "source_publish_time": "2026-08-14T15:00:00Z",
             "details": {"hazard": "ALTERED_TEST_HAZARD"},
         },
     )
@@ -188,8 +260,10 @@ def test_open_recall_preserves_existing_coordinator_child_incident():
         FakeDatabase(transaction),
         allowed_tenant_ids={"audit-tenant"},
     ).execute(command, IDENTITY)
-    assert result.additional_mutations == 2
-    assert [item["table"] for item in transaction.inserts] == ["Incidents", "Receipts"]
+    assert result.additional_mutations == 3
+    assert [item["table"] for item in transaction.inserts] == [
+        "Incidents", "InboundEvents", "Receipts"
+    ]
     assert transaction.updates[0][1]["children"] == (
         '["INC-TRUCK-ALT","INC-RECALL-ALT"]'
     )
@@ -200,16 +274,18 @@ def test_next_day_draft_atomically_persists_event_constraints_plan_and_coordinat
         def execute_sql(self, sql, params, param_types):
             if "idempotency_key" in sql:
                 return []
-            if "ORDER BY created_at DESC LIMIT 1" in sql:
-                return [("rev42",)]
+            if "AND plan_id = @plan_id" in sql:
+                return []
+            if "SELECT status FROM PlanRevisions" in sql:
+                return [("INVALIDATED_RECALL",)]
+            if "SELECT revision FROM PlanRevisions" in sql:
+                return []
             if "FROM MovementBarriers" in sql:
                 return [("BARRIER-ALT",)]
             if "FROM RecoveryShortfalls" in sql:
                 return [("SHORT-ALT",)]
             if "incident_type = 'DEADLINE_HOLD'" in sql:
                 return [('{"site_id":"SITE-X","unconfirmed_cases":3}',)]
-            if "AND plan_id = @plan_id" in sql:
-                return []
             raise AssertionError(f"Unexpected SQL: {sql}")
 
     command = coordinator_command(

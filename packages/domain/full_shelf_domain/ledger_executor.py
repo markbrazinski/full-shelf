@@ -93,9 +93,17 @@ class SpannerLedgerCommandExecutor:
                 )
 
             active_revision = self._active_revision(transaction, command.tenant_id)
+            expected_revision_matches = active_revision == command.expected_plan_revision
+            if (
+                command.command_type is LedgerCommandType.CREATE_NEXT_DAY_DRAFT
+                and command.expected_plan_revision is not None
+            ):
+                expected_revision_matches = self._revision_status(
+                    transaction, command.tenant_id, command.expected_plan_revision
+                ) == "INVALIDATED_RECALL"
             if (
                 command.expected_plan_revision is not None
-                and active_revision != command.expected_plan_revision
+                and not expected_revision_matches
                 and not (
                     command.command_type is LedgerCommandType.SAVE_PLAN_REVISION
                     and active_revision is None
@@ -197,6 +205,21 @@ class SpannerLedgerCommandExecutor:
         )
         return next((row[0] for row in rows), None)
 
+    @staticmethod
+    def _revision_status(
+        transaction: Any, tenant_id: str, revision: str
+    ) -> str | None:
+        rows = transaction.execute_sql(
+            "SELECT status FROM PlanRevisions WHERE tenant_id = @tenant_id "
+            "AND revision = @revision ORDER BY created_at DESC LIMIT 1",
+            params={"tenant_id": tenant_id, "revision": revision},
+            param_types={
+                "tenant_id": spanner.param_types.STRING,
+                "revision": spanner.param_types.STRING,
+            },
+        )
+        return next((row[0] for row in rows), None)
+
     def _apply(
         self,
         transaction: Any,
@@ -232,6 +255,48 @@ class SpannerLedgerCommandExecutor:
                 and payload.revision != active_revision
             ):
                 raise ValueError("ACTIVE_PLAN_REPLACEMENT_REQUIRES_REPAIR_COMMAND")
+            lot_ids = [lot.lot_id for lot in payload.lots]
+            vehicle_ids = [vehicle.vehicle_id for vehicle in payload.vehicles]
+            order_ids = [order.order_id for order in payload.orders]
+            node_ids = [node.node_id for node in payload.custody_nodes]
+            edge_ids = [edge.edge_id for edge in payload.custody_edges]
+            for values, error in (
+                (lot_ids, "DUPLICATE_LOT_ID"),
+                (vehicle_ids, "DUPLICATE_VEHICLE_ID"),
+                (order_ids, "DUPLICATE_ORDER_ID"),
+                (node_ids, "DUPLICATE_CUSTODY_NODE_ID"),
+                (edge_ids, "DUPLICATE_CUSTODY_EDGE_ID"),
+            ):
+                if len(values) != len(set(values)):
+                    raise ValueError(error)
+            for vehicle in payload.vehicles:
+                if vehicle.current_load_cases > vehicle.max_capacity_cases:
+                    raise ValueError("VEHICLE_LOAD_EXCEEDS_CAPACITY")
+            for order in payload.orders:
+                if order.lot_id not in lot_ids:
+                    raise ValueError("ORDER_LOT_NOT_DEFINED")
+                if (order.assigned_vehicle_id is not None
+                        and order.assigned_vehicle_id not in vehicle_ids):
+                    raise ValueError("ORDER_VEHICLE_NOT_DEFINED")
+            for edge in payload.custody_edges:
+                if edge.source_node_id not in node_ids or edge.target_node_id not in node_ids:
+                    raise ValueError("CUSTODY_EDGE_NODE_NOT_DEFINED")
+                if edge.lot_id not in lot_ids:
+                    raise ValueError("CUSTODY_EDGE_LOT_NOT_DEFINED")
+            tenant_exists = next(iter(transaction.execute_sql(
+                "SELECT tenant_id FROM Tenants WHERE tenant_id = @tenant_id",
+                params={"tenant_id": command.tenant_id},
+                param_types={"tenant_id": spanner.param_types.STRING},
+            )), None)
+            mutation_count = 0
+            if tenant_exists is None:
+                transaction.insert(
+                    table="Tenants",
+                    columns=["tenant_id", "name", "created_at"],
+                    values=[[command.tenant_id, payload.tenant_name,
+                             spanner.COMMIT_TIMESTAMP]],
+                )
+                mutation_count += 1
             transaction.insert(
                 table="PlanRevisions",
                 columns=["tenant_id", "plan_id", "revision", "status", "created_at"],
@@ -243,7 +308,61 @@ class SpannerLedgerCommandExecutor:
                     spanner.COMMIT_TIMESTAMP,
                 ]],
             )
-            return 1
+            transaction.insert(
+                table="Lots",
+                columns=["tenant_id", "lot_id", "code", "produce_type",
+                         "hazard_status", "total_cases", "created_at"],
+                values=[[command.tenant_id, lot.lot_id, lot.code, lot.produce_type,
+                         lot.hazard_status, lot.total_cases, spanner.COMMIT_TIMESTAMP]
+                        for lot in payload.lots],
+            )
+            transaction.insert(
+                table="Vehicles",
+                columns=["tenant_id", "vehicle_id", "name", "max_capacity_cases",
+                         "current_load_cases", "is_operational"],
+                values=[[command.tenant_id, vehicle.vehicle_id, vehicle.name,
+                         vehicle.max_capacity_cases, vehicle.current_load_cases,
+                         vehicle.is_operational] for vehicle in payload.vehicles],
+            )
+            transaction.insert(
+                table="Orders",
+                columns=["tenant_id", "plan_id", "revision", "order_id",
+                         "destination_agency_id", "destination_agency_name", "cases",
+                         "lot_id", "assigned_vehicle_id", "status"],
+                values=[[command.tenant_id, payload.plan_id, payload.revision,
+                         order.order_id, order.destination_agency_id,
+                         order.destination_agency_name, order.cases, order.lot_id,
+                         order.assigned_vehicle_id, order.status]
+                        for order in payload.orders],
+            )
+            transaction.insert(
+                table="CustodyNodes",
+                columns=["tenant_id", "node_id", "node_type", "name", "on_hand_cases"],
+                values=[[command.tenant_id, node.node_id, node.node_type, node.name,
+                         node.on_hand_cases] for node in payload.custody_nodes],
+            )
+            transaction.insert(
+                table="CustodyEdges",
+                columns=["tenant_id", "edge_id", "source_node_id", "target_node_id",
+                         "lot_id", "case_count", "is_sub_distribution"],
+                values=[[command.tenant_id, edge.edge_id, edge.source_node_id,
+                         edge.target_node_id, edge.lot_id, edge.case_count,
+                         edge.is_sub_distribution] for edge in payload.custody_edges],
+            )
+            transaction.insert(
+                table="InboundEvents",
+                columns=["tenant_id", "source_event_id", "event_type", "status",
+                         "payload", "occurred_at"],
+                values=[[command.tenant_id, payload.source_event_id,
+                         "PLAN_DAY_REQUESTED", "ACCEPTED",
+                         json.dumps({"source_publish_time": payload.source_publish_time,
+                                     "plan_id": payload.plan_id,
+                                     "revision": payload.revision}, sort_keys=True),
+                         spanner.COMMIT_TIMESTAMP]],
+            )
+            return mutation_count + 1 + len(payload.lots) + len(payload.vehicles) \
+                + len(payload.orders) + len(payload.custody_nodes) \
+                + len(payload.custody_edges) + 1
 
         if command.command_type is LedgerCommandType.APPLY_REPAIR_PLAN:
             raise ValueError("HUMAN_APPROVAL_REQUIRED")
@@ -568,6 +687,17 @@ class SpannerLedgerCommandExecutor:
                     "NONE",
                 ]],
             )
+            transaction.insert(
+                table="InboundEvents",
+                columns=["tenant_id", "source_event_id", "event_type", "status",
+                         "payload", "occurred_at"],
+                values=[[command.tenant_id, payload.source_event_id,
+                         "RECALL_NOTICE_RECEIVED", "ACCEPTED",
+                         json.dumps({"source_publish_time": payload.source_publish_time,
+                                     "incident_id": payload.incident_id,
+                                     "lot_id": payload.lot_id}, sort_keys=True),
+                         spanner.COMMIT_TIMESTAMP]],
+            )
             updated = transaction.execute_update(
                 "UPDATE Coordinators SET state = @state, child_incidents = @children, "
                 "updated_at = PENDING_COMMIT_TIMESTAMP() "
@@ -587,7 +717,7 @@ class SpannerLedgerCommandExecutor:
             )
             if updated != 1:
                 raise ValueError("COORDINATOR_UPDATE_PRECONDITION_FAILED")
-            return 2
+            return 3
 
         if command.command_type is LedgerCommandType.RECORD_ACKNOWLEDGMENT_HOLD:
             assert isinstance(payload, RecordAcknowledgmentHoldPayload)

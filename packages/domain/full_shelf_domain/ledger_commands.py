@@ -39,10 +39,53 @@ class PlanOrderPayload(StrictPayload):
     status: str = Field(min_length=1, max_length=32)
 
 
-class SavePlanRevisionPayload(StrictPayload):
+class OperatingLotPayload(StrictPayload):
+    lot_id: str = Field(min_length=1, max_length=64)
+    code: str = Field(min_length=1, max_length=64)
+    produce_type: str = Field(min_length=1, max_length=128)
+    hazard_status: str = Field(min_length=1, max_length=32)
+    total_cases: int = Field(ge=0)
+
+
+class OperatingVehiclePayload(StrictPayload):
+    vehicle_id: str = Field(min_length=1, max_length=64)
+    name: str = Field(min_length=1, max_length=128)
+    max_capacity_cases: int = Field(gt=0)
+    current_load_cases: int = Field(ge=0)
+    is_operational: bool
+
+
+class OperatingCustodyNodePayload(StrictPayload):
+    node_id: str = Field(min_length=1, max_length=64)
+    node_type: str = Field(min_length=1, max_length=32)
+    name: str = Field(min_length=1, max_length=128)
+    on_hand_cases: int = Field(ge=0)
+
+
+class OperatingCustodyEdgePayload(StrictPayload):
+    edge_id: str = Field(min_length=1, max_length=64)
+    source_node_id: str = Field(min_length=1, max_length=64)
+    target_node_id: str = Field(min_length=1, max_length=64)
+    lot_id: str = Field(min_length=1, max_length=64)
+    case_count: int = Field(ge=0)
+    is_sub_distribution: bool = False
+
+
+class OperatingPlanDefinition(StrictPayload):
+    tenant_name: str = Field(min_length=1, max_length=256)
     plan_id: str = Field(min_length=1, max_length=64)
-    revision: str = Field(min_length=1, max_length=32)
-    status: Literal["ACTIVE", "DRAFT_WITH_CONSTRAINTS"]
+    revision: Literal["rev07"]
+    status: Literal["ACTIVE"]
+    orders: list[PlanOrderPayload] = Field(min_length=1)
+    lots: list[OperatingLotPayload] = Field(min_length=1)
+    vehicles: list[OperatingVehiclePayload] = Field(min_length=1)
+    custody_nodes: list[OperatingCustodyNodePayload] = Field(min_length=1)
+    custody_edges: list[OperatingCustodyEdgePayload] = Field(min_length=1)
+
+
+class SavePlanRevisionPayload(OperatingPlanDefinition):
+    source_event_id: str = Field(min_length=1, max_length=256)
+    source_publish_time: str = Field(min_length=1, max_length=64)
 
 
 class ApplyRepairPlanPayload(StrictPayload):
@@ -119,6 +162,8 @@ class OpenRecallIncidentPayload(StrictPayload):
     incident_id: str = Field(min_length=1, max_length=64)
     coordinator_id: str = Field(min_length=1, max_length=64)
     lot_id: str = Field(min_length=1, max_length=64)
+    source_event_id: str = Field(min_length=1, max_length=256)
+    source_publish_time: str = Field(min_length=1, max_length=64)
     details: Dict[str, Any]
 
 
