@@ -102,6 +102,18 @@ class SpannerLedgerCommandExecutor:
                     transaction, command.tenant_id, command.expected_plan_revision
                 ) == "INVALIDATED_RECALL"
             if (
+                command.command_type in {
+                    LedgerCommandType.ALLOCATE_SAFE_STOCK,
+                    LedgerCommandType.RECORD_REFUSAL,
+                    LedgerCommandType.SET_INCIDENT_STATUS,
+                }
+                and active_revision is None
+                and command.expected_plan_revision is not None
+            ):
+                expected_revision_matches = self._revision_status(
+                    transaction, command.tenant_id, command.expected_plan_revision
+                ) == "INVALIDATED_RECALL"
+            if (
                 command.expected_plan_revision is not None
                 and not expected_revision_matches
                 and not (
@@ -337,9 +349,11 @@ class SpannerLedgerCommandExecutor:
             )
             transaction.insert(
                 table="CustodyNodes",
-                columns=["tenant_id", "node_id", "node_type", "name", "on_hand_cases"],
+                columns=["tenant_id", "node_id", "node_type", "name", "on_hand_cases",
+                         "acknowledgment_status"],
                 values=[[command.tenant_id, node.node_id, node.node_type, node.name,
-                         node.on_hand_cases] for node in payload.custody_nodes],
+                         node.on_hand_cases, node.acknowledgment_status]
+                        for node in payload.custody_nodes],
             )
             transaction.insert(
                 table="CustodyEdges",
@@ -446,6 +460,18 @@ class SpannerLedgerCommandExecutor:
                 raise ValueError("PERSISTED_PLAN_DIFF_MALFORMED") from exc
             if compute_plan_diff_hash(plan_diff) != approval[4]:
                 raise ValueError("PERSISTED_PLAN_DIFF_HASH_MISMATCH")
+            vehicle_rows = list(transaction.execute_sql(
+                "SELECT max_capacity_cases, current_load_cases, is_operational "
+                "FROM Vehicles WHERE tenant_id = @tenant_id AND vehicle_id = @vehicle_id",
+                params={"tenant_id": command.tenant_id,
+                        "vehicle_id": plan_diff.reroute_target_vehicle},
+                param_types={"tenant_id": spanner.param_types.STRING,
+                             "vehicle_id": spanner.param_types.STRING},
+            ))
+            if len(vehicle_rows) != 1 or not vehicle_rows[0][2]:
+                raise ValueError("SIGNED_REROUTE_VEHICLE_UNAVAILABLE")
+            if vehicle_rows[0][1] + plan_diff.reroute_cases > vehicle_rows[0][0]:
+                raise ValueError("SIGNED_REROUTE_EXCEEDS_CAPACITY")
             source_orders = list(transaction.execute_sql(
                 "SELECT order_id, destination_agency_id, destination_agency_name, "
                 "cases, lot_id, assigned_vehicle_id, status FROM Orders "
@@ -789,46 +815,56 @@ class SpannerLedgerCommandExecutor:
 
         if command.command_type is LedgerCommandType.CREATE_NEXT_DAY_DRAFT:
             assert isinstance(payload, CreateNextDayDraftPayload)
-            barrier = next(iter(transaction.execute_sql(
-                "SELECT barrier_id FROM MovementBarriers WHERE tenant_id = @tenant_id "
-                "AND lot_id = @lot_id AND status = 'ACTIVE' LIMIT 1",
-                params={"tenant_id": command.tenant_id, "lot_id": payload.excluded_lot_id},
-                param_types={"tenant_id": spanner.param_types.STRING,
-                             "lot_id": spanner.param_types.STRING},
-            )), None)
-            if barrier is None:
-                raise ValueError("ACTIVE_MOVEMENT_BARRIER_REQUIRED")
-            shortfall = next(iter(transaction.execute_sql(
-                "SELECT shortfall_id FROM RecoveryShortfalls WHERE tenant_id = @tenant_id "
-                "AND agency_id = @agency_id AND cases = @cases AND status = 'OPEN' LIMIT 1",
-                params={"tenant_id": command.tenant_id,
-                        "agency_id": payload.shortfall_agency_id,
-                        "cases": payload.shortfall_cases},
-                param_types={"tenant_id": spanner.param_types.STRING,
-                             "agency_id": spanner.param_types.STRING,
-                             "cases": spanner.param_types.INT64},
-            )), None)
-            if shortfall is None:
-                raise ValueError("OPEN_RECOVERY_SHORTFALL_REQUIRED")
-            hold_rows = transaction.execute_sql(
-                "SELECT details FROM Incidents WHERE tenant_id = @tenant_id "
-                "AND incident_type = 'DEADLINE_HOLD' "
-                "AND status = 'ACKNOWLEDGMENT_HOLD_ACTIVE'",
-                params={"tenant_id": command.tenant_id},
-                param_types={"tenant_id": spanner.param_types.STRING},
-            )
-            hold_matches = False
-            for row in hold_rows:
-                try:
-                    details = json.loads(row[0] or "{}")
-                except (TypeError, json.JSONDecodeError):
-                    continue
-                if (details.get("site_id") == payload.acknowledgment_site_id
-                        and details.get("unconfirmed_cases") == payload.unconfirmed_cases):
-                    hold_matches = True
-                    break
-            if not hold_matches:
-                raise ValueError("OPEN_ACKNOWLEDGMENT_HOLD_REQUIRED")
+            for barrier in payload.barriers:
+                found = next(iter(transaction.execute_sql(
+                    "SELECT barrier_id FROM MovementBarriers WHERE tenant_id = @tenant_id "
+                    "AND barrier_id = @barrier_id AND lot_id = @lot_id "
+                    "AND status = 'ACTIVE' LIMIT 1",
+                    params={"tenant_id": command.tenant_id,
+                            "barrier_id": barrier.barrier_id, "lot_id": barrier.lot_id},
+                    param_types={"tenant_id": spanner.param_types.STRING,
+                                 "barrier_id": spanner.param_types.STRING,
+                                 "lot_id": spanner.param_types.STRING},
+                )), None)
+                if found is None:
+                    raise ValueError("ACTIVE_MOVEMENT_BARRIER_REQUIRED")
+            for shortfall in payload.shortfalls:
+                found = next(iter(transaction.execute_sql(
+                    "SELECT shortfall_id FROM RecoveryShortfalls WHERE tenant_id = @tenant_id "
+                    "AND shortfall_id = @shortfall_id AND agency_id = @agency_id "
+                    "AND cases = @cases AND status = 'OPEN' LIMIT 1",
+                    params={"tenant_id": command.tenant_id,
+                            "shortfall_id": shortfall.shortfall_id,
+                            "agency_id": shortfall.agency_id, "cases": shortfall.cases},
+                    param_types={"tenant_id": spanner.param_types.STRING,
+                                 "shortfall_id": spanner.param_types.STRING,
+                                 "agency_id": spanner.param_types.STRING,
+                                 "cases": spanner.param_types.INT64},
+                )), None)
+                if found is None:
+                    raise ValueError("OPEN_RECOVERY_SHORTFALL_REQUIRED")
+            for hold in payload.acknowledgment_holds:
+                hold_rows = transaction.execute_sql(
+                    "SELECT details FROM Incidents WHERE tenant_id = @tenant_id "
+                    "AND incident_id = @hold_incident_id AND incident_type = 'DEADLINE_HOLD' "
+                    "AND status = 'ACKNOWLEDGMENT_HOLD_ACTIVE'",
+                    params={"tenant_id": command.tenant_id,
+                            "hold_incident_id": hold.hold_incident_id},
+                    param_types={"tenant_id": spanner.param_types.STRING,
+                                 "hold_incident_id": spanner.param_types.STRING},
+                )
+                hold_matches = False
+                for row in hold_rows:
+                    try:
+                        details = json.loads(row[0] or "{}")
+                    except (TypeError, json.JSONDecodeError):
+                        continue
+                    if (details.get("site_id") == hold.site_id
+                            and details.get("unconfirmed_cases") == hold.unconfirmed_cases):
+                        hold_matches = True
+                        break
+                if not hold_matches:
+                    raise ValueError("OPEN_ACKNOWLEDGMENT_HOLD_REQUIRED")
 
             existing_plan = next(iter(transaction.execute_sql(
                 "SELECT status FROM PlanRevisions WHERE tenant_id = @tenant_id "
@@ -850,21 +886,38 @@ class SpannerLedgerCommandExecutor:
                     values=[[command.tenant_id, payload.plan_id, payload.revision,
                              payload.status, spanner.COMMIT_TIMESTAMP]],
                 )
-                constraints = [
-                    [command.tenant_id, payload.plan_id, payload.revision,
-                     "LOT_MOVEMENT_BARRIER", payload.excluded_lot_id,
-                     json.dumps({"barrier_id": barrier[0], "status": "ACTIVE"}, sort_keys=True),
-                     1, spanner.COMMIT_TIMESTAMP],
-                    [command.tenant_id, payload.plan_id, payload.revision,
-                     "RECOVERY_PRIORITY", payload.shortfall_agency_id,
-                     json.dumps({"cases": payload.shortfall_cases, "status": "OPEN"}, sort_keys=True),
-                     2, spanner.COMMIT_TIMESTAMP],
-                    [command.tenant_id, payload.plan_id, payload.revision,
-                     "ACKNOWLEDGMENT_HOLD", payload.acknowledgment_site_id,
-                     json.dumps({"unconfirmed_cases": payload.unconfirmed_cases,
-                                 "status": "ACKNOWLEDGMENT_HOLD_ACTIVE"}, sort_keys=True),
-                     3, spanner.COMMIT_TIMESTAMP],
-                ]
+                constraints = []
+                priority = 1
+                for barrier in payload.barriers:
+                    constraints.append([
+                        command.tenant_id, payload.plan_id, payload.revision,
+                        "LOT_MOVEMENT_BARRIER", barrier.lot_id,
+                        json.dumps({"barrier_id": barrier.barrier_id,
+                                    "status": "ACTIVE"}, sort_keys=True),
+                        priority, spanner.COMMIT_TIMESTAMP,
+                    ])
+                    priority += 1
+                for shortfall in payload.shortfalls:
+                    constraints.append([
+                        command.tenant_id, payload.plan_id, payload.revision,
+                        "RECOVERY_PRIORITY", shortfall.agency_id,
+                        json.dumps({"shortfall_id": shortfall.shortfall_id,
+                                    "cases": shortfall.cases, "status": "OPEN"},
+                                   sort_keys=True),
+                        priority, spanner.COMMIT_TIMESTAMP,
+                    ])
+                    priority += 1
+                for hold in payload.acknowledgment_holds:
+                    constraints.append([
+                        command.tenant_id, payload.plan_id, payload.revision,
+                        "ACKNOWLEDGMENT_HOLD", hold.site_id,
+                        json.dumps({"hold_incident_id": hold.hold_incident_id,
+                                    "unconfirmed_cases": hold.unconfirmed_cases,
+                                    "status": "ACKNOWLEDGMENT_HOLD_ACTIVE"},
+                                   sort_keys=True),
+                        priority, spanner.COMMIT_TIMESTAMP,
+                    ])
+                    priority += 1
                 transaction.insert(
                     table="PlanConstraints",
                     columns=["tenant_id", "plan_id", "revision", "constraint_type",
@@ -889,7 +942,7 @@ class SpannerLedgerCommandExecutor:
                              "DRAFT_WITH_CONSTRAINTS", "HUMAN_APPROVAL_REQUIRED",
                              payload.revision, "[]", spanner.COMMIT_TIMESTAMP]],
                 )
-                mutation_count = 6
+                mutation_count = 3 + len(constraints)
             return mutation_count
 
         if command.command_type is LedgerCommandType.SET_INCIDENT_STATUS:

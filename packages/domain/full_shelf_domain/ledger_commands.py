@@ -60,6 +60,7 @@ class OperatingCustodyNodePayload(StrictPayload):
     node_type: str = Field(min_length=1, max_length=32)
     name: str = Field(min_length=1, max_length=128)
     on_hand_cases: int = Field(ge=0)
+    acknowledgment_status: Literal["CONFIRMED", "UNCONFIRMED", "TOPOLOGY_ONLY"]
 
 
 class OperatingCustodyEdgePayload(StrictPayload):
@@ -180,6 +181,23 @@ class RecordAcknowledgmentHoldPayload(StrictPayload):
     delivery_audience: str = Field(min_length=1, max_length=512)
 
 
+class NextDayBarrierPayload(StrictPayload):
+    barrier_id: str = Field(min_length=1, max_length=64)
+    lot_id: str = Field(min_length=1, max_length=64)
+
+
+class NextDayShortfallPayload(StrictPayload):
+    shortfall_id: str = Field(min_length=1, max_length=64)
+    agency_id: str = Field(min_length=1, max_length=64)
+    cases: int = Field(gt=0)
+
+
+class NextDayAcknowledgmentHoldPayload(StrictPayload):
+    hold_incident_id: str = Field(min_length=1, max_length=64)
+    site_id: str = Field(min_length=1, max_length=64)
+    unconfirmed_cases: int = Field(gt=0)
+
+
 class CreateNextDayDraftPayload(StrictPayload):
     source_event_id: str = Field(min_length=1, max_length=256)
     source_publish_time: str = Field(min_length=1, max_length=64)
@@ -188,11 +206,9 @@ class CreateNextDayDraftPayload(StrictPayload):
     revision: Literal["rev01"]
     status: Literal["DRAFT_WITH_CONSTRAINTS"]
     coordinator_id: str = Field(min_length=1, max_length=64)
-    excluded_lot_id: str = Field(min_length=1, max_length=64)
-    shortfall_agency_id: str = Field(min_length=1, max_length=64)
-    shortfall_cases: int = Field(gt=0)
-    acknowledgment_site_id: str = Field(min_length=1, max_length=64)
-    unconfirmed_cases: int = Field(gt=0)
+    barriers: list[NextDayBarrierPayload] = Field(min_length=1)
+    shortfalls: list[NextDayShortfallPayload] = Field(min_length=1)
+    acknowledgment_holds: list[NextDayAcknowledgmentHoldPayload] = Field(min_length=1)
     human_approval_required: Literal[True]
 
 

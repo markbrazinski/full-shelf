@@ -14,21 +14,21 @@ import main as orchestrator_main
 
 
 CANONICAL_ROWS = [
-    ("NODE-WAREHOUSE", "WAREHOUSE", "Main Warehouse", 24, "NODE-AGENCY-01", "AGENCY", "Agency 01", 10, 1),
-    ("NODE-WAREHOUSE", "WAREHOUSE", "Main Warehouse", 24, "NODE-RESCUE", "DIRECT_RESCUE", "Rescue", 12, 1),
-    ("NODE-WAREHOUSE", "WAREHOUSE", "Main Warehouse", 24, "NODE-STAGING-O203", "STAGING", "Order O203", 20, 1),
-    ("NODE-WAREHOUSE", "WAREHOUSE", "Main Warehouse", 24, "NODE-TRUCK-2", "VEHICLE", "Order O202", 22, 1),
-    ("NODE-WAREHOUSE", "WAREHOUSE", "Main Warehouse", 24, "NODE-SITE-01", "DOWNSTREAM_SITE", "Site 01", 8, 2),
+    ("NODE-WAREHOUSE", "WAREHOUSE", "Main Warehouse", 24, "CONFIRMED", "NODE-AGENCY-01", "AGENCY", "Agency 01", 10, "CONFIRMED", 1),
+    ("NODE-WAREHOUSE", "WAREHOUSE", "Main Warehouse", 24, "CONFIRMED", "NODE-RESCUE", "DIRECT_RESCUE", "Rescue", 12, "CONFIRMED", 1),
+    ("NODE-WAREHOUSE", "WAREHOUSE", "Main Warehouse", 24, "CONFIRMED", "NODE-STAGING-O203", "STAGING", "Order O203", 20, "CONFIRMED", 1),
+    ("NODE-WAREHOUSE", "WAREHOUSE", "Main Warehouse", 24, "CONFIRMED", "NODE-TRUCK-2", "VEHICLE", "Order O202", 22, "CONFIRMED", 1),
+    ("NODE-WAREHOUSE", "WAREHOUSE", "Main Warehouse", 24, "CONFIRMED", "NODE-SITE-01", "DOWNSTREAM_SITE", "Site 01", 8, "UNCONFIRMED", 2),
 ]
 
 ALTERED_ROWS = [
-    ("ALT-WH", "WAREHOUSE", "Alternate Hub", 13, "ALT-MOVE-1", "OPERATIONAL_MOVEMENT", "Movement 701", 0, 1),
-    ("ALT-WH", "WAREHOUSE", "Alternate Hub", 13, "ALT-RESCUE", "DIRECT_RESCUE", "Rescue 9", 7, 1),
-    ("ALT-WH", "WAREHOUSE", "Alternate Hub", 13, "ALT-ORDER-701", "ORDER", "Order 701", 0, 2),
-    ("ALT-WH", "WAREHOUSE", "Alternate Hub", 13, "ALT-ORDER-702", "ORDER", "Order 702", 0, 2),
-    ("ALT-WH", "WAREHOUSE", "Alternate Hub", 13, "ALT-AGENCY-77", "AGENCY", "Agency 77", 17, 3),
-    ("ALT-WH", "WAREHOUSE", "Alternate Hub", 13, "ALT-AGENCY-88", "AGENCY", "Agency 88", 9, 3),
-    ("ALT-WH", "WAREHOUSE", "Alternate Hub", 13, "ALT-SITE-77", "DOWNSTREAM_SITE", "Site 77", 5, 4),
+    ("ALT-WH", "WAREHOUSE", "Alternate Hub", 13, "CONFIRMED", "ALT-MOVE-1", "OPERATIONAL_MOVEMENT", "Movement 701", 0, "TOPOLOGY_ONLY", 1),
+    ("ALT-WH", "WAREHOUSE", "Alternate Hub", 13, "CONFIRMED", "ALT-RESCUE", "DIRECT_RESCUE", "Rescue 9", 7, "CONFIRMED", 1),
+    ("ALT-WH", "WAREHOUSE", "Alternate Hub", 13, "CONFIRMED", "ALT-ORDER-701", "ORDER", "Order 701", 0, "TOPOLOGY_ONLY", 2),
+    ("ALT-WH", "WAREHOUSE", "Alternate Hub", 13, "CONFIRMED", "ALT-ORDER-702", "ORDER", "Order 702", 0, "TOPOLOGY_ONLY", 2),
+    ("ALT-WH", "WAREHOUSE", "Alternate Hub", 13, "CONFIRMED", "ALT-AGENCY-77", "AGENCY", "Agency 77", 17, "CONFIRMED", 3),
+    ("ALT-WH", "WAREHOUSE", "Alternate Hub", 13, "CONFIRMED", "ALT-AGENCY-88", "AGENCY", "Agency 88", 9, "CONFIRMED", 3),
+    ("ALT-WH", "WAREHOUSE", "Alternate Hub", 13, "CONFIRMED", "ALT-SITE-77", "DOWNSTREAM_SITE", "Site 77", 5, "UNCONFIRMED", 4),
 ]
 
 
@@ -59,6 +59,8 @@ def test_canonical_query_is_parameterized_multihop_gql_and_reconciles_96():
     }
     assert result["unique_current_cases"] == 96
     assert result["max_path_depth"] == 2
+    assert result["confirmed_cases"] == 88
+    assert result["unconfirmed_cases"] == 8
     site = next(node for node in result["current_positions"] if node["node_id"] == "NODE-SITE-01")
     assert site["path_depth"] == 2
     assert result["intermediate_subtotals_readded"] is False
@@ -101,7 +103,10 @@ def test_altered_endpoint_uses_only_configured_audit_database():
         patch.object(orchestrator_main, "verify_judge_key"),
         patch.object(orchestrator_main, "get_spanner_database", return_value=db) as get_db,
     ):
-        response = client.get("/api/v1/orchestrator/custody/graph?scenario=altered")
+        response = client.get(
+            "/api/v1/orchestrator/custody/graph"
+            "?tenant_id=wp8-altered-audit&lot_id=ALT-LOT-9001"
+        )
 
     assert response.status_code == 200
     assert response.json()["lot_id"] == "ALT-LOT-9001"

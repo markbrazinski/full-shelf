@@ -202,7 +202,8 @@ CREATE TABLE CustodyNodes (
   node_id STRING(64) NOT NULL,
   node_type STRING(32) NOT NULL,
   name STRING(128) NOT NULL,
-  on_hand_cases INT64 NOT NULL
+  on_hand_cases INT64 NOT NULL,
+  acknowledgment_status STRING(32) NOT NULL
 ) PRIMARY KEY (tenant_id, node_id),
   INTERLEAVE IN PARENT Tenants ON DELETE CASCADE;
 
@@ -223,7 +224,7 @@ CREATE OR REPLACE PROPERTY GRAPH CustodyGraph
     CustodyNodes
       KEY (tenant_id, node_id)
       LABEL Node
-      PROPERTIES (tenant_id, node_id, node_type, name, on_hand_cases)
+      PROPERTIES (tenant_id, node_id, node_type, name, on_hand_cases, acknowledgment_status)
   )
   EDGE TABLES (
     CustodyEdges

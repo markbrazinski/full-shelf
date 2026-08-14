@@ -47,8 +47,8 @@ class NodeType(str, Enum):
 
 
 class Lot(BaseModel):
-    lot_id: str  # "LTC-4471" or "LTC-5090"
-    code: str  # "LTC-4471" or "LTC-5090"
+    lot_id: str
+    code: str
     produce_type: str = "Romaine Lettuce"
     hazard_status: HazardStatus = HazardStatus.SAFE
     hazard_details: Optional[str] = None

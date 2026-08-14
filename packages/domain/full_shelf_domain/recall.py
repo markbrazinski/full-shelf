@@ -6,6 +6,7 @@ from typing import Dict, Any, Optional, List
 import httpx
 
 from google.cloud import pubsub_v1, spanner, tasks_v2
+from google.api_core.exceptions import AlreadyExists
 from full_shelf_observability import build_traceparent, generate_span_id, generate_trace_id
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -383,10 +384,19 @@ def schedule_site01_deadline_task(
         }
     }
 
-    created_task = client.create_task(request={"parent": parent, "task": task})
+    try:
+        created_task = client.create_task(request={"parent": parent, "task": task})
+        created_task_name = created_task.name
+        status = "SCHEDULED"
+    except AlreadyExists:
+        # The deterministic task name makes Pub/Sub redelivery safe. Cloud Tasks
+        # retains de-duplicated names after execution, so an existing name is the
+        # authoritative indication that the same escalation was already scheduled.
+        created_task_name = task_name
+        status = "ALREADY_SCHEDULED"
     return {
-        "status": "SCHEDULED",
-        "task_name": created_task.name,
+        "status": status,
+        "task_name": created_task_name,
         "queue": parent,
         "target_url": task["http_request"]["url"],
         "oidc_audience": audience,

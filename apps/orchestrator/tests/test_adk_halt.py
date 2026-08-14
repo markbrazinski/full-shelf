@@ -52,13 +52,11 @@ def successful_extraction(correlation_id):
 
 
 def test_hero_loop_model_failure_halts_before_ledger(monkeypatch):
-    monkeypatch.setattr(orchestrator, "verify_judge_key", lambda value: None)
-    monkeypatch.setattr(orchestrator, "generate_trace_id", lambda: "corr-hero-fail")
     monkeypatch.setattr(orchestrator, "get_spanner_database", lambda database_id=None: object())
     monkeypatch.setattr(
         orchestrator,
         "inspect_recall_notice_with_model_armor",
-        lambda text: approved_screening("armor-corr"),
+        lambda text, correlation_id: approved_screening(correlation_id),
     )
     monkeypatch.setattr(
         orchestrator,
@@ -71,7 +69,12 @@ def test_hero_loop_model_failure_halts_before_ledger(monkeypatch):
         lambda **kwargs: (_ for _ in ()).throw(AssertionError("ledger called after ADK failure")),
     )
 
-    result = orchestrator.execute_hero_loop(x_api_key="test")
+    result = orchestrator._execute_managed_recall_event(
+        tenant_id="east-bay-food-bank", coordinator_id="COORD-X",
+        incident_id="INC-X", recalled_lot_id="ALT-8842", notice_text="notice",
+        source_event_id="message-x", source_publish_time="2026-08-14T00:00:00Z",
+        active_revision="rev08", trace_id="corr-hero-fail",
+    )
     assert result["hero_loop_status"] == "HALTED_FOR_MANUAL_REVIEW"
     assert result["gemini_extraction"]["downstream_allowed"] is False
 

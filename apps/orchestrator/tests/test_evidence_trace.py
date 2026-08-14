@@ -23,7 +23,7 @@ def _evidence_database():
     now = datetime(2026, 8, 14, 2, 40, tzinfo=timezone.utc)
     snapshot.execute_sql.side_effect = [
         [("rev08",)],
-        [("PARTIALLY_CONTAINED", "PARTIALLY_CONTAINED")],
+        [("INC-RECALL-01", "PARTIALLY_CONTAINED", "PARTIALLY_CONTAINED", "LTC-4471")],
         [(42,)],
         [("RCT-LIVE", "CMD-LIVE", "RECORD_ACKNOWLEDGMENT_HOLD", "SUCCESS", 2,
           TRACE_ID, "orchestrator@example.com", now)],

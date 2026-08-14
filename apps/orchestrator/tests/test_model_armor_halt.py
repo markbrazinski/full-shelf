@@ -9,40 +9,48 @@ spec.loader.exec_module(orchestrator)
 
 
 def test_model_armor_failure_halts_before_gemini_or_mutation(monkeypatch):
-    monkeypatch.setattr(orchestrator, "verify_judge_key", lambda value: None)
     monkeypatch.setattr(orchestrator, "get_spanner_database", lambda database_id=None: object())
-    monkeypatch.setattr(orchestrator, "inspect_recall_notice_with_model_armor", lambda text: {
+    monkeypatch.setattr(orchestrator, "inspect_recall_notice_with_model_armor", lambda text, correlation_id: {
         "status": "SERVICE_UNAVAILABLE", "safety_verdict": "BLOCKED_API_FAILURE",
         "managed_operation": "sanitizeUserPrompt",
     })
     monkeypatch.setattr(
         orchestrator, "extract_recall_entities_with_gemini_35",
-        lambda text: (_ for _ in ()).throw(AssertionError("Gemini called after Armor failure")),
+        lambda text, correlation_id: (_ for _ in ()).throw(AssertionError("Gemini called after Armor failure")),
     )
     monkeypatch.setattr(
         orchestrator, "execute_ledger_command",
         lambda **kwargs: (_ for _ in ()).throw(AssertionError("mutation called after Armor failure")),
     )
-    result = orchestrator.execute_hero_loop(x_api_key="test")
+    result = orchestrator._execute_managed_recall_event(
+        tenant_id="east-bay-food-bank", coordinator_id="COORD-X",
+        incident_id="INC-X", recalled_lot_id="LOT-X", notice_text="notice",
+        source_event_id="message-x", source_publish_time="2026-08-14T00:00:00Z",
+        active_revision="rev08", trace_id="0123456789abcdef0123456789abcdef",
+    )
     assert result["hero_loop_status"] == "HALTED_BY_MODEL_ARMOR_SERVICE_FAILURE"
 
 
 def test_model_armor_match_halts_before_gemini_or_mutation(monkeypatch):
-    monkeypatch.setattr(orchestrator, "verify_judge_key", lambda value: None)
     monkeypatch.setattr(orchestrator, "get_spanner_database", lambda database_id=None: object())
-    monkeypatch.setattr(orchestrator, "inspect_recall_notice_with_model_armor", lambda text: {
+    monkeypatch.setattr(orchestrator, "inspect_recall_notice_with_model_armor", lambda text, correlation_id: {
         "status": "BLOCKED", "safety_verdict": "FAILED_SAFETY_SCREENING",
         "managed_operation": "sanitizeUserPrompt",
     })
     monkeypatch.setattr(
         orchestrator, "extract_recall_entities_with_gemini_35",
-        lambda text: (_ for _ in ()).throw(AssertionError("Gemini called after Armor match")),
+        lambda text, correlation_id: (_ for _ in ()).throw(AssertionError("Gemini called after Armor match")),
     )
     monkeypatch.setattr(
         orchestrator, "execute_ledger_command",
         lambda **kwargs: (_ for _ in ()).throw(AssertionError("mutation called after Armor match")),
     )
-    result = orchestrator.execute_hero_loop(x_api_key="test")
+    result = orchestrator._execute_managed_recall_event(
+        tenant_id="east-bay-food-bank", coordinator_id="COORD-X",
+        incident_id="INC-X", recalled_lot_id="LOT-X", notice_text="notice",
+        source_event_id="message-x", source_publish_time="2026-08-14T00:00:00Z",
+        active_revision="rev08", trace_id="0123456789abcdef0123456789abcdef",
+    )
     assert result["hero_loop_status"] == "HALTED_BY_MODEL_ARMOR_SAFETY_MATCH"
 
 

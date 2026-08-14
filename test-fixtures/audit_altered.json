@@ -1,0 +1,53 @@
+{
+  "tenant_id": "audit-altered-20260814",
+  "operating_plan": {
+    "tenant_name": "Full Shelf altered isolated audit",
+    "plan_id": "PLAN-AUDIT-ALTERED",
+    "revision": "rev07",
+    "status": "ACTIVE",
+    "lots": [
+      {"lot_id": "ALT-8842", "code": "ALT-8842", "produce_type": "Baby Spinach", "hazard_status": "RECALLED", "total_cases": 51},
+      {"lot_id": "SAFE-9200", "code": "SAFE-9200", "produce_type": "Baby Spinach", "hazard_status": "CLEAR_SAFE", "total_cases": 23}
+    ],
+    "vehicles": [
+      {"vehicle_id": "VAN-ALPHA", "name": "Van Alpha", "max_capacity_cases": 50, "current_load_cases": 34, "is_operational": true},
+      {"vehicle_id": "VAN-BRAVO", "name": "Van Bravo", "max_capacity_cases": 44, "current_load_cases": 19, "is_operational": true}
+    ],
+    "orders": [
+      {"order_id": "A701", "destination_agency_id": "AGENCY-77", "destination_agency_name": "Agency 77", "cases": 9, "lot_id": "ALT-8842", "assigned_vehicle_id": "VAN-ALPHA", "status": "SCHEDULED"},
+      {"order_id": "A702", "destination_agency_id": "AGENCY-88", "destination_agency_name": "Agency 88", "cases": 17, "lot_id": "ALT-8842", "assigned_vehicle_id": "VAN-ALPHA", "status": "SCHEDULED"},
+      {"order_id": "A703", "destination_agency_id": "AGENCY-99", "destination_agency_name": "Agency 99", "cases": 8, "lot_id": "ALT-8842", "assigned_vehicle_id": "VAN-ALPHA", "status": "SCHEDULED"},
+      {"order_id": "A704", "destination_agency_id": "AGENCY-55", "destination_agency_name": "Agency 55", "cases": 5, "lot_id": "SAFE-9200", "assigned_vehicle_id": "VAN-BRAVO", "status": "SCHEDULED"}
+    ],
+    "custody_nodes": [
+      {"node_id": "ALT-WH", "node_type": "WAREHOUSE", "name": "Alternate Hub", "on_hand_cases": 13, "acknowledgment_status": "CONFIRMED"},
+      {"node_id": "ALT-MOVE-1", "node_type": "OPERATIONAL_MOVEMENT", "name": "Movement 701/702", "on_hand_cases": 0, "acknowledgment_status": "TOPOLOGY_ONLY"},
+      {"node_id": "ALT-ORDER-701", "node_type": "ORDER", "name": "Order 701", "on_hand_cases": 0, "acknowledgment_status": "TOPOLOGY_ONLY"},
+      {"node_id": "ALT-ORDER-702", "node_type": "ORDER", "name": "Order 702", "on_hand_cases": 0, "acknowledgment_status": "TOPOLOGY_ONLY"},
+      {"node_id": "ALT-AGENCY-77", "node_type": "AGENCY", "name": "Agency 77", "on_hand_cases": 17, "acknowledgment_status": "CONFIRMED"},
+      {"node_id": "ALT-SITE-77", "node_type": "DOWNSTREAM_SITE", "name": "Site 77", "on_hand_cases": 5, "acknowledgment_status": "UNCONFIRMED"},
+      {"node_id": "ALT-AGENCY-88", "node_type": "AGENCY", "name": "Agency 88", "on_hand_cases": 9, "acknowledgment_status": "CONFIRMED"},
+      {"node_id": "ALT-RESCUE", "node_type": "DIRECT_RESCUE", "name": "Rescue 9", "on_hand_cases": 7, "acknowledgment_status": "CONFIRMED"}
+    ],
+    "custody_edges": [
+      {"edge_id": "ALT-E01", "source_node_id": "ALT-WH", "target_node_id": "ALT-MOVE-1", "lot_id": "ALT-8842", "case_count": 31, "is_sub_distribution": false},
+      {"edge_id": "ALT-E02", "source_node_id": "ALT-MOVE-1", "target_node_id": "ALT-ORDER-701", "lot_id": "ALT-8842", "case_count": 22, "is_sub_distribution": false},
+      {"edge_id": "ALT-E03", "source_node_id": "ALT-ORDER-701", "target_node_id": "ALT-AGENCY-77", "lot_id": "ALT-8842", "case_count": 22, "is_sub_distribution": false},
+      {"edge_id": "ALT-E04", "source_node_id": "ALT-AGENCY-77", "target_node_id": "ALT-SITE-77", "lot_id": "ALT-8842", "case_count": 5, "is_sub_distribution": true},
+      {"edge_id": "ALT-E05", "source_node_id": "ALT-MOVE-1", "target_node_id": "ALT-ORDER-702", "lot_id": "ALT-8842", "case_count": 9, "is_sub_distribution": false},
+      {"edge_id": "ALT-E06", "source_node_id": "ALT-ORDER-702", "target_node_id": "ALT-AGENCY-88", "lot_id": "ALT-8842", "case_count": 9, "is_sub_distribution": false},
+      {"edge_id": "ALT-E07", "source_node_id": "ALT-WH", "target_node_id": "ALT-RESCUE", "lot_id": "ALT-8842", "case_count": 7, "is_sub_distribution": false}
+    ]
+  },
+  "approval": {
+    "incident_id": "INC-TRUCK-ALTERED-AUDIT",
+    "approval_id": "APP-ALTERED-AUDIT",
+    "plan_diff": {"reroute_order_id": "A702", "reroute_cases": 17, "reroute_target_vehicle": "VAN-BRAVO", "pickup_order_id": "A703", "pickup_cases": 8}
+  },
+  "coordinator": {"coordinator_id": "COORD-ALTERED-AUDIT", "checkpoint": "CHK-REV08-WAIT", "incident_id": "INC-TRUCK-ALTERED-AUDIT"},
+  "recall": {
+    "incident_id": "INC-RECALL-ALTERED-AUDIT",
+    "lot_id": "ALT-8842",
+    "notice_text": "REPRESENTATIVE DEMO NOTICE — Supplier Safety Bulletin SB-8842. Recall lot ALT-8842, product Baby Spinach, hazard Listeria monocytogenes. Action required: PAUSE_DISTRIBUTION_AND_QUARANTINE."
+  }
+}

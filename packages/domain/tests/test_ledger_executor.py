@@ -48,6 +48,8 @@ class FakeTransaction:
             return [(self.coordinator_children,)]
         if "FROM Orders" in sql:
             return self.source_orders
+        if "FROM Vehicles" in sql:
+            return [(60, 36, True)]
         raise AssertionError(f"Unexpected SQL: {sql}")
 
     def insert(self, **kwargs):
@@ -215,9 +217,11 @@ def test_daily_scheduler_command_atomically_initializes_isolated_operating_plan(
             }],
             "custody_nodes": [
                 {"node_id": "NODE-WH", "node_type": "WAREHOUSE",
-                 "name": "Warehouse", "on_hand_cases": 5},
+                 "name": "Warehouse", "on_hand_cases": 5,
+                 "acknowledgment_status": "CONFIRMED"},
                 {"node_id": "NODE-AGENCY", "node_type": "AGENCY",
-                 "name": "Agency", "on_hand_cases": 7},
+                 "name": "Agency", "on_hand_cases": 7,
+                 "acknowledgment_status": "CONFIRMED"},
             ],
             "custody_edges": [{
                 "edge_id": "EDGE-1", "source_node_id": "NODE-WH",
@@ -301,11 +305,11 @@ def test_next_day_draft_atomically_persists_event_constraints_plan_and_coordinat
             "revision": "rev01",
             "status": "DRAFT_WITH_CONSTRAINTS",
             "coordinator_id": "COORD-ALT-NEXT",
-            "excluded_lot_id": "LOT-ALT-908",
-            "shortfall_agency_id": "AG-X",
-            "shortfall_cases": 9,
-            "acknowledgment_site_id": "SITE-X",
-            "unconfirmed_cases": 3,
+            "barriers": [{"barrier_id": "BARRIER-ALT", "lot_id": "LOT-ALT-908"}],
+            "shortfalls": [{"shortfall_id": "SHORT-ALT", "agency_id": "AG-X",
+                            "cases": 9}],
+            "acknowledgment_holds": [{"hold_incident_id": "HOLD-ALT",
+                                       "site_id": "SITE-X", "unconfirmed_cases": 3}],
             "human_approval_required": True,
         },
     )

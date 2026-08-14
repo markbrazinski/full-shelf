@@ -182,6 +182,13 @@ class RecallArmorPreflightRequest(BaseModel):
     notice_text: str = Field(min_length=1, max_length=20000)
 
 
+class RecallTriggerRequest(BaseModel):
+    coordinator_id: str = Field(min_length=1, max_length=64)
+    incident_id: str = Field(min_length=1, max_length=64)
+    lot_id: str = Field(min_length=1, max_length=64)
+    notice_text: str = Field(min_length=1, max_length=20000)
+
+
 class PersistWaitingCoordinatorRequest(BaseModel):
     coordinator_id: str = Field(min_length=1, max_length=64)
     incident_id: str = Field(min_length=1, max_length=64)
@@ -299,10 +306,12 @@ RETURN
   src.node_type AS root_node_type,
   src.name AS root_name,
   src.on_hand_cases AS root_cases,
+  src.acknowledgment_status AS root_acknowledgment_status,
   dst.node_id AS node_id,
   dst.node_type AS node_type,
   dst.name AS node_name,
   dst.on_hand_cases AS node_cases,
+  dst.acknowledgment_status AS node_acknowledgment_status,
   ARRAY_LENGTH(e) AS path_depth
 ORDER BY path_depth, node_id
 """.strip()
@@ -333,29 +342,33 @@ def _run_managed_custody_graph(db, *, tenant_id: str, lot_id: str) -> Dict[str, 
         "node_type": rows[0][1],
         "name": rows[0][2],
         "on_hand_cases": rows[0][3],
+        "acknowledgment_status": rows[0][4],
         "path_depth": 0,
     }
     nodes = {root["node_id"]: root}
     paths = []
     for row in rows:
-        if row[0] != root["node_id"] or row[3] != root["on_hand_cases"]:
+        if (row[0] != root["node_id"] or row[3] != root["on_hand_cases"]
+                or row[4] != root["acknowledgment_status"]):
             raise ValueError("INCONSISTENT_GRAPH_ROOT")
         node = {
-            "node_id": row[4],
-            "node_type": row[5],
-            "name": row[6],
-            "on_hand_cases": row[7],
-            "path_depth": row[8],
+            "node_id": row[5],
+            "node_type": row[6],
+            "name": row[7],
+            "on_hand_cases": row[8],
+            "acknowledgment_status": row[9],
+            "path_depth": row[10],
         }
         prior = nodes.get(node["node_id"])
-        if prior and prior["on_hand_cases"] != node["on_hand_cases"]:
+        if prior and (prior["on_hand_cases"] != node["on_hand_cases"]
+                      or prior["acknowledgment_status"] != node["acknowledgment_status"]):
             raise ValueError("INCONSISTENT_GRAPH_NODE")
         if not prior or node["path_depth"] < prior["path_depth"]:
             nodes[node["node_id"]] = node
         paths.append({
             "root_node_id": row[0],
-            "destination_node_id": row[4],
-            "path_depth": row[8],
+            "destination_node_id": row[5],
+            "path_depth": row[10],
         })
 
     positions = sorted(nodes.values(), key=lambda item: (item["path_depth"], item["node_id"]))
@@ -368,6 +381,18 @@ def _run_managed_custody_graph(db, *, tenant_id: str, lot_id: str) -> Dict[str, 
         "paths": paths,
         "current_positions": positions,
         "unique_current_cases": sum(position["on_hand_cases"] for position in positions),
+        "confirmed_cases": sum(
+            position["on_hand_cases"] for position in positions
+            if position["acknowledgment_status"] == "CONFIRMED"
+        ),
+        "unconfirmed_cases": sum(
+            position["on_hand_cases"] for position in positions
+            if position["acknowledgment_status"] == "UNCONFIRMED"
+        ),
+        "unconfirmed_positions": [
+            position for position in positions
+            if position["acknowledgment_status"] == "UNCONFIRMED"
+        ],
         "max_path_depth": max(path["path_depth"] for path in paths),
         "node_count": len(positions),
         "intermediate_subtotals_readded": False,
@@ -798,43 +823,29 @@ def handle_pubsub_push(
                 coord_state, chk, active_rev = row[0], row[1], row[2]
     except Exception as exc:
         raise HTTPException(status_code=503, detail="AUTHORITATIVE_COORDINATOR_READ_UNAVAILABLE") from exc
-    if coord_state is None or active_rev is None:
+    if coord_state != "WAITING_FOR_EVENTS" or active_rev is None:
         raise HTTPException(status_code=409, detail="WAITING_COORDINATOR_NOT_FOUND")
-
-    message_digest = hashlib.sha256(message_id.encode("utf-8")).hexdigest()[:24]
-    ledger_result = execute_ledger_command(
-        command_id=f"CMD-PUBSUB-{message_digest}",
-        idempotency_key=f"pubsub:{message_digest}:open-recall",
-        tenant_id=tenant_id,
-        incident_id=incident_id,
-        agent_role="INCIDENT_COORDINATOR",
-        command_type="OPEN_RECALL_INCIDENT",
-        expected_plan_revision=active_rev,
+    notice_text = event_data.get("notice_text")
+    if not isinstance(notice_text, str) or not notice_text.strip():
+        raise HTTPException(400, "RECALL_NOTICE_TEXT_REQUIRED")
+    hero_result = _execute_managed_recall_event(
+        tenant_id=tenant_id, coordinator_id=coord_id,
+        incident_id=incident_id, recalled_lot_id=lot_id,
+        notice_text=notice_text, source_event_id=message_id,
+        source_publish_time=publish_time, active_revision=active_rev,
         trace_id=trace_id,
-        payload={
-            "incident_id": incident_id,
-            "coordinator_id": coord_id,
-            "lot_id": lot_id,
-            "source_event_id": message_id,
-            "source_publish_time": publish_time,
-            "details": event_data,
-        },
     )
 
     return {
-        "status": "PUB_SUB_WAKE_RESUMED",
+        "status": "PUB_SUB_WAKE_PROCESSED",
         "message_id": message_id,
+        "event_type": event_type,
         "coordinator_id": coord_id,
         "previous_state": coord_state,
-        "new_state": "RECALL_WOKEN_DETECTED",
         "rehydrated_revision": active_rev,
-        "incident": {
-            "incident_id": incident_id,
-            "status": "DETECTED",
-            "affected_lot_id": lot_id,
-        },
-        "idempotent_redelivery": ledger_result["idempotent_replay"],
-        "ledger_receipt": ledger_result["receipt"],
+        "hero_loop_result": hero_result,
+        "delivery_identity": caller.email,
+        "delivery_audience": caller.audience,
         "trace_id": trace_id
     }
 
@@ -843,20 +854,268 @@ def handle_pubsub_push(
 # GATE E, F, G, H — RECALL HERO LOOP
 # -------------------------------------------------------------------
 
+def _command_identity(tenant_id: str, incident_id: str, action: str):
+    digest = hashlib.sha256(
+        f"{tenant_id}\x00{incident_id}\x00{action}".encode("utf-8")
+    ).hexdigest()
+    return f"CMD-{digest[:28].upper()}", f"hero:{digest}"
+
+
+def _read_authoritative_recall_inputs(
+    db, *, tenant_id: str, recalled_lot_id: str, revision: str
+):
+    with db.snapshot(multi_use=True) as snapshot:
+        plan_rows = list(snapshot.execute_sql(
+            "SELECT plan_id FROM PlanRevisions WHERE tenant_id = @tenant_id "
+            "AND revision = @revision AND status = 'ACTIVE'",
+            params={"tenant_id": tenant_id, "revision": revision},
+            param_types={"tenant_id": spanner.param_types.STRING,
+                         "revision": spanner.param_types.STRING},
+        ))
+        recalled_lot_rows = list(snapshot.execute_sql(
+            "SELECT total_cases FROM Lots WHERE tenant_id = @tenant_id AND lot_id = @lot_id",
+            params={"tenant_id": tenant_id, "lot_id": recalled_lot_id},
+            param_types={"tenant_id": spanner.param_types.STRING,
+                         "lot_id": spanner.param_types.STRING},
+        ))
+        safe_lot_rows = list(snapshot.execute_sql(
+            "SELECT lot_id, total_cases FROM Lots WHERE tenant_id = @tenant_id "
+            "AND hazard_status = 'CLEAR_SAFE' ORDER BY lot_id",
+            params={"tenant_id": tenant_id},
+            param_types={"tenant_id": spanner.param_types.STRING},
+        ))
+        order_rows = list(snapshot.execute_sql(
+            "SELECT order_id, destination_agency_id, cases FROM Orders "
+            "WHERE tenant_id = @tenant_id AND revision = @revision AND lot_id = @lot_id "
+            "ORDER BY order_id",
+            params={"tenant_id": tenant_id, "revision": revision,
+                    "lot_id": recalled_lot_id},
+            param_types={"tenant_id": spanner.param_types.STRING,
+                         "revision": spanner.param_types.STRING,
+                         "lot_id": spanner.param_types.STRING},
+        ))
+    if len(plan_rows) != 1 or len(recalled_lot_rows) != 1:
+        raise HTTPException(409, "ACTIVE_RECALL_PLAN_INPUTS_NOT_FOUND")
+    if not safe_lot_rows or not order_rows:
+        raise HTTPException(409, "RECOVERY_INPUTS_NOT_FOUND")
+    return {
+        "plan_id": plan_rows[0][0],
+        "recalled_total_cases": recalled_lot_rows[0][0],
+        "safe_lots": safe_lot_rows,
+        "affected_orders": order_rows,
+    }
+
+
+def _derive_safe_recovery(*, incident_id: str, safe_lots, affected_orders):
+    remaining = [[row[0], row[1]] for row in safe_lots]
+    allocations = []
+    shortfalls = []
+    for order_id, agency_id, cases in affected_orders:
+        unmet = cases
+        for safe_lot in remaining:
+            if unmet == 0:
+                break
+            assigned = min(unmet, safe_lot[1])
+            if assigned <= 0:
+                continue
+            allocation_digest = hashlib.sha256(
+                f"{incident_id}\x00{agency_id}\x00{safe_lot[0]}".encode()
+            ).hexdigest()[:20].upper()
+            allocations.append({
+                "allocation_id": f"ALLOC-{allocation_digest}",
+                "agency_id": agency_id,
+                "lot_id": safe_lot[0],
+                "cases": assigned,
+            })
+            safe_lot[1] -= assigned
+            unmet -= assigned
+        if unmet:
+            shortfall_digest = hashlib.sha256(
+                f"{incident_id}\x00{agency_id}\x00{order_id}".encode()
+            ).hexdigest()[:20].upper()
+            shortfalls.append({
+                "shortfall_id": f"SHORT-{shortfall_digest}",
+                "agency_id": agency_id,
+                "cases": unmet,
+            })
+    if not allocations or not shortfalls:
+        raise HTTPException(409, "PARTIAL_RECOVERY_POLICY_INPUTS_REQUIRED")
+    return allocations, shortfalls
+
+
+def _execute_managed_recall_event(
+    *,
+    tenant_id: str,
+    coordinator_id: str,
+    incident_id: str,
+    recalled_lot_id: str,
+    notice_text: str,
+    source_event_id: str,
+    source_publish_time: str,
+    active_revision: str,
+    trace_id: str,
+):
+    """Run one generalized managed recall policy after authenticated Pub/Sub wake."""
+    scope = _resolve_authority_scope(tenant_id)
+    db = get_spanner_database(scope.database_id)
+    screening = inspect_recall_notice_with_model_armor(
+        notice_text, correlation_id=trace_id
+    )
+    if screening.get("status") != "APPROVED" or screening.get("safety_verdict") != "PASSED":
+        return {
+            "hero_loop_status": (
+                "HALTED_BY_MODEL_ARMOR_SAFETY_MATCH"
+                if screening.get("status") == "BLOCKED"
+                else "HALTED_BY_MODEL_ARMOR_SERVICE_FAILURE"
+            ),
+            "model_armor_screening": screening,
+            "gemini_adk_invoked": False,
+            "ledger_mutation_attempted": False,
+            "trace_id": trace_id,
+        }
+
+    extracted = extract_recall_entities_with_gemini_35(
+        notice_text, correlation_id=trace_id
+    )
+    _persist_model_invocation_evidence(extracted, route="managed-pubsub-recall")
+    if (not extracted.get("downstream_allowed")
+            or extracted.get("lot_id") != recalled_lot_id):
+        return {
+            "hero_loop_status": "HALTED_FOR_MANUAL_REVIEW",
+            "model_armor_screening": screening,
+            "gemini_extraction": extracted,
+            "ledger_mutation_attempted": False,
+            "trace_id": trace_id,
+        }
+
+    inputs = _read_authoritative_recall_inputs(
+        db, tenant_id=tenant_id, recalled_lot_id=recalled_lot_id,
+        revision=active_revision,
+    )
+    open_command_id, open_key = _command_identity(
+        tenant_id, incident_id, f"open:{source_event_id}"
+    )
+    open_result = execute_ledger_command(
+        command_id=open_command_id, idempotency_key=open_key,
+        tenant_id=tenant_id, incident_id=incident_id,
+        agent_role="INCIDENT_COORDINATOR", command_type="OPEN_RECALL_INCIDENT",
+        expected_plan_revision=active_revision, trace_id=trace_id,
+        payload={
+            "incident_id": incident_id, "coordinator_id": coordinator_id,
+            "lot_id": recalled_lot_id, "source_event_id": source_event_id,
+            "source_publish_time": source_publish_time,
+            "details": {
+                "product": extracted.get("product_name"),
+                "hazard": extracted.get("hazard"),
+                "action_required": extracted.get("action_required"),
+                "model_armor_correlation_id": screening.get("request_correlation_id"),
+            },
+        },
+    )
+
+    def commit(action, command_type, payload, *, agent_role="INCIDENT_COORDINATOR",
+               allow_denied=False):
+        command_id, idempotency_key = _command_identity(tenant_id, incident_id, action)
+        return execute_ledger_command(
+            command_id=command_id, idempotency_key=idempotency_key,
+            tenant_id=tenant_id, incident_id=incident_id, agent_role=agent_role,
+            command_type=command_type, expected_plan_revision=active_revision,
+            trace_id=trace_id, payload=payload, allow_denied=allow_denied,
+        )
+
+    scoping = commit("status:SCOPING", "SET_INCIDENT_STATUS", {
+        "incident_id": incident_id, "expected_status": "DETECTED",
+        "new_status": "SCOPING", "terminal_state": "NONE",
+    })
+    try:
+        graph = _run_managed_custody_graph(
+            db, tenant_id=tenant_id, lot_id=recalled_lot_id
+        )
+    except Exception as exc:
+        raise HTTPException(503, "AUTHORITATIVE_GRAPH_READ_UNAVAILABLE") from exc
+    if graph["unique_current_cases"] != inputs["recalled_total_cases"]:
+        raise HTTPException(409, "CUSTODY_TOTAL_DOES_NOT_MATCH_RECALLED_LOT")
+    if len(graph["unconfirmed_positions"]) != 1 or graph["unconfirmed_cases"] <= 0:
+        raise HTTPException(409, "EXACTLY_ONE_UNCONFIRMED_POSITION_REQUIRED")
+    unconfirmed_position = graph["unconfirmed_positions"][0]
+
+    barrier_id = f"BARRIER-{hashlib.sha256(recalled_lot_id.encode()).hexdigest()[:20].upper()}"
+    barrier = commit("movement-barrier", "ACTIVATE_MOVEMENT_BARRIER", {
+        "barrier_id": barrier_id, "incident_id": incident_id,
+        "lot_id": recalled_lot_id, "reason": "FOOD_SAFETY_RECALL",
+        "work_item_id": f"WORK-{hashlib.sha256((incident_id + recalled_lot_id).encode()).hexdigest()[:20].upper()}",
+    })
+    containment = commit("status:CONTAINMENT_IN_PROGRESS", "SET_INCIDENT_STATUS", {
+        "incident_id": incident_id, "expected_status": "SCOPING",
+        "new_status": "CONTAINMENT_IN_PROGRESS", "terminal_state": "NONE",
+    })
+    invalidation = commit("plan:invalidate", "INVALIDATE_PLAN", {
+        "plan_id": inputs["plan_id"], "revision": active_revision,
+        "reason": f"{recalled_lot_id}_RECALL",
+    })
+    allocations, shortfalls = _derive_safe_recovery(
+        incident_id=incident_id, safe_lots=inputs["safe_lots"],
+        affected_orders=inputs["affected_orders"],
+    )
+    recovery = commit(
+        "safe-recovery", "ALLOCATE_SAFE_STOCK",
+        {"incident_id": incident_id, "allocations": allocations,
+         "shortfalls": shortfalls},
+        agent_role="FULFILLMENT_RECOVERY_PLANNER",
+    )
+    refusal = commit(
+        "containment-refusal", "RECORD_REFUSAL",
+        {"incident_id": incident_id,
+         "subject_id": unconfirmed_position["node_id"],
+         "reason": "DOWNSTREAM_CUSTODY_UNCONFIRMED",
+         "affected_cases": graph["unconfirmed_cases"]},
+        allow_denied=True,
+    )
+    hold_digest = hashlib.sha256(
+        f"{incident_id}\x00{unconfirmed_position['node_id']}".encode()
+    ).hexdigest()[:20].upper()
+    hold_incident_id = f"HOLD-{hold_digest}"
+    task = schedule_site01_deadline_task(
+        tenant_id=tenant_id, incident_id=incident_id,
+        hold_incident_id=hold_incident_id, coordinator_id=coordinator_id,
+        lot_id=recalled_lot_id, site_id=unconfirmed_position["node_id"],
+        unconfirmed_cases=graph["unconfirmed_cases"], task_id=f"ack-{trace_id}",
+        oidc_audience=MANAGED_CALLBACK_AUDIENCE,
+        delivery_service_account=MANAGED_CALLBACK_SERVICE_ACCOUNT_EMAIL,
+        trace_id=trace_id,
+    )
+    terminal = commit("status:PARTIALLY_CONTAINED", "SET_INCIDENT_STATUS", {
+        "incident_id": incident_id, "expected_status": "CONTAINMENT_IN_PROGRESS",
+        "new_status": "PARTIALLY_CONTAINED", "terminal_state": "PARTIALLY_CONTAINED",
+        "unconfirmed_cases": graph["unconfirmed_cases"],
+    })
+    return {
+        "hero_loop_status": "COMPLETED",
+        "authority_scope_kind": scope.kind,
+        "model_armor_screening": screening,
+        "gemini_35_extraction": extracted,
+        "spanner_graph_reconstruction": graph,
+        "safe_stock_recovery": {"allocations": allocations, "shortfalls": shortfalls},
+        "unconfirmed_position": unconfirmed_position,
+        "ledger_command_receipts": {
+            "open": open_result["receipt"], "scoping": scoping["receipt"],
+            "barrier": barrier["receipt"], "containment_in_progress": containment["receipt"],
+            "plan_invalidation": invalidation["receipt"], "safe_recovery": recovery["receipt"],
+            "containment_refusal": refusal["receipt"], "terminal": terminal["receipt"],
+        },
+        "cloud_tasks_scheduling": task,
+        "terminal_state": "PARTIALLY_CONTAINED",
+        "trace_id": trace_id,
+    }
+
 @app.get("/api/v1/orchestrator/custody/graph")
 def get_custody_graph_reconstruction(
-    scenario: str = Query("canonical", pattern="^(canonical|altered)$"),
+    tenant_id: str = Query("east-bay-food-bank"),
+    lot_id: str = Query(..., min_length=1, max_length=64),
     x_api_key: Optional[str] = Header(None, alias="X-Full-Shelf-API-Key"),
 ):
     """Run a parameterized, variable-depth managed Spanner Graph reconstruction."""
     verify_judge_key(x_api_key)
-    if scenario == "canonical":
-        database_id = SPANNER_DATABASE
-        tenant_id = "east-bay-food-bank"
-        lot_id = "LTC-4471"
-    else:
-        tenant_id = "wp8-altered-audit"
-        lot_id = "ALT-LOT-9001"
     scope = _resolve_authority_scope(tenant_id)
     database_id = scope.database_id
 
@@ -871,7 +1130,7 @@ def get_custody_graph_reconstruction(
     except Exception as exc:
         raise HTTPException(status_code=503, detail="AUTHORITATIVE_GRAPH_READ_UNAVAILABLE") from exc
 
-    result["scenario"] = scenario
+    result["authority_scope_kind"] = scope.kind
     result["database_id"] = database_id
     return result
 
@@ -880,276 +1139,10 @@ def execute_hero_loop(
     x_api_key: Optional[str] = Header(None, alias="X-Full-Shelf-API-Key"),
     tenant_id: str = "east-bay-food-bank"
 ):
-    """Executes complete recall hero loop across Pub/Sub, Model Armor, Gemini 3.5, Spanner Graph, Plan Ledger, KMS, and Cloud Tasks."""
+    """Reject the retired direct executor; managed Pub/Sub delivery owns execution."""
     verify_judge_key(x_api_key)
-    trace_id = generate_trace_id()
-    scope = _resolve_authority_scope(tenant_id)
-    db = get_spanner_database(scope.database_id)
-
-    # Step 1: Model Armor Screening
-    raw_notice = "REPRESENTATIVE DEMO NOTICE — FDA Enforcement Report #2026-0807-L4: Urgent recall issued for Lot LTC-4471 (Romaine Lettuce) due to contamination with E. coli O157:H7. Action: PAUSE_DISPATCH_AND_QUARANTINE."
-    model_armor = inspect_recall_notice_with_model_armor(raw_notice)
-    if model_armor.get("status") != "APPROVED" or model_armor.get("safety_verdict") != "PASSED":
-        halt_reason = "HALTED_BY_MODEL_ARMOR_SAFETY_MATCH" if model_armor.get("status") == "BLOCKED" else "HALTED_BY_MODEL_ARMOR_SERVICE_FAILURE"
-        return {
-            "hero_loop_status": halt_reason,
-            "model_armor_screening": model_armor,
-            "trace_id": trace_id
-        }
-
-    # Step 2: Gemini 3.5 Flash Entity Extraction via ADK Runner
-    extracted = extract_recall_entities_with_gemini_35(
-        raw_notice,
-        correlation_id=trace_id,
-    )
-    _persist_model_invocation_evidence(extracted, route="execute-hero-loop")
-    if not extracted.get("downstream_allowed"):
-        return {
-            "hero_loop_status": "HALTED_FOR_MANUAL_REVIEW",
-            "model_armor_screening": model_armor,
-            "gemini_extraction": extracted,
-            "trace_id": trace_id,
-        }
-
-    # Step 3: Lifecycle -> SCOPING & Spanner Graph Custody Traversal
-    IncidentLifecycleManager.validate_transition("DETECTED", "SCOPING")
-    scoping_result = execute_ledger_command(
-        command_id="CMD-RECALL-SCOPING",
-        idempotency_key=f"{tenant_id}:INC-RECALL-01:status:SCOPING",
-        tenant_id=tenant_id,
-        incident_id="INC-RECALL-01",
-        agent_role="INCIDENT_COORDINATOR",
-        command_type="SET_INCIDENT_STATUS",
-        expected_plan_revision="rev08",
-        trace_id=trace_id,
-        payload={
-            "incident_id": "INC-RECALL-01",
-            "expected_status": "DETECTED",
-            "new_status": "SCOPING",
-            "terminal_state": "NONE",
-        },
-    )
-
-    try:
-        graph_reconstruction = _run_managed_custody_graph(
-            db,
-            tenant_id=tenant_id,
-            lot_id="LTC-4471",
-        )
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail="AUTHORITATIVE_GRAPH_READ_UNAVAILABLE") from exc
-
-    # Step 4: Movement Barrier & Lifecycle -> CONTAINMENT_IN_PROGRESS
-    IncidentLifecycleManager.validate_transition("SCOPING", "CONTAINMENT_IN_PROGRESS")
-    barrier_result = execute_ledger_command(
-        command_id="CMD-BARRIER-LTC-4471",
-        idempotency_key=f"{tenant_id}:LTC-4471:movement-barrier:active",
-        tenant_id=tenant_id,
-        incident_id="INC-RECALL-01",
-        agent_role="INCIDENT_COORDINATOR",
-        command_type="ACTIVATE_MOVEMENT_BARRIER",
-        expected_plan_revision="rev08",
-        trace_id=trace_id,
-        payload={
-            "barrier_id": "BARRIER-LTC-4471",
-            "incident_id": "INC-RECALL-01",
-            "lot_id": "LTC-4471",
-            "reason": "FOOD_SAFETY_RECALL",
-            "work_item_id": "WORK-RECALL-LTC-4471-ROOT",
-        },
-    )
-    containment_progress_result = execute_ledger_command(
-        command_id="CMD-RECALL-CONTAINMENT-IN-PROGRESS",
-        idempotency_key=f"{tenant_id}:INC-RECALL-01:status:CONTAINMENT_IN_PROGRESS",
-        tenant_id=tenant_id,
-        incident_id="INC-RECALL-01",
-        agent_role="INCIDENT_COORDINATOR",
-        command_type="SET_INCIDENT_STATUS",
-        expected_plan_revision="rev08",
-        trace_id=trace_id,
-        payload={
-            "incident_id": "INC-RECALL-01",
-            "expected_status": "SCOPING",
-            "new_status": "CONTAINMENT_IN_PROGRESS",
-            "terminal_state": "NONE",
-        },
-    )
-
-    # Step 5: Invalidate rev08 and record safe recovery through commands.
-    invalidation_result = execute_ledger_command(
-        command_id="CMD-INVALIDATE-REV08-RECALL",
-        idempotency_key=f"{tenant_id}:PLAN-2026-08-07:rev08:recall-invalidation",
-        tenant_id=tenant_id,
-        incident_id="INC-RECALL-01",
-        agent_role="INCIDENT_COORDINATOR",
-        command_type="INVALIDATE_PLAN",
-        expected_plan_revision="rev08",
-        trace_id=trace_id,
-        payload={
-            "plan_id": "PLAN-2026-08-07",
-            "revision": "rev08",
-            "reason": "LTC-4471_RECALL",
-        },
-    )
-    allocation_result = execute_ledger_command(
-        command_id="CMD-ALLOCATE-LTC-5090-RECOVERY",
-        idempotency_key=f"{tenant_id}:INC-RECALL-01:LTC-5090:recovery",
-        tenant_id=tenant_id,
-        incident_id="INC-RECALL-01",
-        agent_role="FULFILLMENT_RECOVERY_PLANNER",
-        command_type="ALLOCATE_SAFE_STOCK",
-        expected_plan_revision="rev08",
-        trace_id=trace_id,
-        payload={
-            "incident_id": "INC-RECALL-01",
-            "allocations": [
-                {
-                    "allocation_id": "ALLOC-INC-RECALL-01-AG01",
-                    "agency_id": "AG01",
-                    "lot_id": "LTC-5090",
-                    "cases": 18,
-                },
-                {
-                    "allocation_id": "ALLOC-INC-RECALL-01-AG02",
-                    "agency_id": "AG02",
-                    "lot_id": "LTC-5090",
-                    "cases": 22,
-                },
-            ],
-            "shortfalls": [
-                {
-                    "shortfall_id": "SHORT-INC-RECALL-01-AG03",
-                    "agency_id": "AG03",
-                    "cases": 20,
-                }
-            ],
-        },
-    )
-
-    # Step 6: Attempt Site 01 containment -> DENIED (DOWNSTREAM_CUSTODY_UNCONFIRMED)
-    refusal_result = execute_ledger_command(
-        command_id="CMD-REFUSE-SITE01-CONTAINMENT",
-        idempotency_key=f"{tenant_id}:INC-RECALL-01:SITE-01:containment-refusal",
-        tenant_id=tenant_id,
-        incident_id="INC-RECALL-01",
-        agent_role="INCIDENT_COORDINATOR",
-        command_type="RECORD_REFUSAL",
-        expected_plan_revision="rev08",
-        trace_id=trace_id,
-        allow_denied=True,
-        payload={
-            "incident_id": "INC-RECALL-01",
-            "subject_id": "SITE-01",
-            "reason": "DOWNSTREAM_CUSTODY_UNCONFIRMED",
-            "unconfirmed_cases": 8,
-        },
-    )
-    res_site01 = {
-        "status": refusal_result["receipt"]["status"],
-        "mutations_applied": refusal_result["receipt"]["mutations_applied"],
-        "reason": "DOWNSTREAM_CUSTODY_UNCONFIRMED",
-        "site_id": "SITE-01",
-        "unconfirmed_cases": 8,
-        "receipt": refusal_result["receipt"],
-    }
-
-    # Step 7: Schedule Cloud Task for Site 01 deadline
-    task_res = schedule_site01_deadline_task(
-        tenant_id=tenant_id,
-        incident_id="INC-RECALL-01",
-        hold_incident_id="INC-RECALL-01-HOLD-SITE01",
-        coordinator_id="COORD-2026-0807",
-        lot_id="LTC-4471",
-        site_id="SITE-01",
-        unconfirmed_cases=8,
-        task_id=f"site01-{trace_id}",
-        oidc_audience=MANAGED_CALLBACK_AUDIENCE,
-        delivery_service_account=MANAGED_CALLBACK_SERVICE_ACCOUNT_EMAIL,
-        trace_id=trace_id,
-    )
-
-    # Step 8: Terminal calculation -> PARTIALLY_CONTAINED
-    IncidentLifecycleManager.validate_transition("CONTAINMENT_IN_PROGRESS", "PARTIALLY_CONTAINED")
-
-    terminal_state = "PARTIALLY_CONTAINED"
-
-    # Step 9: Commit the honest terminal state through the deterministic ledger.
-    terminal_result = execute_ledger_command(
-        command_id="CMD-RECALL-PARTIALLY-CONTAINED",
-        idempotency_key=f"{tenant_id}:INC-RECALL-01:status:PARTIALLY_CONTAINED",
-        tenant_id=tenant_id,
-        incident_id="INC-RECALL-01",
-        agent_role="INCIDENT_COORDINATOR",
-        command_type="SET_INCIDENT_STATUS",
-        expected_plan_revision="rev08",
-        trace_id=trace_id,
-        payload={
-            "incident_id": "INC-RECALL-01",
-            "expected_status": "CONTAINMENT_IN_PROGRESS",
-            "new_status": terminal_state,
-            "terminal_state": terminal_state,
-            "unconfirmed_cases": 8,
-        },
-    )
-
-    refusal_proof = "DOWNSTREAM_CUSTODY_UNCONFIRMED: Refused transition from PARTIALLY_CONTAINED to CONTAINED."
-
-    # Step 10: Publish recall event to Pub/Sub topic full-shelf-incidents
-    pubsub_pub_res = publish_recall_event_to_pubsub({
-        "event_type": "FOOD_SAFETY_RECALL",
-        "lot_id": "LTC-4471",
-        "hazard": "E. coli O157:H7",
-        "action_required": "PAUSE_DISPATCH_AND_QUARANTINE",
-        "notice_label": "REPRESENTATIVE DEMO NOTICE",
-        "trace_id": trace_id
-    })
-
-    return {
-        "hero_loop_status": "COMPLETED",
-        "pubsub_receipt": pubsub_pub_res,
-        "model_verification": {
-            "model_id": MODEL_ID,
-            "vertex_location": VERTEX_LOCATION,
-            "adk_session_id": extracted["adk_session_id"],
-            "adk_run_id": extracted["adk_run_id"],
-            "adk_event_id": extracted["adk_event_id"],
-            "classification": "OBSERVED_LIVE"
-        },
-        "model_armor_screening": model_armor,
-        "gemini_35_extraction": extracted,
-        "gemini_entity_extraction": extracted,
-        "spanner_graph_reconstruction": graph_reconstruction,
-        "safe_stock_allocation": {
-            "safe_lot_id": "LTC-5090",
-            "agency_01": 18,
-            "agency_02": 22,
-            "agency_03_shortage": 20
-        },
-        "site01_containment_refusal": res_site01,
-        "site01_refusal_proof": refusal_proof,
-        "ledger_command_receipts": {
-            "scoping": scoping_result["receipt"],
-            "barrier": barrier_result["receipt"],
-            "containment_in_progress": containment_progress_result["receipt"],
-            "plan_invalidation": invalidation_result["receipt"],
-            "safe_stock_allocation": allocation_result["receipt"],
-            "containment_refusal": refusal_result["receipt"],
-            "terminal": terminal_result["receipt"],
-        },
-        "cloud_tasks_scheduling": task_res,
-        "terminal_state_calculation": {
-            "service_state": "4_OF_5_AGENCIES_SUPPLIED_AGENCY03_SHORT_20",
-            "safety_state": "96_TRACED_88_CONFIRMED_8_UNCONFIRMED_SITE01",
-            "incident_terminal_status": "PARTIALLY_CONTAINED"
-        },
-        "spanner_incident": {
-            "incident_id": "INC-RECALL-01",
-            "status": "PARTIALLY_CONTAINED",
-            "affected_lot": "LTC-4471"
-        },
-        "terminal_state": terminal_state,
-        "cloud_trace_id": trace_id
-    }
+    _resolve_authority_scope(tenant_id)
+    raise HTTPException(410, "USE_MANAGED_RECALL_TRIGGER")
 
 
 @app.post("/api/v1/orchestrator/recall/model-armor-preflight")
@@ -1271,15 +1264,32 @@ def extraction_preflight(
 
 @app.post("/api/v1/orchestrator/recall/trigger")
 def trigger_recall_hero_loop(
+    request: RecallTriggerRequest,
     x_api_key: Optional[str] = Header(None, alias="X-Full-Shelf-API-Key"),
     tenant_id: str = "east-bay-food-bank"
 ):
-    return execute_hero_loop(x_api_key=x_api_key, tenant_id=tenant_id)
+    verify_judge_key(x_api_key)
+    _resolve_authority_scope(tenant_id)
+    event = {
+        "event_type": "RECALL_NOTICE_RECEIVED",
+        "tenant_id": tenant_id,
+        **request.model_dump(),
+    }
+    published = publish_recall_event_to_pubsub(event)
+    return {
+        "status": "RECALL_EVENT_PUBLISHED_AWAIT_MANAGED_DELIVERY",
+        "topic": published["topic"],
+        "message_id": published["message_id"],
+        "tenant_id": tenant_id,
+        "incident_id": request.incident_id,
+        "lot_id": request.lot_id,
+        "classification": "OBSERVED_LIVE",
+    }
 
 
 @app.get("/api/v1/orchestrator/recall/incident-status")
 def get_incident_status(
-    incident_id: str = Query("INC-RECALL-01"),
+    incident_id: str = Query(..., min_length=1, max_length=128),
     tenant_id: str = "east-bay-food-bank",
     x_api_key: Optional[str] = Header(None, alias="X-Full-Shelf-API-Key"),
 ):
@@ -1345,24 +1355,29 @@ def _generate_next_day_plan(
         with db.snapshot(multi_use=True) as snapshot:
             read_phase = "incident"
             incident_rows = list(snapshot.execute_sql(
-                "SELECT status FROM Incidents WHERE tenant_id = @t "
-                "AND incident_id = 'INC-RECALL-01'",
+                "SELECT incident_id, status, affected_lot_id FROM Incidents "
+                "WHERE tenant_id = @t AND incident_type = 'FOOD_SAFETY_RECALL' "
+                "AND status = 'PARTIALLY_CONTAINED' ORDER BY created_at DESC",
                 params={"t": tenant_id},
                 param_types={"t": spanner.param_types.STRING},
             ))
             read_phase = "barrier"
             barrier_rows = list(snapshot.execute_sql(
                 "SELECT barrier_id, lot_id, status FROM MovementBarriers "
-                "WHERE tenant_id = @t AND status = 'ACTIVE' ORDER BY barrier_id",
-                params={"t": tenant_id},
-                param_types={"t": spanner.param_types.STRING},
+                "WHERE tenant_id = @t AND incident_id = @incident_id "
+                "AND status = 'ACTIVE' ORDER BY barrier_id",
+                params={"t": tenant_id, "incident_id": incident_rows[0][0] if incident_rows else ""},
+                param_types={"t": spanner.param_types.STRING,
+                             "incident_id": spanner.param_types.STRING},
             ))
             read_phase = "shortfall"
             shortfall_rows = list(snapshot.execute_sql(
                 "SELECT shortfall_id, agency_id, cases, status FROM RecoveryShortfalls "
-                "WHERE tenant_id = @t AND status = 'OPEN' ORDER BY shortfall_id",
-                params={"t": tenant_id},
-                param_types={"t": spanner.param_types.STRING},
+                "WHERE tenant_id = @t AND incident_id = @incident_id "
+                "AND status = 'OPEN' ORDER BY shortfall_id",
+                params={"t": tenant_id, "incident_id": incident_rows[0][0] if incident_rows else ""},
+                param_types={"t": spanner.param_types.STRING,
+                             "incident_id": spanner.param_types.STRING},
             ))
             read_phase = "hold"
             hold_rows = list(snapshot.execute_sql(
@@ -1394,30 +1409,29 @@ def _generate_next_day_plan(
         )
         raise HTTPException(503, "AUTHORITATIVE_CONTINUITY_READ_UNAVAILABLE") from exc
 
-    incident_status = incident_rows[0][0] if incident_rows else None
-    barrier = next((row for row in barrier_rows if row[1] == "LTC-4471"), None)
-    shortfall = next(
-        (row for row in shortfall_rows if row[1] == "AG03" and row[2] == 20),
-        None,
-    )
-    hold = None
+    incident_id = incident_rows[0][0] if len(incident_rows) == 1 else None
+    incident_status = incident_rows[0][1] if incident_id else None
+    affected_lot_id = incident_rows[0][2] if incident_id else None
+    barriers = [row for row in barrier_rows if row[1] == affected_lot_id]
+    shortfalls = list(shortfall_rows)
+    holds = []
     for row in hold_rows:
         try:
             details = json.loads(row[1] or "{}")
         except (TypeError, json.JSONDecodeError):
             continue
-        if details.get("site_id") == "SITE-01" and details.get("unconfirmed_cases") == 8:
-            hold = (row, details)
-            break
+        if (details.get("parent_incident_id") == incident_id
+                and details.get("site_id") and details.get("unconfirmed_cases", 0) > 0):
+            holds.append((row, details))
     missing = []
     if incident_status != "PARTIALLY_CONTAINED":
         missing.append("PARTIALLY_CONTAINED_RECALL")
-    if barrier is None:
-        missing.append("LTC_4471_ACTIVE_BARRIER")
-    if shortfall is None:
-        missing.append("AG03_OPEN_20_CASE_SHORTFALL")
-    if hold is None:
-        missing.append("SITE01_OPEN_8_CASE_HOLD")
+    if not barriers:
+        missing.append("ACTIVE_RECALLED_LOT_BARRIER")
+    if not shortfalls:
+        missing.append("OPEN_RECOVERY_SHORTFALL")
+    if not holds:
+        missing.append("OPEN_ACKNOWLEDGMENT_HOLD")
     if not safe_lots:
         missing.append("CONFIRMED_SAFE_INVENTORY")
     if not fleet:
@@ -1434,28 +1448,24 @@ def _generate_next_day_plan(
         "revision": "rev01",
         "status": "DRAFT_WITH_CONSTRAINTS — HUMAN APPROVAL REQUIRED",
         "scenario_time": "17:00 · NEXT-DAY PLANNING",
-        "inherited_constraints": [
-            {
-                "constraint_id": barrier[0],
+        "inherited_constraints": ([{
+                "constraint_id": row[0],
                 "type": "LOT_MOVEMENT_BARRIER",
-                "affected_lot": "LTC-4471",
+                "affected_lot": row[1],
                 "status": "ACTIVE_BLOCKED"
-            },
-            {
-                "constraint_id": shortfall[0],
+            } for row in barriers] + [{
+                "constraint_id": row[0],
                 "type": "RECOVERY_PRIORITY",
-                "agency_id": "AG03",
-                "shortfall_cases": 20,
+                "agency_id": row[1],
+                "shortfall_cases": row[2],
                 "status": "PROMOTED_TO_FIRST_RECOVERY_PRIORITY"
-            },
-            {
-                "constraint_id": hold[0][0],
+            } for row in shortfalls] + [{
+                "constraint_id": row[0][0],
                 "type": "ACKNOWLEDGMENT_HOLD",
-                "site_id": "SITE-01",
-                "unconfirmed_cases": 8,
+                "site_id": row[1]["site_id"],
+                "unconfirmed_cases": row[1]["unconfirmed_cases"],
                 "status": "ACKNOWLEDGMENT_HOLD_ACTIVE"
-            }
-        ],
+            } for row in holds]),
         "confirmed_safe_inventory": [
             {"lot_id": row[0], "confirmed_cases": row[1]} for row in safe_lots
         ],
@@ -1477,7 +1487,7 @@ def _generate_next_day_plan(
             command_id=f"CMD-NEXT-DAY-{operating_date.isoformat()}-REV01",
             idempotency_key=f"{tenant_id}:{plan_id}:rev01:day-close",
             tenant_id=tenant_id,
-            incident_id="INC-RECALL-01",
+            incident_id=incident_id,
             agent_role="FULFILLMENT_RECOVERY_PLANNER",
             command_type="CREATE_NEXT_DAY_DRAFT",
             expected_plan_revision="rev08",
@@ -1490,11 +1500,18 @@ def _generate_next_day_plan(
                 "revision": "rev01",
                 "status": "DRAFT_WITH_CONSTRAINTS",
                 "coordinator_id": coordinator_id,
-                "excluded_lot_id": barrier[1],
-                "shortfall_agency_id": shortfall[1],
-                "shortfall_cases": shortfall[2],
-                "acknowledgment_site_id": hold[1]["site_id"],
-                "unconfirmed_cases": hold[1]["unconfirmed_cases"],
+                "barriers": [
+                    {"barrier_id": row[0], "lot_id": row[1]} for row in barriers
+                ],
+                "shortfalls": [
+                    {"shortfall_id": row[0], "agency_id": row[1], "cases": row[2]}
+                    for row in shortfalls
+                ],
+                "acknowledgment_holds": [
+                    {"hold_incident_id": row[0][0], "site_id": row[1]["site_id"],
+                     "unconfirmed_cases": row[1]["unconfirmed_cases"]}
+                    for row in holds
+                ],
                 "human_approval_required": True,
             },
         )
@@ -1561,11 +1578,14 @@ def get_system_evidence(
         )
         ground_truth["active_plan_revision"] = rows[0][0] if rows else None
         rows = read_rows(
-            "SELECT status, terminal_state FROM Incidents WHERE tenant_id = @tenant_id "
-            "AND incident_id = 'INC-RECALL-01'"
+            "SELECT incident_id, status, terminal_state, affected_lot_id FROM Incidents "
+            "WHERE tenant_id = @tenant_id AND incident_type = 'FOOD_SAFETY_RECALL' "
+            "ORDER BY created_at DESC LIMIT 1"
         )
-        ground_truth["active_incident_status"] = rows[0][0] if rows else None
-        ground_truth["incident_terminal_state"] = rows[0][1] if rows else None
+        ground_truth["active_incident_id"] = rows[0][0] if rows else None
+        ground_truth["active_incident_status"] = rows[0][1] if rows else None
+        ground_truth["incident_terminal_state"] = rows[0][2] if rows else None
+        ground_truth["affected_lot_id"] = rows[0][3] if rows else None
         rows = read_rows(
             "SELECT COUNT(*) FROM Receipts WHERE tenant_id = @tenant_id"
         )
@@ -1636,7 +1656,7 @@ def get_system_evidence(
 
     try:
         graph = _run_managed_custody_graph(
-            db, tenant_id=tenant_id, lot_id="LTC-4471"
+            db, tenant_id=tenant_id, lot_id=ground_truth["affected_lot_id"]
         )
         graph_evidence = {
             "lot_id": graph["lot_id"],
@@ -2080,8 +2100,9 @@ def seed_demo_state(
 
 @app.post("/api/v1/demo/replay")
 def replay_hero_loop(x_api_key: Optional[str] = Header(None, alias="X-Full-Shelf-API-Key")):
-    """Executes full end-to-end replay command."""
-    return execute_hero_loop(x_api_key=x_api_key)
+    """Reject direct demo replay; publish a scoped recall through the managed trigger."""
+    verify_judge_key(x_api_key)
+    raise HTTPException(410, "USE_MANAGED_RECALL_TRIGGER")
 
 
 @app.get("/api/v1/demo/export-evidence")

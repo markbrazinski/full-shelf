@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
+from google.api_core.exceptions import AlreadyExists
 
 from full_shelf_domain.identity import VerifiedGoogleIdentity
 
@@ -80,9 +81,9 @@ def _minimal_operating_plan():
                     "status": "SCHEDULED"}],
         "custody_nodes": [
             {"node_id": "NODE-WH", "node_type": "WAREHOUSE", "name": "Warehouse",
-             "on_hand_cases": 2},
+             "on_hand_cases": 2, "acknowledgment_status": "CONFIRMED"},
             {"node_id": "NODE-AG", "node_type": "AGENCY", "name": "Agency",
-             "on_hand_cases": 2},
+             "on_hand_cases": 2, "acknowledgment_status": "CONFIRMED"},
         ],
         "custody_edges": [{"edge_id": "EDGE-A", "source_node_id": "NODE-WH",
                            "target_node_id": "NODE-AG", "lot_id": "LOT-A",
@@ -173,14 +174,12 @@ def test_recall_pubsub_redelivery_uses_stable_ledger_command_and_isolated_scope(
     snapshot.execute_sql.return_value = [("WAITING_FOR_EVENTS", "CHK-ALT", "rev08")]
     db.snapshot.return_value.__enter__.return_value = snapshot
     results = [
-        {"receipt": {"receipt_id": "RCT-RECALL", "status": "SUCCESS"},
-         "idempotent_replay": False},
-        {"receipt": {"receipt_id": "RCT-RECALL", "status": "SUCCESS"},
-         "idempotent_replay": True},
+        {"hero_loop_status": "COMPLETED", "trace_id": "trace-1"},
+        {"hero_loop_status": "COMPLETED", "trace_id": "trace-1"},
     ]
     with patch.object(main, "_verify_managed_callback", return_value=CALLER), patch.object(
         main, "get_spanner_database", return_value=db
-    ), patch.object(main, "execute_ledger_command", side_effect=results) as ledger:
+    ), patch.object(main, "_execute_managed_recall_event", side_effect=results) as execute:
         first = client.post(
             "/api/v1/orchestrator/pubsub/push",
             headers={"Authorization": "Bearer signed"},
@@ -193,12 +192,11 @@ def test_recall_pubsub_redelivery_uses_stable_ledger_command_and_isolated_scope(
         )
 
     assert first.status_code == duplicate.status_code == 200
-    assert first.json()["incident"]["incident_id"] == "INC-RECALL-ALT"
-    assert duplicate.json()["idempotent_redelivery"] is True
-    assert duplicate.json()["ledger_receipt"]["receipt_id"] == "RCT-RECALL"
-    assert ledger.call_args_list[0].kwargs["tenant_id"] == "east-bay-food-bank"
-    assert ledger.call_args_list[0].kwargs["payload"]["source_event_id"] == "recall-message-1"
-    assert ledger.call_args_list[0].kwargs["idempotency_key"] == ledger.call_args_list[1].kwargs["idempotency_key"]
+    assert first.json()["hero_loop_result"]["hero_loop_status"] == "COMPLETED"
+    assert duplicate.json()["hero_loop_result"] == first.json()["hero_loop_result"]
+    assert execute.call_args_list[0].kwargs["tenant_id"] == "east-bay-food-bank"
+    assert execute.call_args_list[0].kwargs["source_event_id"] == "recall-message-1"
+    assert execute.call_args_list[0].kwargs["recalled_lot_id"] == "LOT-RECALL-ALT"
 
 
 def test_task_callback_uses_verified_identity_and_cannot_bypass_ledger():
@@ -265,6 +263,31 @@ def test_task_creation_is_explicitly_audience_bound_without_local_fallback():
     assert body["site_id"] == "SITE-X"
     assert body["unconfirmed_cases"] == 3
     assert result["correlation_trace_id"] == "0123456789abcdef0123456789abcdef"
+
+
+def test_task_creation_treats_a_deterministic_duplicate_as_success():
+    client = MagicMock()
+    client.queue_path.return_value = "projects/p/locations/l/queues/q"
+    client.task_path.return_value = "projects/p/locations/l/queues/q/tasks/t"
+    client.create_task.side_effect = AlreadyExists("duplicate")
+    with patch("google.cloud.tasks_v2.CloudTasksClient", return_value=client):
+        result = main.schedule_site01_deadline_task(
+            tenant_id="audit-tenant",
+            incident_id="INC-ALT",
+            hold_incident_id="INC-ALT-HOLD",
+            coordinator_id="COORD-ALT",
+            lot_id="LOT-ALT",
+            site_id="SITE-ALT",
+            unconfirmed_cases=3,
+            task_id="t",
+            orchestrator_url="https://orchestrator.example.run.app",
+            oidc_audience="https://orchestrator.example.run.app",
+            delivery_service_account="delivery@example.iam.gserviceaccount.com",
+            trace_id="0123456789abcdef0123456789abcdef",
+        )
+
+    assert result["status"] == "ALREADY_SCHEDULED"
+    assert result["task_name"].endswith("/tasks/t")
 
 
 def test_task_redelivery_reuses_deterministic_ledger_idempotency_key():

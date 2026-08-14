@@ -14,19 +14,19 @@ spec.loader.exec_module(orchestrator_main)
 
 
 def authoritative_rows(sql):
-    if "incident_id = 'INC-RECALL-01'" in sql:
-        return [("PARTIALLY_CONTAINED",)]
+    if "incident_type = 'FOOD_SAFETY_RECALL'" in sql:
+        return [("INC-ALTERED", "PARTIALLY_CONTAINED", "LOT-ALTERED")]
     if "FROM MovementBarriers" in sql:
-        return [("BARRIER-ALT", "LTC-4471", "ACTIVE")]
+        return [("BARRIER-ALT", "LOT-ALTERED", "ACTIVE")]
     if "FROM RecoveryShortfalls" in sql:
-        return [("SHORT-ALT", "AG03", 20, "OPEN")]
+        return [("SHORT-ALT", "AGENCY-X", 7, "OPEN")]
     if "incident_type = 'DEADLINE_HOLD'" in sql:
-        return [("HOLD-ALT", '{"site_id":"SITE-01","unconfirmed_cases":8}',
+        return [("HOLD-ALT", '{"parent_incident_id":"INC-ALTERED","site_id":"SITE-X","unconfirmed_cases":3}',
                  "ACKNOWLEDGMENT_HOLD_ACTIVE")]
     if "FROM Lots" in sql:
-        return [("LTC-5090", 40)]
+        return [("SAFE-ALTERED", 21)]
     if "FROM Vehicles" in sql:
-        return [("TRUCK-02", 60, 36)]
+        return [("VEHICLE-ALTERED", 44, 19)]
     raise AssertionError(sql)
 
 
@@ -58,13 +58,15 @@ def test_next_day_plan_is_dynamic_authoritative_and_ledger_bound():
     draft = response.json()["next_day_draft"]
     assert draft["revision"] == "rev01"
     assert draft["status"] == "DRAFT_WITH_CONSTRAINTS — HUMAN APPROVAL REQUIRED"
-    assert draft["inherited_constraints"][0]["affected_lot"] == "LTC-4471"
-    assert draft["inherited_constraints"][1]["shortfall_cases"] == 20
-    assert draft["inherited_constraints"][2]["unconfirmed_cases"] == 8
+    assert draft["inherited_constraints"][0]["affected_lot"] == "LOT-ALTERED"
+    assert draft["inherited_constraints"][1]["shortfall_cases"] == 7
+    assert draft["inherited_constraints"][2]["unconfirmed_cases"] == 3
     command = execute.call_args.kwargs
     assert command["command_type"] == "CREATE_NEXT_DAY_DRAFT"
     assert command["expected_plan_revision"] == "rev08"
     assert command["payload"]["human_approval_required"] is True
+    assert command["incident_id"] == "INC-ALTERED"
+    assert command["payload"]["shortfalls"][0]["agency_id"] == "AGENCY-X"
     executed_sql = [call.args[0] for call in snapshot.execute_sql.call_args_list]
     assert any("hazard_status = 'CLEAR_SAFE'" in sql for sql in executed_sql)
     mock_db.snapshot.assert_called_once_with(multi_use=True)

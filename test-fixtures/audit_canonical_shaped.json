@@ -1,0 +1,50 @@
+{
+  "tenant_id": "audit-canonical-20260814",
+  "operating_plan": {
+    "tenant_name": "Full Shelf canonical-shaped isolated audit",
+    "plan_id": "PLAN-AUDIT-CANONICAL",
+    "revision": "rev07",
+    "status": "ACTIVE",
+    "lots": [
+      {"lot_id": "LTC-4471", "code": "LTC-4471", "produce_type": "Romaine Lettuce", "hazard_status": "RECALLED", "total_cases": 96},
+      {"lot_id": "LTC-5090", "code": "LTC-5090", "produce_type": "Romaine Lettuce", "hazard_status": "CLEAR_SAFE", "total_cases": 40}
+    ],
+    "vehicles": [
+      {"vehicle_id": "TRUCK-01", "name": "Truck 1", "max_capacity_cases": 60, "current_load_cases": 60, "is_operational": true},
+      {"vehicle_id": "TRUCK-02", "name": "Truck 2", "max_capacity_cases": 60, "current_load_cases": 36, "is_operational": true}
+    ],
+    "orders": [
+      {"order_id": "O201", "destination_agency_id": "AG01", "destination_agency_name": "Agency 01", "cases": 18, "lot_id": "LTC-4471", "assigned_vehicle_id": "TRUCK-01", "status": "SCHEDULED"},
+      {"order_id": "O202", "destination_agency_id": "AG02", "destination_agency_name": "Agency 02", "cases": 22, "lot_id": "LTC-4471", "assigned_vehicle_id": "TRUCK-01", "status": "SCHEDULED"},
+      {"order_id": "O203", "destination_agency_id": "AG03", "destination_agency_name": "Agency 03", "cases": 20, "lot_id": "LTC-4471", "assigned_vehicle_id": "TRUCK-01", "status": "SCHEDULED"},
+      {"order_id": "O204", "destination_agency_id": "AG04", "destination_agency_name": "Agency 04", "cases": 15, "lot_id": "LTC-5090", "assigned_vehicle_id": "TRUCK-02", "status": "SCHEDULED"},
+      {"order_id": "O205", "destination_agency_id": "AG05", "destination_agency_name": "Agency 05", "cases": 21, "lot_id": "LTC-5090", "assigned_vehicle_id": "TRUCK-02", "status": "SCHEDULED"}
+    ],
+    "custody_nodes": [
+      {"node_id": "NODE-WAREHOUSE", "node_type": "WAREHOUSE", "name": "Main Warehouse", "on_hand_cases": 24, "acknowledgment_status": "CONFIRMED"},
+      {"node_id": "NODE-TRUCK-2", "node_type": "VEHICLE", "name": "Truck 2 O202", "on_hand_cases": 22, "acknowledgment_status": "CONFIRMED"},
+      {"node_id": "NODE-STAGING-O203", "node_type": "STAGING", "name": "Staging O203", "on_hand_cases": 20, "acknowledgment_status": "CONFIRMED"},
+      {"node_id": "NODE-AGENCY-01", "node_type": "AGENCY", "name": "Agency 01", "on_hand_cases": 10, "acknowledgment_status": "CONFIRMED"},
+      {"node_id": "SITE-01", "node_type": "DOWNSTREAM_SITE", "name": "Site 01", "on_hand_cases": 8, "acknowledgment_status": "UNCONFIRMED"},
+      {"node_id": "NODE-RESCUE", "node_type": "DIRECT_RESCUE", "name": "Direct Rescue", "on_hand_cases": 12, "acknowledgment_status": "CONFIRMED"}
+    ],
+    "custody_edges": [
+      {"edge_id": "EDGE-C01", "source_node_id": "NODE-WAREHOUSE", "target_node_id": "NODE-TRUCK-2", "lot_id": "LTC-4471", "case_count": 22, "is_sub_distribution": false},
+      {"edge_id": "EDGE-C02", "source_node_id": "NODE-WAREHOUSE", "target_node_id": "NODE-STAGING-O203", "lot_id": "LTC-4471", "case_count": 20, "is_sub_distribution": false},
+      {"edge_id": "EDGE-C03", "source_node_id": "NODE-WAREHOUSE", "target_node_id": "NODE-AGENCY-01", "lot_id": "LTC-4471", "case_count": 10, "is_sub_distribution": false},
+      {"edge_id": "EDGE-C04", "source_node_id": "NODE-AGENCY-01", "target_node_id": "SITE-01", "lot_id": "LTC-4471", "case_count": 8, "is_sub_distribution": true},
+      {"edge_id": "EDGE-C05", "source_node_id": "NODE-WAREHOUSE", "target_node_id": "NODE-RESCUE", "lot_id": "LTC-4471", "case_count": 12, "is_sub_distribution": false}
+    ]
+  },
+  "approval": {
+    "incident_id": "INC-TRUCK-CANONICAL-AUDIT",
+    "approval_id": "APP-CANONICAL-AUDIT",
+    "plan_diff": {"reroute_order_id": "O202", "reroute_cases": 22, "reroute_target_vehicle": "TRUCK-02", "pickup_order_id": "O203", "pickup_cases": 20}
+  },
+  "coordinator": {"coordinator_id": "COORD-CANONICAL-AUDIT", "checkpoint": "CHK-REV08-WAIT", "incident_id": "INC-TRUCK-CANONICAL-AUDIT"},
+  "recall": {
+    "incident_id": "INC-RECALL-CANONICAL-AUDIT",
+    "lot_id": "LTC-4471",
+    "notice_text": "REPRESENTATIVE DEMO NOTICE — FDA Enforcement Report 2026-0807-L4. Recall lot LTC-4471, product Romaine Lettuce, hazard E. coli O157:H7. Action required: PAUSE_DISPATCH_AND_QUARANTINE."
+  }
+}
