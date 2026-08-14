@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import base64
+import asyncio
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from typing import Dict, Any, Optional, List
@@ -1656,56 +1657,174 @@ def get_demo_beats_projections():
     }
 
 
-@app.get("/api/v1/projections/stream")
-async def stream_projections(request: Request, tenant_id: str = "east-bay-food-bank"):
-    """Server-Sent Events (SSE) stream for live frontend updates reading directly from committed Spanner events with Last-Event-ID cursor support."""
-    db = get_spanner_database()
-    last_event_id = request.headers.get("Last-Event-ID", "").strip()
-
-    async def event_generator():
-        spanner_events = []
+def _normalize_receipt_timestamp(value: Any) -> datetime:
+    if isinstance(value, datetime):
+        parsed = value
+    else:
         try:
-            with db.snapshot() as snapshot:
-                rows = list(snapshot.execute_sql(
-                    "SELECT receipt_id, action_id, plan_revision_id, action_type, status, message, timestamp FROM Receipts WHERE tenant_id = @t ORDER BY timestamp ASC",
-                    params={"t": tenant_id},
-                    param_types={"t": spanner.param_types.STRING}
-                ))
-                for r in rows:
-                    evt_id = f"evt-{r[0]}"
-                    spanner_events.append({
-                        "event_id": evt_id,
-                        "receipt_id": r[0],
-                        "action_id": r[1],
-                        "plan_revision_id": r[2],
-                        "action_type": r[3],
-                        "status": r[4],
-                        "message": r[5],
-                        "timestamp": r[6].isoformat() if hasattr(r[6], 'isoformat') else str(r[6])
-                    })
-        except Exception as e:
-            print(f"SSE Spanner query note: {e}")
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("INVALID_RECEIPT_TIMESTAMP") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
-        skip = bool(last_event_id)
-        for event in spanner_events:
+
+def _encode_receipt_cursor(timestamp: Any, receipt_id: str) -> str:
+    normalized = _normalize_receipt_timestamp(timestamp).isoformat()
+    encoded = base64.urlsafe_b64encode(
+        json.dumps([normalized, receipt_id], separators=(",", ":")).encode("utf-8")
+    ).decode("ascii").rstrip("=")
+    return f"r1.{encoded}"
+
+
+def _decode_receipt_cursor(event_id: str):
+    if not event_id.startswith("r1."):
+        raise ValueError("UNSUPPORTED_RECEIPT_CURSOR")
+    encoded = event_id[3:]
+    try:
+        padding = "=" * (-len(encoded) % 4)
+        timestamp, receipt_id = json.loads(
+            base64.urlsafe_b64decode(encoded + padding).decode("utf-8")
+        )
+    except Exception as exc:
+        raise ValueError("MALFORMED_RECEIPT_CURSOR") from exc
+    if not isinstance(receipt_id, str) or not receipt_id:
+        raise ValueError("MALFORMED_RECEIPT_CURSOR")
+    return _normalize_receipt_timestamp(timestamp), receipt_id
+
+
+def _query_committed_receipts_after(db, *, tenant_id: str, cursor):
+    params = {"tenant_id": tenant_id}
+    param_types = {"tenant_id": spanner.param_types.STRING}
+    cursor_predicate = ""
+    if cursor:
+        cursor_predicate = """
+          AND (
+            timestamp > @cursor_timestamp
+            OR (timestamp = @cursor_timestamp AND receipt_id > @cursor_receipt_id)
+          )
+        """
+        params["cursor_timestamp"] = cursor[0]
+        params["cursor_receipt_id"] = cursor[1]
+        param_types["cursor_timestamp"] = spanner.param_types.TIMESTAMP
+        param_types["cursor_receipt_id"] = spanner.param_types.STRING
+
+    sql = f"""
+      SELECT receipt_id, action_id, plan_revision_id, action_type, status,
+             message, timestamp
+      FROM Receipts
+      WHERE tenant_id = @tenant_id
+      {cursor_predicate}
+      ORDER BY timestamp ASC, receipt_id ASC
+      LIMIT 100
+    """
+    with db.snapshot() as snapshot:
+        return list(snapshot.execute_sql(sql, params=params, param_types=param_types))
+
+
+def _receipt_projection(row) -> Dict[str, Any]:
+    timestamp = _normalize_receipt_timestamp(row[6])
+    event_id = _encode_receipt_cursor(timestamp, row[0])
+    return {
+        "event_id": event_id,
+        "receipt_id": row[0],
+        "action_id": row[1],
+        "plan_revision_id": row[2],
+        "action_type": row[3],
+        "status": row[4],
+        "message": row[5],
+        "timestamp": timestamp.isoformat(),
+    }
+
+
+async def _stream_committed_receipts(
+    *,
+    request: Request,
+    db,
+    tenant_id: str,
+    cursor,
+    poll_interval: float,
+    max_polls: Optional[int] = None,
+):
+    """Live-tail durable authoritative receipts until disconnect or read failure."""
+    poll_count = 0
+    heartbeat_at = datetime.now(timezone.utc)
+    while True:
+        if await request.is_disconnected():
+            return
+        try:
+            rows = await asyncio.to_thread(
+                _query_committed_receipts_after,
+                db,
+                tenant_id=tenant_id,
+                cursor=cursor,
+            )
+        except Exception:
+            logger.exception("Authoritative SSE receipt query failed")
+            error = {
+                "code": "AUTHORITATIVE_EVENT_READ_UNAVAILABLE",
+                "classification": "FAILED",
+                "emitted_at": datetime.now(timezone.utc).isoformat(),
+            }
+            yield f"event: projection_error\ndata: {json.dumps(error)}\n\n"
+            return
+
+        for row in rows:
             if await request.is_disconnected():
-                break
-            if skip:
-                if event["event_id"] == last_event_id:
-                    skip = False
-                continue
-
+                return
+            event = _receipt_projection(row)
+            cursor = (_normalize_receipt_timestamp(row[6]), row[0])
             payload = {
                 "event_id": event["event_id"],
                 "projection_type": "SPANNER_COMMITTED_RECEIPT",
+                "classification": "OBSERVED_LIVE",
                 "data": event,
-                "emitted_at": datetime.now(timezone.utc).isoformat()
+                "emitted_at": datetime.now(timezone.utc).isoformat(),
             }
-            yield f"id: {event['event_id']}\nevent: projection_update\ndata: {json.dumps(payload)}\n\n"
-            import asyncio
-            await asyncio.sleep(0.05)
+            yield (
+                f"id: {event['event_id']}\n"
+                f"event: projection_update\n"
+                f"data: {json.dumps(payload)}\n\n"
+            )
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+        poll_count += 1
+        if max_polls is not None and poll_count >= max_polls:
+            return
+        if rows:
+            continue
+
+        now = datetime.now(timezone.utc)
+        if (now - heartbeat_at).total_seconds() >= 15:
+            yield f": keep-alive {now.isoformat()}\n\n"
+            heartbeat_at = now
+        await asyncio.sleep(max(poll_interval, 0.05))
+
+
+@app.get("/api/v1/projections/stream")
+async def stream_projections(request: Request, tenant_id: str = "east-bay-food-bank"):
+    """Tail committed Spanner receipts and resume strictly after Last-Event-ID."""
+    db = get_spanner_database()
+    last_event_id = request.headers.get("Last-Event-ID", "").strip()
+    try:
+        cursor = _decode_receipt_cursor(last_event_id) if last_event_id else None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="INVALID_LAST_EVENT_ID") from exc
+
+    return StreamingResponse(
+        _stream_committed_receipts(
+            request=request,
+            db=db,
+            tenant_id=tenant_id,
+            cursor=cursor,
+            poll_interval=float(os.getenv("SSE_POLL_INTERVAL_SECONDS", "1.0")),
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 # -------------------------------------------------------------------
