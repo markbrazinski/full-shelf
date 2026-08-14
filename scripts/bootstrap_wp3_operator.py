@@ -36,14 +36,178 @@ def _page(client_id: str, nonce: str) -> bytes:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Full Shelf operator bootstrap</title>
+  <meta name="color-scheme" content="dark">
+  <title>Approve plan revision · Full Shelf</title>
+  <style nonce="{nonce}">
+    :root {{
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system,
+        BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #f8fafc;
+      background: #07111f;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      min-height: 100vh;
+      margin: 0;
+      display: grid;
+      place-items: center;
+      padding: 32px 20px;
+      background:
+        radial-gradient(circle at 18% 12%, rgba(34, 197, 94, .13), transparent 34%),
+        radial-gradient(circle at 84% 88%, rgba(59, 130, 246, .10), transparent 38%),
+        #07111f;
+    }}
+    main {{ width: min(100%, 480px); }}
+    .brand {{
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin: 0 0 18px;
+      color: #cbd5e1;
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }}
+    .brand-mark {{
+      width: 36px;
+      height: 36px;
+      display: grid;
+      place-items: center;
+      border: 1px solid rgba(74, 222, 128, .32);
+      border-radius: 11px;
+      background: rgba(34, 197, 94, .12);
+      color: #86efac;
+      font-size: 12px;
+      letter-spacing: -.02em;
+    }}
+    .card {{
+      overflow: hidden;
+      border: 1px solid #243244;
+      border-radius: 22px;
+      background: rgba(15, 23, 42, .96);
+      box-shadow: 0 28px 80px rgba(0, 0, 0, .38);
+    }}
+    .card-accent {{ height: 4px; background: #22c55e; }}
+    .content {{ padding: 32px; }}
+    .eyebrow {{
+      margin: 0 0 10px;
+      color: #86efac;
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: .11em;
+      text-transform: uppercase;
+    }}
+    h1 {{
+      margin: 0;
+      font-size: clamp(28px, 6vw, 38px);
+      line-height: 1.08;
+      letter-spacing: -.035em;
+    }}
+    .lede {{
+      margin: 16px 0 0;
+      color: #aebdce;
+      font-size: 15px;
+      line-height: 1.6;
+    }}
+    .approval {{
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: center;
+      gap: 10px;
+      margin: 26px 0;
+      padding: 15px 16px;
+      border: 1px solid #2b3a4e;
+      border-radius: 14px;
+      background: #0b1525;
+    }}
+    .revision {{ font-size: 14px; font-weight: 750; }}
+    .revision:last-child {{ text-align: right; color: #86efac; }}
+    .arrow {{ color: #64748b; }}
+    .google-shell {{
+      width: 100%;
+      min-height: 46px;
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      border-radius: 8px;
+    }}
+    #google-button {{
+      width: 100%;
+      min-height: 44px;
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+    }}
+    #google-button > div,
+    #google-button iframe {{
+      max-width: 100% !important;
+      max-height: 44px !important;
+    }}
+    #google-button img,
+    #google-button svg {{
+      max-width: 24px !important;
+      max-height: 24px !important;
+    }}
+    .status {{
+      min-height: 22px;
+      margin: 16px 0 0;
+      color: #94a3b8;
+      font-size: 13px;
+      line-height: 1.5;
+      text-align: center;
+    }}
+    .status[data-state="success"] {{ color: #86efac; }}
+    .status[data-state="error"] {{ color: #fca5a5; }}
+    .security {{
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+      margin: 24px 0 0;
+      padding-top: 20px;
+      border-top: 1px solid #243244;
+      color: #7f91a7;
+      font-size: 12px;
+      line-height: 1.55;
+    }}
+    .security-icon {{ color: #86efac; font-size: 15px; line-height: 1.2; }}
+    @media (max-width: 520px) {{
+      .content {{ padding: 26px 22px; }}
+    }}
+  </style>
   <script src="https://accounts.google.com/gsi/client" async></script>
 </head>
 <body>
-  <h1>Full Shelf operator bootstrap</h1>
-  <p>Sign in with the Google account that will approve rev08.</p>
-  <div id="google-button"></div>
-  <p id="result"></p>
+  <main>
+    <div class="brand"><span class="brand-mark">FS</span> Full Shelf</div>
+    <section class="card" aria-labelledby="page-title">
+      <div class="card-accent"></div>
+      <div class="content">
+        <p class="eyebrow">Governed operator action</p>
+        <h1 id="page-title">Approve plan revision</h1>
+        <p class="lede">
+          Verify your authorized Google identity to bind and activate this
+          repair through the deployed approval boundary.
+        </p>
+        <div class="approval" aria-label="Plan revision rev07 to rev08">
+          <span class="revision">rev07</span>
+          <span class="arrow" aria-hidden="true">→</span>
+          <span class="revision">rev08</span>
+        </div>
+        <div class="google-shell">
+          <div id="google-button"></div>
+        </div>
+        <p id="result" class="status" role="status" aria-live="polite">
+          Select the allowlisted operator account to continue.
+        </p>
+        <div class="security">
+          <span class="security-icon" aria-hidden="true">●</span>
+          <span>Your Google credential is verified in memory and is never
+          printed or written to disk.</span>
+        </div>
+      </div>
+    </section>
+  </main>
   <script nonce="{nonce}">
     const clientId = {client_json};
     const bootstrapNonce = {nonce_json};
@@ -51,6 +215,9 @@ def _page(client_id: str, nonce: str) -> bytes:
       google.accounts.id.initialize({{
         client_id: clientId,
         callback: async (response) => {{
+          const status = document.getElementById('result');
+          status.dataset.state = 'pending';
+          status.textContent = 'Verifying identity and submitting approval…';
           const result = await fetch('/verify', {{
             method: 'POST',
             headers: {{'Content-Type': 'application/json'}},
@@ -59,14 +226,21 @@ def _page(client_id: str, nonce: str) -> bytes:
               nonce: bootstrapNonce
             }})
           }});
-          document.getElementById('result').textContent = result.ok
-            ? 'Verified. Return to the terminal.'
-            : 'Verification failed. Check the terminal.';
+          status.dataset.state = result.ok ? 'success' : 'error';
+          status.textContent = result.ok
+            ? 'Approval recorded. You can return to the terminal.'
+            : 'Approval could not be completed. Check the terminal.';
         }}
       }});
       google.accounts.id.renderButton(
         document.getElementById('google-button'),
-        {{theme: 'outline', size: 'large', text: 'signin_with'}}
+        {{
+          theme: 'filled_black',
+          size: 'large',
+          text: 'continue_with',
+          shape: 'rectangular',
+          width: 360
+        }}
       );
     }};
   </script>
@@ -103,7 +277,10 @@ class Handler(BaseHTTPRequestHandler):
             "https://accounts.google.com/gsi/client; "
             "frame-src https://accounts.google.com/gsi/; "
             "connect-src 'self' https://accounts.google.com/gsi/; "
-            "style-src 'self' https://accounts.google.com/gsi/style",
+            f"style-src 'self' 'nonce-{self.server.nonce}' "
+            "https://accounts.google.com/gsi/style; "
+            "img-src 'self' data: https://accounts.google.com "
+            "https://*.gstatic.com",
         )
         self.end_headers()
 
