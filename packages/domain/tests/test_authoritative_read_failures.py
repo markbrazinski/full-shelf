@@ -20,6 +20,10 @@ class EmptyDatabase:
 
 
 def test_missing_active_revision_never_falls_back_to_rev07(monkeypatch):
-    monkeypatch.setattr(spanner_module, "get_spanner_database", lambda: EmptyDatabase())
+    monkeypatch.setattr(
+        spanner_module,
+        "get_spanner_database",
+        lambda database_id=None: EmptyDatabase(),
+    )
     with pytest.raises(LookupError, match="No active plan revision"):
         spanner_module.get_active_plan_revision("audit-tenant-with-no-plan")

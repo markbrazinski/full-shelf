@@ -54,7 +54,7 @@ def successful_extraction(correlation_id):
 def test_hero_loop_model_failure_halts_before_ledger(monkeypatch):
     monkeypatch.setattr(orchestrator, "verify_judge_key", lambda value: None)
     monkeypatch.setattr(orchestrator, "generate_trace_id", lambda: "corr-hero-fail")
-    monkeypatch.setattr(orchestrator, "get_spanner_database", lambda: object())
+    monkeypatch.setattr(orchestrator, "get_spanner_database", lambda database_id=None: object())
     monkeypatch.setattr(
         orchestrator,
         "inspect_recall_notice_with_model_armor",

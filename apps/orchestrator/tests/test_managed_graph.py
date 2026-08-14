@@ -93,7 +93,11 @@ def test_altered_endpoint_uses_only_configured_audit_database():
     client = TestClient(orchestrator_main.app)
 
     with (
-        patch.object(orchestrator_main, "GRAPH_AUDIT_DATABASE", "full-shelf-audit-wp6-20260813"),
+        patch.dict(os.environ, {
+            "SPANNER_DATABASE_ID": "full-shelf-main",
+            "AUDIT_SPANNER_DATABASE_ID": "full-shelf-audit-wp6-20260813",
+            "AUDIT_TENANT_IDS": "wp8-altered-audit",
+        }),
         patch.object(orchestrator_main, "verify_judge_key"),
         patch.object(orchestrator_main, "get_spanner_database", return_value=db) as get_db,
     ):

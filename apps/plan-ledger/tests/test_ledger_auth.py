@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi.testclient import TestClient
 
 from full_shelf_domain.identity import VerifiedGoogleIdentity
+from full_shelf_domain.ledger_commands import LedgerCommand
 
 
 ledger_main_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src", "main.py"))
@@ -159,3 +160,57 @@ def test_approval_route_requires_independent_human_token_before_kms(monkeypatch)
     assert response.status_code == 401
     assert response.json()["detail"] == "OPERATOR_GOOGLE_ID_TOKEN_REQUIRED"
     assert kms_called is False
+
+
+def test_command_executor_routes_audit_tenant_to_isolated_database(monkeypatch):
+    monkeypatch.setenv("SPANNER_DATABASE_ID", "full-shelf-main")
+    monkeypatch.setenv("AUDIT_SPANNER_DATABASE_ID", "full-shelf-audit")
+    monkeypatch.setenv("AUDIT_TENANT_IDS", "audit-canonical")
+    selected = {}
+
+    class Executor:
+        def __init__(self, database, *, allowed_tenant_ids):
+            selected["database"] = database
+            selected["allowed_tenant_ids"] = allowed_tenant_ids
+
+        def execute(self, command, caller):
+            selected["command"] = command
+            return "committed"
+
+    monkeypatch.setattr(
+        ledger_main,
+        "get_spanner_database",
+        lambda database_id=None: f"database:{database_id}",
+    )
+    monkeypatch.setattr(ledger_main, "SpannerLedgerCommandExecutor", Executor)
+    command = LedgerCommand.model_validate(
+        {
+            "command_id": "CMD-AUDIT-ROUTE",
+            "idempotency_key": "audit-route",
+            "tenant_id": "audit-canonical",
+            "incident_id": "INC-AUDIT",
+            "agent_role": "FULFILLMENT_RECOVERY_PLANNER",
+            "command_type": "SAVE_PLAN_REVISION",
+            "expected_plan_revision": "rev07",
+            "trace_id": "0123456789abcdef0123456789abcdef",
+            "payload": {
+                "plan_id": "PLAN-AUDIT",
+                "revision": "rev07",
+                "status": "ACTIVE",
+            },
+        }
+    )
+    caller = VerifiedGoogleIdentity(
+        subject="orchestrator-subject",
+        email="orchestrator@example.iam.gserviceaccount.com",
+        audience="https://ledger.example.run.app",
+        issuer="https://accounts.google.com",
+        expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+    )
+
+    assert ledger_main._execute_command(command, caller) == "committed"
+    assert selected["database"] == "database:full-shelf-audit"
+    assert selected["allowed_tenant_ids"] == {
+        "east-bay-food-bank",
+        "audit-canonical",
+    }

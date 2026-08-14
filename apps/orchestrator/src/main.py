@@ -24,6 +24,11 @@ from full_shelf_domain.identity import (
     GoogleOidcVerifier, IdentityConfigurationError, InvalidIdentityToken,
     MissingIdentityToken, UnauthorizedIdentity, fetch_google_id_token,
 )
+from full_shelf_domain.authority import (
+    AuthorityConfigurationError,
+    AuthorityScopeResolver,
+    UnauthorizedAuthorityScope,
+)
 from full_shelf_domain.recall import (
     inspect_recall_notice_with_model_armor,
     extract_recall_entities_with_gemini_35,
@@ -59,7 +64,6 @@ async def managed_request_trace(request: Request, call_next):
 PROJECT_ID = os.getenv("GCP_PROJECT_ID", "preflight-hackathon")
 SPANNER_INSTANCE = os.getenv("SPANNER_INSTANCE_ID", "fef-smoke-spanner")
 SPANNER_DATABASE = os.getenv("SPANNER_DATABASE_ID", "full-shelf-main")
-GRAPH_AUDIT_DATABASE = os.getenv("GRAPH_AUDIT_DATABASE_ID", "")
 PLAN_LEDGER_URL = os.getenv("PLAN_LEDGER_URL", "")
 PLAN_LEDGER_AUDIENCE = os.getenv("PLAN_LEDGER_AUDIENCE", "")
 MANAGED_CALLBACK_AUDIENCE = os.getenv("MANAGED_CALLBACK_AUDIENCE", "")
@@ -209,6 +213,7 @@ def approve_and_activate(
 ):
     """Validate the human token, then preserve it for independent ledger verification."""
     operator = _verify_operator(authorization)
+    _resolve_authority_scope(proposal.tenant_id)
     if proposal.source_revision != "rev07" or proposal.proposed_revision != "rev08":
         raise HTTPException(409, "CANONICAL_REVISION_TRANSITION_REQUIRED")
     response = post_to_plan_ledger(
@@ -229,6 +234,18 @@ def get_spanner_database(database_id: Optional[str] = None):
     spanner_client = spanner.Client(project=PROJECT_ID)
     instance = spanner_client.instance(SPANNER_INSTANCE)
     return instance.database(database_id or SPANNER_DATABASE)
+
+
+def _resolve_authority_scope(tenant_id: str):
+    """Resolve request tenant to a deployment-owned database mapping."""
+    try:
+        return AuthorityScopeResolver.from_environment().resolve(tenant_id)
+    except AuthorityConfigurationError as exc:
+        raise HTTPException(
+            status_code=503, detail="ORCHESTRATOR_AUTHORITY_BOUNDARY_NOT_CONFIGURED"
+        ) from exc
+    except UnauthorizedAuthorityScope as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 
 CUSTODY_GRAPH_GQL = """
@@ -352,6 +369,7 @@ def startup_checks():
     if not all((MANAGED_CALLBACK_AUDIENCE, MANAGED_CALLBACK_SERVICE_ACCOUNT_EMAIL,
                 MANAGED_CALLBACK_SERVICE_ACCOUNT_SUBJECT)):
         raise RuntimeError("Managed callback OIDC configuration must be complete")
+    AuthorityScopeResolver.from_environment()
     print(f"Orchestrator container started. Model configured: {MODEL_ID}, Location: {VERTEX_LOCATION}")
     if not is_eligible_gemini_model(MODEL_ID):
         raise RuntimeError(f"Configured model {MODEL_ID} is ineligible. Gemini 3.5 or newer is required.")
@@ -382,7 +400,8 @@ def healthz_check():
 def _generate_daily_morning_plan(tenant_id: str) -> Dict[str, Any]:
     """Generates canonical morning plan rev07 from authoritative inputs."""
     trace_id = generate_trace_id()
-    db = get_spanner_database()
+    scope = _resolve_authority_scope(tenant_id)
+    db = get_spanner_database(scope.database_id)
 
     # Check if rev07 already exists (idempotency check)
     existing_rev = None
@@ -476,8 +495,13 @@ def s2s_dispatch(
 # -------------------------------------------------------------------
 
 @app.post("/api/v1/orchestrator/coordinator/persist-waiting")
-def persist_coordinator_waiting(tenant_id: str = "east-bay-food-bank"):
+def persist_coordinator_waiting(
+    tenant_id: str = "east-bay-food-bank",
+    x_api_key: Optional[str] = Header(None, alias="X-Full-Shelf-API-Key"),
+):
     """Persists day coordinator in WAITING_FOR_EVENTS state in Spanner after rev08."""
+    verify_judge_key(x_api_key)
+    _resolve_authority_scope(tenant_id)
     now = datetime.now(timezone.utc)
     trace_id = generate_trace_id()
     coord_id = "COORD-2026-0807"
@@ -530,10 +554,7 @@ def handle_site01_deadline_callback(
     site_id = (payload or {}).get("site_id", "SITE-01")
     tenant_id = (payload or {}).get("tenant_id", "east-bay-food-bank")
     task_decision_id = (payload or {}).get("task_decision_id")
-    if (tenant_id, incident_id, site_id) != (
-        "east-bay-food-bank", "INC-RECALL-01", "SITE-01"
-    ):
-        raise HTTPException(403, "CLOUD_TASK_SCOPE_NOT_ALLOWED")
+    _resolve_authority_scope(tenant_id)
     if not task_decision_id or not (
         task_name == task_decision_id
         or task_name.endswith(f"/tasks/{task_decision_id}")
@@ -590,7 +611,8 @@ def schedule_site01_escalation(
 ):
     """Make the deployed decision that automatically creates the durable task."""
     verify_judge_key(x_api_key)
-    db = get_spanner_database()
+    scope = _resolve_authority_scope(tenant_id)
+    db = get_spanner_database(scope.database_id)
     try:
         with db.snapshot(multi_use=True) as snapshot:
             recall = list(snapshot.execute_sql(
@@ -651,7 +673,6 @@ def handle_pubsub_push(
     """Handles real Pub/Sub wake-and-resume event pushing to Cloud Run orchestrator."""
     caller = _verify_managed_callback(authorization)
     trace_id = generate_trace_id()
-    db = get_spanner_database()
 
     message = payload.get("message", {})
     message_id = message.get("messageId")
@@ -669,8 +690,10 @@ def handle_pubsub_push(
     event_type = event_data.get("event_type", "") or message.get("attributes", {}).get("event_type", "")
 
     tenant_id = event_data.get("tenant_id")
-    if tenant_id != "east-bay-food-bank":
-        raise HTTPException(status_code=403, detail="PUBSUB_TENANT_NOT_ALLOWED")
+    if not isinstance(tenant_id, str):
+        raise HTTPException(status_code=400, detail="PUBSUB_TENANT_REQUIRED")
+    scope = _resolve_authority_scope(tenant_id)
+    db = get_spanner_database(scope.database_id)
 
     if event_type == "PLAN_NEXT_DAY_REQUESTED":
         next_day_res = _generate_next_day_plan(
@@ -707,9 +730,13 @@ def handle_pubsub_push(
     try:
         with db.snapshot() as snapshot:
             results = snapshot.execute_sql(
-                "SELECT state, checkpoint, active_plan_revision FROM Coordinators WHERE tenant_id = 'east-bay-food-bank' AND coordinator_id = @cid",
-                params={"cid": coord_id},
-                param_types={"cid": spanner.param_types.STRING}
+                "SELECT state, checkpoint, active_plan_revision FROM Coordinators "
+                "WHERE tenant_id = @tenant_id AND coordinator_id = @cid",
+                params={"tenant_id": tenant_id, "cid": coord_id},
+                param_types={
+                    "tenant_id": spanner.param_types.STRING,
+                    "cid": spanner.param_types.STRING,
+                }
             )
             for row in results:
                 coord_state, chk, active_rev = row[0], row[1], row[2]
@@ -722,7 +749,10 @@ def handle_pubsub_push(
     try:
         with db.snapshot() as snapshot:
             res = snapshot.execute_sql(
-                "SELECT status FROM Incidents WHERE tenant_id = 'east-bay-food-bank' AND incident_id = 'INC-RECALL-01'"
+                "SELECT status FROM Incidents WHERE tenant_id = @tenant_id "
+                "AND incident_id = 'INC-RECALL-01'",
+                params={"tenant_id": tenant_id},
+                param_types={"tenant_id": spanner.param_types.STRING},
             )
             for row in res:
                 incident_exists = True
@@ -733,7 +763,7 @@ def handle_pubsub_push(
         ledger_result = execute_ledger_command(
             command_id=f"CMD-PUBSUB-{message_id}",
             idempotency_key=f"pubsub:{message_id}:open-recall",
-            tenant_id="east-bay-food-bank",
+            tenant_id=tenant_id,
             incident_id="INC-RECALL-01",
             agent_role="INCIDENT_COORDINATOR",
             command_type="OPEN_RECALL_INCIDENT",
@@ -783,11 +813,10 @@ def get_custody_graph_reconstruction(
         tenant_id = "east-bay-food-bank"
         lot_id = "LTC-4471"
     else:
-        if not GRAPH_AUDIT_DATABASE:
-            raise HTTPException(status_code=503, detail="ALTERED_GRAPH_AUDIT_DATABASE_NOT_CONFIGURED")
-        database_id = GRAPH_AUDIT_DATABASE
         tenant_id = "wp8-altered-audit"
         lot_id = "ALT-LOT-9001"
+    scope = _resolve_authority_scope(tenant_id)
+    database_id = scope.database_id
 
     try:
         result = _run_managed_custody_graph(
@@ -812,7 +841,8 @@ def execute_hero_loop(
     """Executes complete recall hero loop across Pub/Sub, Model Armor, Gemini 3.5, Spanner Graph, Plan Ledger, KMS, and Cloud Tasks."""
     verify_judge_key(x_api_key)
     trace_id = generate_trace_id()
-    db = get_spanner_database()
+    scope = _resolve_authority_scope(tenant_id)
+    db = get_spanner_database(scope.database_id)
 
     # Step 1: Model Armor Screening
     raw_notice = "REPRESENTATIVE DEMO NOTICE — FDA Enforcement Report #2026-0807-L4: Urgent recall issued for Lot LTC-4471 (Romaine Lettuce) due to contamination with E. coli O157:H7. Action: PAUSE_DISPATCH_AND_QUARANTINE."
@@ -1200,8 +1230,14 @@ def trigger_recall_hero_loop(
 
 
 @app.get("/api/v1/orchestrator/recall/incident-status")
-def get_incident_status(incident_id: str = Query("INC-RECALL-01"), tenant_id: str = "east-bay-food-bank"):
-    db = get_spanner_database()
+def get_incident_status(
+    incident_id: str = Query("INC-RECALL-01"),
+    tenant_id: str = "east-bay-food-bank",
+    x_api_key: Optional[str] = Header(None, alias="X-Full-Shelf-API-Key"),
+):
+    verify_judge_key(x_api_key)
+    scope = _resolve_authority_scope(tenant_id)
+    db = get_spanner_database(scope.database_id)
     incident_data = {}
     with db.snapshot() as snapshot:
         rows = list(snapshot.execute_sql(
@@ -1246,7 +1282,8 @@ def _generate_next_day_plan(
 ) -> Dict[str, Any]:
     """Derive and command one governed draft from authoritative unresolved state."""
     trace_id = generate_trace_id()
-    db = get_spanner_database()
+    scope = _resolve_authority_scope(tenant_id)
+    db = get_spanner_database(scope.database_id)
     publish_datetime = _parse_managed_publish_time(source_publish_time)
     operating_date = (
         publish_datetime.astimezone(ZoneInfo(OPERATING_TIME_ZONE)).date()
@@ -1453,7 +1490,8 @@ def get_system_evidence(
     """Return independently classified evidence from this exact execution."""
     verify_judge_key(x_api_key)
     trace_id = generate_trace_id()
-    db = get_spanner_database()
+    scope = _resolve_authority_scope(tenant_id)
+    db = get_spanner_database(scope.database_id)
 
     def read_rows(sql: str):
         with db.snapshot() as snapshot:
@@ -1601,7 +1639,8 @@ def get_system_evidence(
                 "classification": latest_receipt["classification"],
             },
             "spanner_database": {
-                "path": f"projects/{PROJECT_ID}/instances/{SPANNER_INSTANCE}/databases/{SPANNER_DATABASE}",
+                "path": f"projects/{PROJECT_ID}/instances/{SPANNER_INSTANCE}/databases/{scope.database_id}",
+                "authority_scope_kind": scope.kind,
                 "classification": ground_truth["classification"],
             },
             "spanner_graph": graph_evidence,
@@ -1927,9 +1966,15 @@ async def _stream_committed_receipts(
 
 
 @app.get("/api/v1/projections/stream")
-async def stream_projections(request: Request, tenant_id: str = "east-bay-food-bank"):
+async def stream_projections(
+    request: Request,
+    tenant_id: str = "east-bay-food-bank",
+    x_api_key: Optional[str] = Header(None, alias="X-Full-Shelf-API-Key"),
+):
     """Tail committed Spanner receipts and resume strictly after Last-Event-ID."""
-    db = get_spanner_database()
+    verify_judge_key(x_api_key)
+    scope = _resolve_authority_scope(tenant_id)
+    db = get_spanner_database(scope.database_id)
     last_event_id = request.headers.get("Last-Event-ID", "").strip()
     try:
         cursor = _decode_receipt_cursor(last_event_id) if last_event_id else None
@@ -1970,8 +2015,13 @@ def reset_demo_state(
 
 
 @app.post("/api/v1/demo/seed")
-def seed_demo_state(tenant_id: str = "east-bay-food-bank"):
+def seed_demo_state(
+    tenant_id: str = "east-bay-food-bank",
+    x_api_key: Optional[str] = Header(None, alias="X-Full-Shelf-API-Key"),
+):
     """Production startup/demo seeding is disabled."""
+    verify_judge_key(x_api_key)
+    _resolve_authority_scope(tenant_id)
     raise HTTPException(
         status_code=410,
         detail="PRODUCTION_SEED_DISABLED_USE_ISOLATED_AUDIT_DATABASE",

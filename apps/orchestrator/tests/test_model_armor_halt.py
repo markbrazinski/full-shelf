@@ -10,7 +10,7 @@ spec.loader.exec_module(orchestrator)
 
 def test_model_armor_failure_halts_before_gemini_or_mutation(monkeypatch):
     monkeypatch.setattr(orchestrator, "verify_judge_key", lambda value: None)
-    monkeypatch.setattr(orchestrator, "get_spanner_database", lambda: object())
+    monkeypatch.setattr(orchestrator, "get_spanner_database", lambda database_id=None: object())
     monkeypatch.setattr(orchestrator, "inspect_recall_notice_with_model_armor", lambda text: {
         "status": "SERVICE_UNAVAILABLE", "safety_verdict": "BLOCKED_API_FAILURE",
         "managed_operation": "sanitizeUserPrompt",
@@ -29,7 +29,7 @@ def test_model_armor_failure_halts_before_gemini_or_mutation(monkeypatch):
 
 def test_model_armor_match_halts_before_gemini_or_mutation(monkeypatch):
     monkeypatch.setattr(orchestrator, "verify_judge_key", lambda value: None)
-    monkeypatch.setattr(orchestrator, "get_spanner_database", lambda: object())
+    monkeypatch.setattr(orchestrator, "get_spanner_database", lambda database_id=None: object())
     monkeypatch.setattr(orchestrator, "inspect_recall_notice_with_model_armor", lambda text: {
         "status": "BLOCKED", "safety_verdict": "FAILED_SAFETY_SCREENING",
         "managed_operation": "sanitizeUserPrompt",

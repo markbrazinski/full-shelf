@@ -12,18 +12,20 @@ PROJECT_ID = os.getenv("GCP_PROJECT_ID", "preflight-hackathon")
 _client = None
 
 
-def get_spanner_database():
+def get_spanner_database(database_id: str | None = None):
     global _client
     if _client is None:
         _client = spanner.Client(project=PROJECT_ID)
     instance = _client.instance(INSTANCE_ID)
-    return instance.database(DATABASE_ID)
+    return instance.database(database_id or DATABASE_ID)
 
 
-def get_active_plan_revision(tenant_id: str = "east-bay-food-bank") -> str:
+def get_active_plan_revision(
+    tenant_id: str = "east-bay-food-bank", database_id: str | None = None
+) -> str:
     """Read the active plan revision; never fabricate a canonical fallback."""
 
-    database = get_spanner_database()
+    database = get_spanner_database(database_id)
     with database.snapshot() as snapshot:
         results = list(
             snapshot.execute_sql(

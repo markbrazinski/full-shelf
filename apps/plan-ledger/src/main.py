@@ -20,6 +20,11 @@ from full_shelf_domain.identity import (
     UnauthorizedIdentity,
     VerifiedGoogleIdentity,
 )
+from full_shelf_domain.authority import (
+    AuthorityConfigurationError,
+    AuthorityScopeResolver,
+    UnauthorizedAuthorityScope,
+)
 from full_shelf_domain.ledger_commands import LedgerCommand
 from full_shelf_domain.ledger_executor import SpannerLedgerCommandExecutor
 from full_shelf_domain.reconciliation import reconcile_recall_graph
@@ -35,6 +40,12 @@ from full_shelf_observability import (
 
 app = FastAPI(title="Full Shelf Plan Ledger Service", version="1.1.0")
 tracer = get_tracer("plan-ledger")
+
+
+@app.on_event("startup")
+def startup_checks():
+    """Reject an ambiguous canonical/audit authority mapping at startup."""
+    AuthorityScopeResolver.from_environment()
 
 
 @app.middleware("http")
@@ -146,6 +157,7 @@ def approve_and_activate(
 ):
     """Independently authenticate the human, KMS-sign, persist, and activate."""
     operator = verify_human_operator(operator_authorization)
+    _resolve_authority_scope(req.tenant_id)
     if req.source_revision != "rev07" or req.proposed_revision != "rev08":
         raise HTTPException(409, "CANONICAL_REVISION_TRANSITION_REQUIRED")
     try:
@@ -218,19 +230,26 @@ def execute_ledger_command(
 
 def _execute_command(command: LedgerCommand, caller: VerifiedGoogleIdentity):
     """Single in-process entry to the deterministic transactional executor."""
-    allowed_tenants = {
-        value.strip()
-        for value in os.getenv("ALLOWED_TENANT_IDS", "").split(",")
-        if value.strip()
-    }
-    if not allowed_tenants:
-        raise HTTPException(status_code=503, detail="LEDGER_TENANT_BOUNDARY_NOT_CONFIGURED")
+    scope, resolver = _resolve_authority_scope(command.tenant_id)
     try:
         return SpannerLedgerCommandExecutor(
-            get_spanner_database(),
-            allowed_tenant_ids=allowed_tenants,
+            get_spanner_database(scope.database_id),
+            allowed_tenant_ids=set(resolver.allowed_tenant_ids),
         ).execute(command, caller)
     except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+def _resolve_authority_scope(tenant_id: str):
+    """Resolve tenant authority from deployment config, never request data."""
+    try:
+        resolver = AuthorityScopeResolver.from_environment()
+        return resolver.resolve(tenant_id), resolver
+    except AuthorityConfigurationError as exc:
+        raise HTTPException(
+            status_code=503, detail="LEDGER_AUTHORITY_BOUNDARY_NOT_CONFIGURED"
+        ) from exc
+    except UnauthorizedAuthorityScope as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 
@@ -266,12 +285,13 @@ def get_morning_plan_preview(
     caller: VerifiedGoogleIdentity = Depends(require_ledger_workload_identity),
 ):
     """Returns Morning Plan preview from Spanner database."""
-    db = get_spanner_database()
+    scope, _ = _resolve_authority_scope(tenant_id)
+    db = get_spanner_database(scope.database_id)
     trucks = []
     deliveries = []
 
     try:
-        active_rev = get_active_plan_revision(tenant_id)
+        active_rev = get_active_plan_revision(tenant_id, scope.database_id)
         with db.snapshot() as snapshot:
             truck_rows = snapshot.execute_sql(
                 "SELECT vehicle_id, name, max_capacity_cases, current_load_cases FROM Vehicles WHERE tenant_id = @tenant_id",
@@ -500,8 +520,9 @@ def site01_deadline_callback(payload: Dict[str, Any]):
     dependencies=[Depends(require_ledger_workload_identity)],
 )
 def spanner_reconciliation_endpoint(tenant_id: str = Query("east-bay-food-bank")):
-    db = get_spanner_database()
-    active_rev = get_active_plan_revision(tenant_id)
+    scope, _ = _resolve_authority_scope(tenant_id)
+    db = get_spanner_database(scope.database_id)
+    active_rev = get_active_plan_revision(tenant_id, scope.database_id)
 
     plan_records = []
     receipt_records = []
@@ -540,7 +561,8 @@ def spanner_reconciliation_endpoint(tenant_id: str = Query("east-bay-food-bank")
 
     return {
         "tenant_id": tenant_id,
-        "database_id": "full-shelf-main",
+        "authority_scope_kind": scope.kind,
+        "database_id": scope.database_id,
         "active_plan_revision": active_rev,
         "plan_revisions_count": len(plan_records),
         "plan_revisions": plan_records,

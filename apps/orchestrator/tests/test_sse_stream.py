@@ -159,7 +159,10 @@ def test_authoritative_read_failure_emits_truthful_error_then_closes():
 
 def test_endpoint_rejects_malformed_last_event_id_before_streaming():
     client = TestClient(orchestrator_main.app)
-    with patch.object(orchestrator_main, "get_spanner_database", return_value=MagicMock()):
+    with (
+        patch.object(orchestrator_main, "verify_judge_key"),
+        patch.object(orchestrator_main, "get_spanner_database", return_value=MagicMock()),
+    ):
         response = client.get(
             "/api/v1/projections/stream?tenant_id=east-bay-food-bank",
             headers={"Last-Event-ID": "evt-legacy-ambiguous"},
