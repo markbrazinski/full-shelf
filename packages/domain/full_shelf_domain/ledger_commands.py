@@ -21,6 +21,7 @@ class LedgerCommandType(str, Enum):
     SET_INCIDENT_STATUS = "SET_INCIDENT_STATUS"
     ACTIVATE_MOVEMENT_BARRIER = "ACTIVATE_MOVEMENT_BARRIER"
     RECORD_REFUSAL = "RECORD_REFUSAL"
+    CREATE_NEXT_DAY_DRAFT = "CREATE_NEXT_DAY_DRAFT"
 
 
 class StrictPayload(BaseModel):
@@ -112,6 +113,25 @@ class RecordAcknowledgmentHoldPayload(StrictPayload):
     site_id: str = Field(min_length=1, max_length=64)
     unconfirmed_cases: int = Field(gt=0)
     task_name: str = Field(min_length=1)
+    delivery_subject: str = Field(min_length=1, max_length=128)
+    delivery_email: str = Field(min_length=1, max_length=320)
+    delivery_audience: str = Field(min_length=1, max_length=512)
+
+
+class CreateNextDayDraftPayload(StrictPayload):
+    source_event_id: str = Field(min_length=1, max_length=256)
+    source_publish_time: str = Field(min_length=1, max_length=64)
+    operating_date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    plan_id: str = Field(min_length=1, max_length=64)
+    revision: Literal["rev01"]
+    status: Literal["DRAFT_WITH_CONSTRAINTS"]
+    coordinator_id: str = Field(min_length=1, max_length=64)
+    excluded_lot_id: str = Field(min_length=1, max_length=64)
+    shortfall_agency_id: str = Field(min_length=1, max_length=64)
+    shortfall_cases: int = Field(gt=0)
+    acknowledgment_site_id: str = Field(min_length=1, max_length=64)
+    unconfirmed_cases: int = Field(gt=0)
+    human_approval_required: Literal[True]
 
 
 class SetIncidentStatusPayload(StrictPayload):
@@ -149,6 +169,7 @@ PAYLOAD_MODELS: Dict[LedgerCommandType, Type[StrictPayload]] = {
     LedgerCommandType.SET_INCIDENT_STATUS: SetIncidentStatusPayload,
     LedgerCommandType.ACTIVATE_MOVEMENT_BARRIER: ActivateMovementBarrierPayload,
     LedgerCommandType.RECORD_REFUSAL: RecordRefusalPayload,
+    LedgerCommandType.CREATE_NEXT_DAY_DRAFT: CreateNextDayDraftPayload,
 }
 
 

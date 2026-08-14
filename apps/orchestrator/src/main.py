@@ -1,8 +1,9 @@
 import json
 import os
 import base64
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional, List
+from zoneinfo import ZoneInfo
 from fastapi import FastAPI, Header, HTTPException, Query, BackgroundTasks, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -41,6 +42,14 @@ SPANNER_INSTANCE = os.getenv("SPANNER_INSTANCE_ID", "fef-smoke-spanner")
 SPANNER_DATABASE = os.getenv("SPANNER_DATABASE_ID", "full-shelf-main")
 PLAN_LEDGER_URL = os.getenv("PLAN_LEDGER_URL", "")
 PLAN_LEDGER_AUDIENCE = os.getenv("PLAN_LEDGER_AUDIENCE", "")
+MANAGED_CALLBACK_AUDIENCE = os.getenv("MANAGED_CALLBACK_AUDIENCE", "")
+MANAGED_CALLBACK_SERVICE_ACCOUNT_EMAIL = os.getenv(
+    "MANAGED_CALLBACK_SERVICE_ACCOUNT_EMAIL", ""
+)
+MANAGED_CALLBACK_SERVICE_ACCOUNT_SUBJECT = os.getenv(
+    "MANAGED_CALLBACK_SERVICE_ACCOUNT_SUBJECT", ""
+)
+OPERATING_TIME_ZONE = os.getenv("OPERATING_TIME_ZONE", "America/Los_Angeles")
 
 
 def post_to_plan_ledger(
@@ -154,6 +163,24 @@ def _verify_operator(authorization: Optional[str]):
         raise HTTPException(403, "OPERATOR_GOOGLE_IDENTITY_NOT_ALLOWED") from exc
 
 
+def _verify_managed_callback(authorization: Optional[str]):
+    """Verify one Google-signed managed delivery token at the public service."""
+    try:
+        return GoogleOidcVerifier(
+            audience=MANAGED_CALLBACK_AUDIENCE,
+            allowed_subjects={MANAGED_CALLBACK_SERVICE_ACCOUNT_SUBJECT},
+            allowed_emails={MANAGED_CALLBACK_SERVICE_ACCOUNT_EMAIL},
+        ).verify_authorization(authorization)
+    except IdentityConfigurationError as exc:
+        raise HTTPException(503, "MANAGED_CALLBACK_IDENTITY_NOT_CONFIGURED") from exc
+    except MissingIdentityToken as exc:
+        raise HTTPException(401, "MANAGED_CALLBACK_GOOGLE_ID_TOKEN_REQUIRED") from exc
+    except InvalidIdentityToken as exc:
+        raise HTTPException(401, "MANAGED_CALLBACK_GOOGLE_ID_TOKEN_INVALID") from exc
+    except UnauthorizedIdentity as exc:
+        raise HTTPException(403, "MANAGED_CALLBACK_GOOGLE_IDENTITY_NOT_ALLOWED") from exc
+
+
 @app.post("/api/v1/orchestrator/approvals/approve-and-activate")
 def approve_and_activate(
     proposal: HumanApprovalProposal,
@@ -212,6 +239,9 @@ def startup_checks():
     """Reject an ineligible configured model without triggering a paid health call."""
     if not PLAN_LEDGER_URL or not PLAN_LEDGER_AUDIENCE:
         raise RuntimeError("PLAN_LEDGER_URL and PLAN_LEDGER_AUDIENCE must be configured")
+    if not all((MANAGED_CALLBACK_AUDIENCE, MANAGED_CALLBACK_SERVICE_ACCOUNT_EMAIL,
+                MANAGED_CALLBACK_SERVICE_ACCOUNT_SUBJECT)):
+        raise RuntimeError("Managed callback OIDC configuration must be complete")
     print(f"Orchestrator container started. Model configured: {MODEL_ID}, Location: {VERTEX_LOCATION}")
     if not is_eligible_gemini_model(MODEL_ID):
         raise RuntimeError(f"Configured model {MODEL_ID} is ineligible. Gemini 3.5 or newer is required.")
@@ -239,13 +269,8 @@ def healthz_check():
 # GATE B — DAILY PLAN CREATION
 # -------------------------------------------------------------------
 
-@app.post("/api/v1/orchestrator/daily-plan/generate")
-def generate_daily_morning_plan(
-    tenant_id: str = Query("east-bay-food-bank"),
-    x_api_key: Optional[str] = Header(None, alias="X-Full-Shelf-API-Key")
-):
+def _generate_daily_morning_plan(tenant_id: str) -> Dict[str, Any]:
     """Generates canonical morning plan rev07 from authoritative inputs."""
-    verify_judge_key(x_api_key)
     trace_id = generate_trace_id()
     db = get_spanner_database()
 
@@ -314,6 +339,15 @@ def generate_daily_morning_plan(
     }
 
 
+@app.post("/api/v1/orchestrator/daily-plan/generate")
+def generate_daily_morning_plan(
+    tenant_id: str = Query("east-bay-food-bank"),
+    x_api_key: Optional[str] = Header(None, alias="X-Full-Shelf-API-Key"),
+):
+    verify_judge_key(x_api_key)
+    return _generate_daily_morning_plan(tenant_id)
+
+
 # -------------------------------------------------------------------
 # GATE C — S2S DISPATCH & SPANNER AUTH PROOF
 # -------------------------------------------------------------------
@@ -376,20 +410,28 @@ def handle_site01_deadline_callback(
     authorization: Optional[str] = Header(None)
 ):
     """Authenticated Cloud Task callback for Site 01 acknowledgment deadline hold."""
+    caller = _verify_managed_callback(authorization)
     task_name = req.headers.get("X-CloudTasks-TaskName")
-    if not authorization and not task_name and not req.headers.get("X-AppEngine-QueueName"):
-        # Enforce authentication or Cloud Tasks context
-        print("Note: Unauthenticated direct POST to site01-deadline callback without Cloud Tasks headers.")
+    queue_name = req.headers.get("X-CloudTasks-QueueName")
+    if not task_name or queue_name != "full-shelf-deadlines":
+        raise HTTPException(400, "CLOUD_TASK_DELIVERY_CONTEXT_REQUIRED")
 
     incident_id = (payload or {}).get("incident_id", "INC-RECALL-01")
     site_id = (payload or {}).get("site_id", "SITE-01")
     tenant_id = (payload or {}).get("tenant_id", "east-bay-food-bank")
+    task_decision_id = (payload or {}).get("task_decision_id")
+    if (tenant_id, incident_id, site_id) != (
+        "east-bay-food-bank", "INC-RECALL-01", "SITE-01"
+    ):
+        raise HTTPException(403, "CLOUD_TASK_SCOPE_NOT_ALLOWED")
+    if not task_decision_id or not task_name.endswith(f"/tasks/{task_decision_id}"):
+        raise HTTPException(400, "CLOUD_TASK_NAME_PAYLOAD_MISMATCH")
 
     now = datetime.now(timezone.utc).isoformat()
     trace_id = generate_trace_id()
     ledger_result = execute_ledger_command(
-        command_id=f"CMD-{incident_id}-SITE01-HOLD",
-        idempotency_key=task_name or f"{tenant_id}:{incident_id}:site01-hold",
+        command_id=f"CMD-SITE01-{task_decision_id[-40:]}",
+        idempotency_key=f"cloud-task:{task_decision_id}",
         tenant_id=tenant_id,
         incident_id=incident_id,
         agent_role="PARTNER_OPERATIONS_AGENT",
@@ -401,8 +443,11 @@ def handle_site01_deadline_callback(
             "coordinator_id": "COORD-2026-0807",
             "lot_id": "LTC-4471",
             "site_id": site_id,
-            "affected_cases": 8,
-            "task_name": task_name or "UNVERIFIED_DIRECT_CALLBACK",
+            "unconfirmed_cases": 8,
+            "task_name": task_name,
+            "delivery_subject": caller.subject,
+            "delivery_email": caller.email,
+            "delivery_audience": caller.audience,
         },
     )
 
@@ -411,20 +456,89 @@ def handle_site01_deadline_callback(
         "site_id": site_id,
         "incident_id": incident_id,
         "unconfirmed_cases": 8,
-        "authenticated_task": task_name is not None or authorization is not None,
+        "authenticated_task": True,
+        "task_name": task_name,
+        "delivery_identity": caller.email,
+        "delivery_subject": caller.subject,
+        "delivery_audience": caller.audience,
+        "idempotent_replay": ledger_result["idempotent_replay"],
         "timestamp": now,
         "ledger_receipt": ledger_result["receipt"],
     }
 
 
+@app.post("/api/v1/orchestrator/site01-escalation/schedule")
+def schedule_site01_escalation(
+    x_api_key: Optional[str] = Header(None, alias="X-Full-Shelf-API-Key"),
+    tenant_id: str = Query("east-bay-food-bank"),
+):
+    """Make the deployed decision that automatically creates the durable task."""
+    verify_judge_key(x_api_key)
+    db = get_spanner_database()
+    try:
+        with db.snapshot() as snapshot:
+            recall = list(snapshot.execute_sql(
+                "SELECT status FROM Incidents WHERE tenant_id = @t "
+                "AND incident_id = 'INC-RECALL-01'",
+                params={"t": tenant_id},
+                param_types={"t": spanner.param_types.STRING},
+            ))
+            holds = list(snapshot.execute_sql(
+                "SELECT details FROM Incidents WHERE tenant_id = @t "
+                "AND incident_type = 'DEADLINE_HOLD' "
+                "AND status = 'ACKNOWLEDGMENT_HOLD_ACTIVE'",
+                params={"t": tenant_id},
+                param_types={"t": spanner.param_types.STRING},
+            ))
+    except Exception as exc:
+        raise HTTPException(503, "AUTHORITATIVE_ESCALATION_READ_UNAVAILABLE") from exc
+    hold_open = False
+    for row in holds:
+        try:
+            details = json.loads(row[0] or "{}")
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if details.get("site_id") == "SITE-01" and details.get("unconfirmed_cases") == 8:
+            hold_open = True
+            break
+    if not recall or recall[0][0] != "PARTIALLY_CONTAINED" or not hold_open:
+        raise HTTPException(409, "SITE01_ESCALATION_PRECONDITIONS_NOT_MET")
+
+    decision_id = f"site01-{generate_trace_id()}"
+    task = schedule_site01_deadline_task(
+        "INC-RECALL-01",
+        task_id=decision_id,
+        oidc_audience=MANAGED_CALLBACK_AUDIENCE,
+        delivery_service_account=MANAGED_CALLBACK_SERVICE_ACCOUNT_EMAIL,
+    )
+    evidence = {
+        "event": "SITE01_ESCALATION_TASK_CREATED",
+        "decision_id": decision_id,
+        "task_name": task["task_name"],
+        "queue": task["queue"],
+        "target_url": task["target_url"],
+        "oidc_audience": task["oidc_audience"],
+        "delivery_service_account": task["delivery_service_account"],
+    }
+    print(json.dumps(evidence, sort_keys=True))
+    return {"status": "SITE01_ESCALATION_SCHEDULED", **evidence}
+
+
 @app.post("/api/v1/orchestrator/pubsub/push")
-def handle_pubsub_push(payload: Dict[str, Any]):
+def handle_pubsub_push(
+    payload: Dict[str, Any],
+    authorization: Optional[str] = Header(None),
+):
     """Handles real Pub/Sub wake-and-resume event pushing to Cloud Run orchestrator."""
+    caller = _verify_managed_callback(authorization)
     trace_id = generate_trace_id()
     db = get_spanner_database()
 
     message = payload.get("message", {})
-    message_id = message.get("messageId", f"MSG-{trace_id[:8]}")
+    message_id = message.get("messageId")
+    publish_time = message.get("publishTime")
+    if not message_id or not publish_time:
+        raise HTTPException(status_code=400, detail="PUBSUB_MESSAGE_ID_AND_PUBLISH_TIME_REQUIRED")
     data_b64 = message.get("data", "")
     event_data = {}
     try:
@@ -435,23 +549,35 @@ def handle_pubsub_push(payload: Dict[str, Any]):
 
     event_type = event_data.get("event_type", "") or message.get("attributes", {}).get("event_type", "")
 
+    tenant_id = event_data.get("tenant_id")
+    if tenant_id != "east-bay-food-bank":
+        raise HTTPException(status_code=403, detail="PUBSUB_TENANT_NOT_ALLOWED")
+
     if event_type == "PLAN_NEXT_DAY_REQUESTED":
-        next_day_res = generate_next_day_plan(tenant_id="east-bay-food-bank")
+        next_day_res = _generate_next_day_plan(
+            tenant_id=tenant_id,
+            source_event_id=message_id,
+            source_publish_time=publish_time,
+        )
         return {
             "status": "SCHEDULER_NEXT_DAY_PLAN_GENERATED",
             "message_id": message_id,
             "event_type": "PLAN_NEXT_DAY_REQUESTED",
             "next_day_plan_result": next_day_res,
+            "delivery_identity": caller.email,
+            "delivery_audience": caller.audience,
             "trace_id": trace_id
         }
 
     if event_type == "PLAN_DAY_REQUESTED":
-        day_res = generate_daily_morning_plan(tenant_id="east-bay-food-bank")
+        day_res = _generate_daily_morning_plan(tenant_id=tenant_id)
         return {
             "status": "SCHEDULER_DAILY_PLAN_GENERATED",
             "message_id": message_id,
             "event_type": "PLAN_DAY_REQUESTED",
             "daily_plan_result": day_res,
+            "delivery_identity": caller.email,
+            "delivery_audience": caller.audience,
             "trace_id": trace_id
         }
 
@@ -708,7 +834,12 @@ def execute_hero_loop(
     }
 
     # Step 7: Schedule Cloud Task for Site 01 deadline
-    task_res = schedule_site01_deadline_task("INC-RECALL-01")
+    task_res = schedule_site01_deadline_task(
+        "INC-RECALL-01",
+        task_id=f"site01-{trace_id}",
+        oidc_audience=MANAGED_CALLBACK_AUDIENCE,
+        delivery_service_account=MANAGED_CALLBACK_SERVICE_ACCOUNT_EMAIL,
+    )
 
     # Step 8: Terminal calculation -> PARTIALLY_CONTAINED
     IncidentLifecycleManager.validate_transition("CONTAINMENT_IN_PROGRESS", "PARTIALLY_CONTAINED")
@@ -953,66 +1084,143 @@ def get_incident_status(incident_id: str = Query("INC-RECALL-01"), tenant_id: st
 # GATE I — CONTINUOUS NEXT-DAY PLANNING
 # -------------------------------------------------------------------
 
-@app.post("/api/v1/orchestrator/next-day-plan/generate")
-def generate_next_day_plan(
-    tenant_id: str = Query("east-bay-food-bank"),
-    x_api_key: Optional[str] = Header(None, alias="X-Full-Shelf-API-Key")
-):
-    """
-    17:00 Day-Close Trigger: Generates next-day draft rev01 from unresolved state.
-    Carries forward: LTC-4471 barrier, Agency 03 20-case recovery priority, Site 01 8-case hold.
-    Status: DRAFT_WITH_CONSTRAINTS — HUMAN APPROVAL REQUIRED.
-    """
-    verify_judge_key(x_api_key)
+def _parse_managed_publish_time(value: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise HTTPException(400, "PUBSUB_PUBLISH_TIME_INVALID") from exc
+    if parsed.tzinfo is None:
+        raise HTTPException(400, "PUBSUB_PUBLISH_TIME_TIMEZONE_REQUIRED")
+    return parsed
+
+
+def _generate_next_day_plan(
+    *,
+    tenant_id: str,
+    source_event_id: str,
+    source_publish_time: str,
+) -> Dict[str, Any]:
+    """Derive and command one governed draft from authoritative unresolved state."""
     trace_id = generate_trace_id()
     db = get_spanner_database()
+    publish_datetime = _parse_managed_publish_time(source_publish_time)
+    operating_date = (
+        publish_datetime.astimezone(ZoneInfo(OPERATING_TIME_ZONE)).date()
+        + timedelta(days=1)
+    )
+    plan_id = f"PLAN-{operating_date.isoformat()}"
+    coordinator_id = f"COORD-{operating_date.isoformat()}"
 
-    # Read current open incident state
-    incident_status = None
-    with db.snapshot() as snapshot:
-        rows = list(snapshot.execute_sql(
-            "SELECT status FROM Incidents WHERE tenant_id = @t AND incident_id = 'INC-RECALL-01'",
-            params={"t": tenant_id},
-            param_types={"t": spanner.param_types.STRING}
-        ))
-        if rows:
-            incident_status = rows[0][0]
-    if incident_status is None:
-        raise HTTPException(status_code=409, detail="OPEN_RECALL_INCIDENT_NOT_FOUND")
+    try:
+        with db.snapshot() as snapshot:
+            incident_rows = list(snapshot.execute_sql(
+                "SELECT status FROM Incidents WHERE tenant_id = @t "
+                "AND incident_id = 'INC-RECALL-01'",
+                params={"t": tenant_id},
+                param_types={"t": spanner.param_types.STRING},
+            ))
+            barrier_rows = list(snapshot.execute_sql(
+                "SELECT barrier_id, lot_id, status FROM MovementBarriers "
+                "WHERE tenant_id = @t AND status = 'ACTIVE' ORDER BY barrier_id",
+                params={"t": tenant_id},
+                param_types={"t": spanner.param_types.STRING},
+            ))
+            shortfall_rows = list(snapshot.execute_sql(
+                "SELECT shortfall_id, agency_id, cases, status FROM RecoveryShortfalls "
+                "WHERE tenant_id = @t AND status = 'OPEN' ORDER BY shortfall_id",
+                params={"t": tenant_id},
+                param_types={"t": spanner.param_types.STRING},
+            ))
+            hold_rows = list(snapshot.execute_sql(
+                "SELECT incident_id, details, status FROM Incidents WHERE tenant_id = @t "
+                "AND incident_type = 'DEADLINE_HOLD' "
+                "AND status = 'ACKNOWLEDGMENT_HOLD_ACTIVE'",
+                params={"t": tenant_id},
+                param_types={"t": spanner.param_types.STRING},
+            ))
+            safe_lots = list(snapshot.execute_sql(
+                "SELECT lot_id, total_cases FROM Lots WHERE tenant_id = @t "
+                "AND hazard_status = 'SAFE' ORDER BY lot_id",
+                params={"t": tenant_id},
+                param_types={"t": spanner.param_types.STRING},
+            ))
+            fleet = list(snapshot.execute_sql(
+                "SELECT vehicle_id, max_capacity_cases, current_load_cases FROM Vehicles "
+                "WHERE tenant_id = @t AND is_operational = TRUE ORDER BY vehicle_id",
+                params={"t": tenant_id},
+                param_types={"t": spanner.param_types.STRING},
+            ))
+    except Exception as exc:
+        raise HTTPException(503, "AUTHORITATIVE_CONTINUITY_READ_UNAVAILABLE") from exc
+
+    incident_status = incident_rows[0][0] if incident_rows else None
+    barrier = next((row for row in barrier_rows if row[1] == "LTC-4471"), None)
+    shortfall = next(
+        (row for row in shortfall_rows if row[1] == "AG03" and row[2] == 20),
+        None,
+    )
+    hold = None
+    for row in hold_rows:
+        try:
+            details = json.loads(row[1] or "{}")
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if details.get("site_id") == "SITE-01" and details.get("unconfirmed_cases") == 8:
+            hold = (row, details)
+            break
+    missing = []
+    if incident_status != "PARTIALLY_CONTAINED":
+        missing.append("PARTIALLY_CONTAINED_RECALL")
+    if barrier is None:
+        missing.append("LTC_4471_ACTIVE_BARRIER")
+    if shortfall is None:
+        missing.append("AG03_OPEN_20_CASE_SHORTFALL")
+    if hold is None:
+        missing.append("SITE01_OPEN_8_CASE_HOLD")
+    if not safe_lots:
+        missing.append("CONFIRMED_SAFE_INVENTORY")
+    if not fleet:
+        missing.append("CONFIRMED_TRANSPORT_CAPACITY")
+    if missing:
+        raise HTTPException(
+            409,
+            {"code": "NEXT_DAY_AUTHORITATIVE_CONSTRAINTS_INCOMPLETE", "missing": missing},
+        )
 
     next_day_plan = {
-        "plan_id": "PLAN-2026-08-08",
+        "operating_date": operating_date.isoformat(),
+        "plan_id": plan_id,
         "revision": "rev01",
         "status": "DRAFT_WITH_CONSTRAINTS — HUMAN APPROVAL REQUIRED",
         "scenario_time": "17:00 · NEXT-DAY PLANNING",
         "inherited_constraints": [
             {
-                "constraint_id": "BARRIER-LTC-4471",
+                "constraint_id": barrier[0],
                 "type": "LOT_MOVEMENT_BARRIER",
                 "affected_lot": "LTC-4471",
                 "status": "ACTIVE_BLOCKED"
             },
             {
-                "constraint_id": "PRIORITY-AG03-SHORTAGE",
+                "constraint_id": shortfall[0],
                 "type": "RECOVERY_PRIORITY",
                 "agency_id": "AG03",
                 "shortfall_cases": 20,
                 "status": "PROMOTED_TO_FIRST_RECOVERY_PRIORITY"
             },
             {
-                "constraint_id": "HOLD-SITE01-DOWNSTREAM",
+                "constraint_id": hold[0][0],
                 "type": "ACKNOWLEDGMENT_HOLD",
                 "site_id": "SITE-01",
                 "unconfirmed_cases": 8,
                 "status": "ACKNOWLEDGMENT_HOLD_ACTIVE"
             }
         ],
-        "feasible_allocations": [
-            {"order_id": "O301", "agency": "Agency 03", "cases": 20, "lot_id": "LTC-5090", "priority": 1, "status": "PENDING_APPROVAL"},
-            {"order_id": "O302", "agency": "Agency 01", "cases": 18, "lot_id": "LTC-5090", "priority": 2, "status": "PENDING_APPROVAL"},
-            {"order_id": "O303", "agency": "Agency 02", "cases": 22, "lot_id": "LTC-5090", "priority": 3, "status": "PENDING_APPROVAL"},
-            {"order_id": "O304", "agency": "Agency 04", "cases": 15, "lot_id": "LTC-5090", "priority": 4, "status": "PENDING_APPROVAL"},
-            {"order_id": "O305", "agency": "Agency 05", "cases": 21, "lot_id": "LTC-5090", "priority": 5, "status": "PENDING_APPROVAL"}
+        "confirmed_safe_inventory": [
+            {"lot_id": row[0], "confirmed_cases": row[1]} for row in safe_lots
+        ],
+        "confirmed_transport_capacity": [
+            {"vehicle_id": row[0], "max_cases": row[1], "current_load_cases": row[2]}
+            for row in fleet
         ],
         "fleet_invariants_enforced": {
             "missing_cases_fabricated": False,
@@ -1023,21 +1231,30 @@ def generate_next_day_plan(
         }
     }
 
-    # Save to Ledger through the same deterministic command boundary.
     try:
         ledger_result = execute_ledger_command(
-            command_id="CMD-NEXT-DAY-PLAN-2026-08-08-REV01",
-            idempotency_key=f"{tenant_id}:PLAN-2026-08-08:rev01:draft",
+            command_id=f"CMD-NEXT-DAY-{operating_date.isoformat()}-REV01",
+            idempotency_key=f"{tenant_id}:{plan_id}:rev01:day-close",
             tenant_id=tenant_id,
             incident_id="INC-RECALL-01",
             agent_role="FULFILLMENT_RECOVERY_PLANNER",
-            command_type="SAVE_PLAN_REVISION",
+            command_type="CREATE_NEXT_DAY_DRAFT",
             expected_plan_revision="rev08",
             trace_id=trace_id,
             payload={
-                "plan_id": "PLAN-2026-08-08",
+                "source_event_id": source_event_id,
+                "source_publish_time": source_publish_time,
+                "operating_date": operating_date.isoformat(),
+                "plan_id": plan_id,
                 "revision": "rev01",
                 "status": "DRAFT_WITH_CONSTRAINTS",
+                "coordinator_id": coordinator_id,
+                "excluded_lot_id": barrier[1],
+                "shortfall_agency_id": shortfall[1],
+                "shortfall_cases": shortfall[2],
+                "acknowledgment_site_id": hold[1]["site_id"],
+                "unconfirmed_cases": hold[1]["unconfirmed_cases"],
+                "human_approval_required": True,
             },
         )
     except Exception as exc:
@@ -1050,6 +1267,21 @@ def generate_next_day_plan(
         "ledger_receipt": ledger_result["receipt"],
         "trace_id": trace_id
     }
+
+
+@app.post("/api/v1/orchestrator/next-day-plan/generate")
+def generate_next_day_plan(
+    tenant_id: str = Query("east-bay-food-bank"),
+    x_api_key: Optional[str] = Header(None, alias="X-Full-Shelf-API-Key"),
+):
+    """Judge-protected manual control; managed proof must use Scheduler delivery."""
+    verify_judge_key(x_api_key)
+    now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    return _generate_next_day_plan(
+        tenant_id=tenant_id,
+        source_event_id=f"manual-{generate_trace_id()}",
+        source_publish_time=now,
+    )
 
 
 # -------------------------------------------------------------------

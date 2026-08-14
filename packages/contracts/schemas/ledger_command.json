@@ -22,7 +22,8 @@
         "RECORD_ACKNOWLEDGMENT_HOLD",
         "SET_INCIDENT_STATUS",
         "ACTIVATE_MOVEMENT_BARRIER",
-        "RECORD_REFUSAL"
+        "RECORD_REFUSAL",
+        "CREATE_NEXT_DAY_DRAFT"
       ]
     },
     "expected_plan_revision": { "type": ["string", "null"], "maxLength": 32 },

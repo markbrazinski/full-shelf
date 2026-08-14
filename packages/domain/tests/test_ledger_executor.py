@@ -188,6 +188,58 @@ def test_open_recall_preserves_existing_coordinator_child_incident():
     )
 
 
+def test_next_day_draft_atomically_persists_event_constraints_plan_and_coordinator():
+    class ContinuityTransaction(FakeTransaction):
+        def execute_sql(self, sql, params, param_types):
+            if "idempotency_key" in sql:
+                return []
+            if "ORDER BY created_at DESC LIMIT 1" in sql:
+                return [("rev42",)]
+            if "FROM MovementBarriers" in sql:
+                return [("BARRIER-ALT",)]
+            if "FROM RecoveryShortfalls" in sql:
+                return [("SHORT-ALT",)]
+            if "incident_type = 'DEADLINE_HOLD'" in sql:
+                return [('{"site_id":"SITE-X","unconfirmed_cases":3}',)]
+            if "AND plan_id = @plan_id" in sql:
+                return []
+            raise AssertionError(f"Unexpected SQL: {sql}")
+
+    command = coordinator_command(
+        command_id="CMD-NEXT-ALT",
+        idempotency_key="audit:PLAN-ALT-NEXT:rev01:day-close",
+        agent_role="FULFILLMENT_RECOVERY_PLANNER",
+        command_type=LedgerCommandType.CREATE_NEXT_DAY_DRAFT,
+        payload={
+            "source_event_id": "message-alt-1",
+            "source_publish_time": "2026-08-14T00:00:00Z",
+            "operating_date": "2026-08-14",
+            "plan_id": "PLAN-ALT-NEXT",
+            "revision": "rev01",
+            "status": "DRAFT_WITH_CONSTRAINTS",
+            "coordinator_id": "COORD-ALT-NEXT",
+            "excluded_lot_id": "LOT-ALT-908",
+            "shortfall_agency_id": "AG-X",
+            "shortfall_cases": 9,
+            "acknowledgment_site_id": "SITE-X",
+            "unconfirmed_cases": 3,
+            "human_approval_required": True,
+        },
+    )
+    transaction = ContinuityTransaction()
+    result = SpannerLedgerCommandExecutor(
+        FakeDatabase(transaction), allowed_tenant_ids={"audit-tenant"}
+    ).execute(command, IDENTITY)
+    assert result.additional_mutations == 6
+    assert [item["table"] for item in transaction.inserts] == [
+        "PlanRevisions", "PlanConstraints", "InboundEvents", "Receipts"
+    ]
+    assert transaction.upserts[0]["table"] == "Coordinators"
+    assert transaction.upserts[0]["values"][0][2:5] == [
+        "DRAFT_WITH_CONSTRAINTS", "HUMAN_APPROVAL_REQUIRED", "rev01"
+    ]
+
+
 def test_unsigned_repair_command_cannot_activate():
     command = coordinator_command(
         command_type=LedgerCommandType.APPLY_REPAIR_PLAN,

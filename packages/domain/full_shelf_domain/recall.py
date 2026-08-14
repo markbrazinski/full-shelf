@@ -327,40 +327,52 @@ class IncidentLifecycleManager:
         return True
 
 
-def schedule_site01_deadline_task(incident_id: str = "INC-RECALL-01", orchestrator_url: Optional[str] = None) -> Dict[str, Any]:
-    """Schedules acknowledgment deadline task using GCP Cloud Tasks with OIDC token."""
+def schedule_site01_deadline_task(
+    incident_id: str = "INC-RECALL-01",
+    *,
+    task_id: str,
+    orchestrator_url: Optional[str] = None,
+    oidc_audience: Optional[str] = None,
+    delivery_service_account: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Create one real, explicitly audience-bound Site 01 deadline task."""
     client = tasks_v2.CloudTasksClient()
     parent = client.queue_path(PROJECT_ID, "us-central1", "full-shelf-deadlines")
     target_url = orchestrator_url or os.getenv("ORCHESTRATOR_URL", "https://full-shelf-orchestrator-620464070103.us-central1.run.app")
+    audience = oidc_audience or os.getenv("MANAGED_CALLBACK_AUDIENCE", "")
+    service_account = delivery_service_account or os.getenv("MANAGED_CALLBACK_SERVICE_ACCOUNT_EMAIL", "")
+    if not audience or not service_account:
+        raise ValueError("TASK_OIDC_CONFIGURATION_REQUIRED")
+    task_name = client.task_path(PROJECT_ID, "us-central1", "full-shelf-deadlines", task_id)
 
     task = {
+        "name": task_name,
         "http_request": {
             "http_method": tasks_v2.HttpMethod.POST,
             "url": f"{target_url}/api/v1/incidents/site01-deadline",
             "headers": {"Content-Type": "application/json"},
-            "body": json.dumps({"incident_id": incident_id, "site_id": "SITE-01", "deadline_seconds": 3600}).encode("utf-8"),
+            "body": json.dumps({
+                "incident_id": incident_id,
+                "site_id": "SITE-01",
+                "tenant_id": "east-bay-food-bank",
+                "task_decision_id": task_id,
+            }).encode("utf-8"),
             "oidc_token": {
-                "service_account_email": f"full-shelf-orchestrator-sa@{PROJECT_ID}.iam.gserviceaccount.com"
+                "service_account_email": service_account,
+                "audience": audience,
             }
         }
     }
 
-    try:
-        created_task = client.create_task(request={"parent": parent, "task": task})
-        return {
-            "status": "SCHEDULED",
-            "task_name": created_task.name,
-            "queue": parent,
-            "target_url": task["http_request"]["url"]
-        }
-    except Exception as e:
-        print(f"Cloud Tasks note: {e}")
-        return {
-            "status": "QUEUED_LOCAL_FALLBACK",
-            "queue": parent,
-            "target_url": task["http_request"]["url"],
-            "note": str(e)
-        }
+    created_task = client.create_task(request={"parent": parent, "task": task})
+    return {
+        "status": "SCHEDULED",
+        "task_name": created_task.name,
+        "queue": parent,
+        "target_url": task["http_request"]["url"],
+        "oidc_audience": audience,
+        "delivery_service_account": service_account,
+    }
 def publish_recall_event_to_pubsub(event_payload: Dict[str, Any]) -> Dict[str, Any]:
     """Publishes recall event to GCP Pub/Sub topic full-shelf-incidents."""
     publisher = pubsub_v1.PublisherClient()
