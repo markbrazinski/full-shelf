@@ -67,6 +67,7 @@ def test_next_day_plan_is_dynamic_authoritative_and_ledger_bound():
     assert command["payload"]["human_approval_required"] is True
     executed_sql = [call.args[0] for call in snapshot.execute_sql.call_args_list]
     assert any("hazard_status = 'CLEAR_SAFE'" in sql for sql in executed_sql)
+    mock_db.snapshot.assert_called_once_with(multi_use=True)
 
 
 def test_spanner_database_handle_is_cached_per_service_instance():

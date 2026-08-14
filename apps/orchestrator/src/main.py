@@ -484,7 +484,7 @@ def schedule_site01_escalation(
     verify_judge_key(x_api_key)
     db = get_spanner_database()
     try:
-        with db.snapshot() as snapshot:
+        with db.snapshot(multi_use=True) as snapshot:
             recall = list(snapshot.execute_sql(
                 "SELECT status FROM Incidents WHERE tenant_id = @t "
                 "AND incident_id = 'INC-RECALL-01'",
@@ -1121,7 +1121,7 @@ def _generate_next_day_plan(
 
     read_phase = "snapshot_open"
     try:
-        with db.snapshot() as snapshot:
+        with db.snapshot(multi_use=True) as snapshot:
             read_phase = "incident"
             incident_rows = list(snapshot.execute_sql(
                 "SELECT status FROM Incidents WHERE tenant_id = @t "
