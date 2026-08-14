@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create paused, reproducible Scheduler jobs for isolated delta qualification."""
+"""Create enabled, independently runnable Scheduler qualification jobs."""
 
 from __future__ import annotations
 
@@ -38,13 +38,11 @@ def upsert_job(name: str, body: dict):
             f"--location={LOCATION}", f"--project={PROJECT}", f"--topic={TOPIC}",
             "--schedule=0 0 1 1 *", "--time-zone=Etc/UTC",
             f"--message-body-from-file={handle.name}",
-            "--description=Paused isolated Full Shelf delta-audit qualification job",
+            "--description=Enabled isolated Full Shelf fresh-scope qualification job",
             "--quiet",
         ])
-    run([
-        "gcloud", "scheduler", "jobs", "pause", name,
-        f"--location={LOCATION}", f"--project={PROJECT}", "--quiet",
-    ])
+    run(["gcloud", "scheduler", "jobs", "resume", name,
+         f"--location={LOCATION}", f"--project={PROJECT}", "--quiet"], check=False)
     return name
 
 
@@ -54,24 +52,23 @@ def main():
     args = parser.parse_args()
     fixture_name = "audit_canonical_shaped.json" if args.fixture == "canonical" else "audit_altered.json"
     fixture = json.loads((ROOT / "test-fixtures" / fixture_name).read_text())
-    tenant_id = fixture["tenant_id"]
     suffix = args.fixture
     daily_name = f"full-shelf-delta-{suffix}-daily"
     next_name = f"full-shelf-delta-{suffix}-next-day"
     upsert_job(daily_name, {
         "event_type": "PLAN_DAY_REQUESTED",
-        "tenant_id": tenant_id,
+        "qualification_profile": args.fixture,
         "operating_plan": fixture["operating_plan"],
     })
     upsert_job(next_name, {
         "event_type": "PLAN_NEXT_DAY_REQUESTED",
-        "tenant_id": tenant_id,
+        "qualification_profile": args.fixture,
     })
     print(json.dumps({
-        "tenant_id": tenant_id,
+        "tenant_prefix": f"audit-{args.fixture}-",
         "daily_job": daily_name,
         "next_day_job": next_name,
-        "state": "PAUSED_MANUAL_QUALIFICATION_ONLY",
+        "state": "ENABLED_MANUAL_QUALIFICATION",
     }, sort_keys=True))
 
 

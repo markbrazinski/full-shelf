@@ -51,7 +51,8 @@ def main() -> int:
 
     expiry = (now + timedelta(minutes=20)).isoformat().replace("+00:00", "Z")
     envelope = create_signed_approval_envelope(
-        approval_id="APP-WP3-ALTERED", rev_id=proposed_revision,
+        approval_id="APP-WP3-ALTERED", tenant_id=args.tenant,
+        operating_day=now.date().isoformat(), rev_id=proposed_revision,
         principal_id=args.operator_sub, incident_id=incident_id,
         plan_id=plan_id, source_revision=source_revision, proposed_revision=proposed_revision,
         reroute_order_id="O202", reroute_cases=22, reroute_target_vehicle="TRUCK-02",
@@ -81,7 +82,9 @@ def main() -> int:
         "agent_role": "FULFILLMENT_RECOVERY_PLANNER",
         "command_type": "PERSIST_REPAIR_APPROVAL", "expected_plan_revision": source_revision,
         "trace_id": "abcdef0123456789abcdef0123456789",
-        "payload": {"plan_id": plan_id, "source_revision": source_revision,
+        "payload": {"operating_day": envelope.operating_day,
+                    "authority_scope": envelope.authority_scope,
+                    "plan_id": plan_id, "source_revision": source_revision,
                     "proposed_revision": proposed_revision, "approval_id": envelope.approval_id,
                     "approver_subject": envelope.principal_id,
                     "approver_email": "altered-operator@example.com",
@@ -107,7 +110,9 @@ def main() -> int:
         "command_type": "ACTIVATE_APPROVED_REPAIR_PLAN",
         "expected_plan_revision": source_revision,
         "trace_id": "abcdef0123456789abcdef0123456789",
-        "payload": {"plan_id": plan_id, "source_revision": source_revision,
+        "payload": {"operating_day": envelope.operating_day,
+                    "authority_scope": envelope.authority_scope,
+                    "plan_id": plan_id, "source_revision": source_revision,
                     "proposed_revision": proposed_revision,
                     "approval_id": envelope.approval_id},
     }

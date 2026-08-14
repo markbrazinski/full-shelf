@@ -357,6 +357,7 @@ def schedule_site01_deadline_task(
     site_id: str,
     unconfirmed_cases: int,
     task_id: str,
+    event_idempotency_key: Optional[str] = None,
     orchestrator_url: Optional[str] = None,
     oidc_audience: Optional[str] = None,
     delivery_service_account: Optional[str] = None,
@@ -394,6 +395,7 @@ def schedule_site01_deadline_task(
                 "unconfirmed_cases": unconfirmed_cases,
                 "tenant_id": tenant_id,
                 "task_decision_id": task_id,
+                "event_idempotency_key": event_idempotency_key or task_id,
                 "correlation_trace_id": correlation_trace_id,
             }).encode("utf-8"),
             "oidc_token": {

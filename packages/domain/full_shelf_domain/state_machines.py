@@ -5,7 +5,7 @@ from .models import PlanStatus, IncidentStatus
 class PlanRevisionStateMachine:
     VALID_TRANSITIONS = {
         ("rev07", PlanStatus.ACTIVE): [("rev08", PlanStatus.ACTIVE)],  # Truck breakdown recovery: rev07 -> rev08
-        ("rev08", PlanStatus.ACTIVE): [("rev09", PlanStatus.INVALIDATED_RECALL)],  # Lettuce recall invalidation: rev08 -> rev09
+        ("rev08", PlanStatus.ACTIVE): [("rev08", PlanStatus.INVALIDATED_RECALL)],  # Recall invalidates rev08 in place; no rev09 is fabricated.
     }
 
     @classmethod

@@ -133,6 +133,23 @@ def test_authenticated_duplicate_daily_deliveries_return_stable_2xx_result():
     assert generate.call_args_list[0].kwargs["source_event_id"] == "scheduler-message-1"
 
 
+def test_authenticated_poison_pubsub_message_is_acked_2xx_without_mutation():
+    client = TestClient(main.app)
+    with patch.object(main, "_verify_managed_callback", return_value=CALLER), patch.object(
+        main, "execute_ledger_command"
+    ) as ledger:
+        response = client.post(
+            "/api/v1/orchestrator/pubsub/push",
+            headers={"Authorization": "Bearer signed"},
+            json=_pubsub_envelope({"event_type": "OBSOLETE_EVENT"}, "old-poison-1"),
+        )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "PERMANENT_EVENT_REJECTED_ACKNOWLEDGED"
+    assert response.json()["mutations_applied"] == 0
+    ledger.assert_not_called()
+
+
 def test_authenticated_duplicate_next_day_deliveries_return_2xx():
     client = TestClient(main.app)
     event = {"event_type": "PLAN_NEXT_DAY_REQUESTED", "tenant_id": "east-bay-food-bank"}
@@ -315,6 +332,46 @@ def test_task_redelivery_reuses_deterministic_ledger_idempotency_key():
     second_key = ledger.call_args_list[1].kwargs["idempotency_key"]
     assert first_key == second_key
     assert first_key.startswith("cloud-task:")
+
+
+def test_two_distinct_task_names_share_one_event_idempotency_key():
+    client = TestClient(main.app)
+    result = {
+        "receipt": {"receipt_id": "RCT-TASK-ONE", "status": "SUCCESS"},
+        "idempotent_replay": True,
+    }
+    first_payload = _task_payload("task-delivery-a")
+    second_payload = _task_payload("task-delivery-b")
+    first_payload["event_idempotency_key"] = "site01-event-shared"
+    second_payload["event_idempotency_key"] = "site01-event-shared"
+    with patch.object(main, "_verify_managed_callback", return_value=CALLER), patch.object(
+        main, "execute_ledger_command", return_value=result
+    ) as ledger:
+        for task_name, body in (
+            ("task-delivery-a", first_payload), ("task-delivery-b", second_payload)
+        ):
+            response = client.post(
+                "/api/v1/incidents/site01-deadline",
+                headers={
+                    "Authorization": "Bearer signed",
+                    "X-CloudTasks-TaskName": task_name,
+                    "X-CloudTasks-QueueName": "full-shelf-deadlines",
+                    "traceparent": (
+                        "00-0123456789abcdef0123456789abcdef-"
+                        "0123456789abcdef-01"
+                    ),
+                },
+                json=body,
+            )
+            assert response.status_code == 200
+
+    assert ledger.call_count == 2
+    assert {
+        call.kwargs["idempotency_key"] for call in ledger.call_args_list
+    } == {ledger.call_args_list[0].kwargs["idempotency_key"]}
+    assert {
+        call.kwargs["payload"]["task_name"] for call in ledger.call_args_list
+    } == {"site01-event-shared"}
 
 
 def test_application_escalation_schedules_task_from_authoritative_isolated_state():

@@ -391,6 +391,14 @@ def main() -> int:
         help="Build a fresh approval payload from an isolated audit fixture",
     )
     parser.add_argument(
+        "--tenant-id",
+        help="Fresh isolated tenant created by the managed daily Scheduler delivery",
+    )
+    parser.add_argument(
+        "--operating-day",
+        help="YYYY-MM-DD operating day bound into the KMS approval envelope",
+    )
+    parser.add_argument(
         "--orchestrator-url",
         default="https://full-shelf-orchestrator-620464070103.us-central1.run.app",
     )
@@ -407,6 +415,8 @@ def main() -> int:
     if args.approval_payload and args.approval_fixture:
         parser.error("choose only one of --approval-payload or --approval-fixture")
     if args.approval_fixture:
+        if not args.tenant_id or not args.operating_day:
+            parser.error("--approval-fixture requires --tenant-id and --operating-day")
         fixture_name = (
             "audit_canonical_shaped.json"
             if args.approval_fixture == "canonical"
@@ -421,7 +431,8 @@ def main() -> int:
         server.approval_payload = {
             "command_id": f"CMD-DELTA-{suffix}",
             "idempotency_key": f"delta:{args.approval_fixture}:human-approval",
-            "tenant_id": fixture["tenant_id"],
+            "tenant_id": args.tenant_id,
+            "operating_day": args.operating_day,
             "incident_id": approval["incident_id"],
             "plan_id": fixture["operating_plan"]["plan_id"],
             "source_revision": "rev07",

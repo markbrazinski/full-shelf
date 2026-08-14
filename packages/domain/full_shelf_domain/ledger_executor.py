@@ -75,6 +75,14 @@ class SpannerLedgerCommandExecutor:
         def transaction_body(transaction):
             existing = self._find_receipt(transaction, command)
             if existing:
+                stored_fingerprint = existing.pop("request_fingerprint", None)
+                if stored_fingerprint is None:
+                    if command.command_type is LedgerCommandType.PERSIST_REPAIR_APPROVAL:
+                        raise ValueError(
+                            "IDEMPOTENCY_KEY_COLLISION_UNBOUND_LEGACY_RECEIPT"
+                        )
+                elif stored_fingerprint != command.request_fingerprint():
+                    raise ValueError("IDEMPOTENCY_KEY_COLLISION")
                 return CommandExecutionResult(
                     receipt=existing,
                     idempotent_replay=True,
@@ -174,7 +182,7 @@ class SpannerLedgerCommandExecutor:
         rows = transaction.execute_sql(
             "SELECT receipt_id, action_id, plan_revision_id, action_type, status, "
             "mutations_applied, message, trace_id, timestamp, caller_subject, "
-            "caller_email, agent_role "
+            "caller_email, agent_role, request_fingerprint "
             "FROM Receipts WHERE tenant_id = @tenant_id AND idempotency_key = @idempotency_key",
             params={
                 "tenant_id": command.tenant_id,
@@ -201,6 +209,7 @@ class SpannerLedgerCommandExecutor:
                 "caller_subject": row[9],
                 "caller_email": row[10],
                 "agent_role": row[11],
+                "request_fingerprint": row[12],
             }
         return None
 
@@ -378,6 +387,10 @@ class SpannerLedgerCommandExecutor:
 
         if command.command_type is LedgerCommandType.PERSIST_REPAIR_APPROVAL:
             assert isinstance(payload, PersistRepairApprovalPayload)
+            if payload.authority_scope != (
+                f"{command.tenant_id}@{payload.operating_day}"
+            ):
+                raise ValueError("SIGNED_AUTHORITY_SCOPE_MISMATCH")
             if command.expected_plan_revision != payload.source_revision:
                 raise ValueError("REPAIR_SOURCE_REVISION_MISMATCH")
             if payload.source_revision == payload.proposed_revision:
@@ -394,13 +407,17 @@ class SpannerLedgerCommandExecutor:
                 table="Approvals",
                 columns=[
                     "tenant_id", "approval_id", "incident_id", "plan_id",
+                    "operating_day", "authority_scope",
                     "source_revision", "proposed_revision", "approver_subject",
                     "approver_email", "oauth_audience", "plan_diff_hash",
                     "plan_diff_json", "kms_key_version", "kms_signature", "expires_at",
                     "verified_at", "trace_id",
                 ],
                 values=[[command.tenant_id, payload.approval_id, command.incident_id,
-                    payload.plan_id, payload.source_revision, payload.proposed_revision,
+                    payload.plan_id,
+                    datetime.fromisoformat(payload.operating_day).date(),
+                    payload.authority_scope,
+                    payload.source_revision, payload.proposed_revision,
                     payload.approver_subject, payload.approver_email,
                     payload.oauth_audience, payload.plan_diff_hash,
                     json.dumps(payload.plan_diff.model_dump(), sort_keys=True,
@@ -413,10 +430,15 @@ class SpannerLedgerCommandExecutor:
 
         if command.command_type is LedgerCommandType.ACTIVATE_APPROVED_REPAIR_PLAN:
             assert isinstance(payload, ActivateApprovedRepairPlanPayload)
+            if payload.authority_scope != (
+                f"{command.tenant_id}@{payload.operating_day}"
+            ):
+                raise ValueError("SIGNED_AUTHORITY_SCOPE_MISMATCH")
             if command.expected_plan_revision != payload.source_revision:
                 raise ValueError("REPAIR_SOURCE_REVISION_MISMATCH")
             approval_rows = list(transaction.execute_sql(
-                "SELECT incident_id, plan_id, source_revision, proposed_revision, "
+                "SELECT incident_id, plan_id, operating_day, authority_scope, "
+                "source_revision, proposed_revision, "
                 "plan_diff_hash, plan_diff_json, expires_at FROM Approvals "
                 "WHERE tenant_id = @tenant_id AND approval_id = @approval_id",
                 params={
@@ -431,29 +453,31 @@ class SpannerLedgerCommandExecutor:
             if len(approval_rows) != 1:
                 raise ValueError("PERSISTED_REPAIR_APPROVAL_NOT_FOUND")
             approval = approval_rows[0]
-            if tuple(approval[0:4]) != (
+            if tuple(approval[0:6]) != (
                 command.incident_id,
                 payload.plan_id,
+                datetime.fromisoformat(payload.operating_day).date(),
+                payload.authority_scope,
                 payload.source_revision,
                 payload.proposed_revision,
             ):
                 raise ValueError("PERSISTED_APPROVAL_SCOPE_MISMATCH")
-            expires_at = approval[6]
+            expires_at = approval[8]
             if expires_at.tzinfo is None:
                 expires_at = expires_at.replace(tzinfo=timezone.utc)
             if expires_at <= datetime.now(timezone.utc):
                 raise ValueError("PERSISTED_APPROVAL_EXPIRED")
             try:
-                plan_diff_values = json.loads(approval[5])
+                plan_diff_values = json.loads(approval[7])
                 plan_diff = PlanDiff(
                     source_revision=payload.source_revision,
                     proposed_revision=payload.proposed_revision,
-                    plan_diff_hash=approval[4],
+                    plan_diff_hash=approval[6],
                     **plan_diff_values,
                 )
             except (TypeError, ValueError) as exc:
                 raise ValueError("PERSISTED_PLAN_DIFF_MALFORMED") from exc
-            if compute_plan_diff_hash(plan_diff) != approval[4]:
+            if compute_plan_diff_hash(plan_diff) != approval[6]:
                 raise ValueError("PERSISTED_PLAN_DIFF_HASH_MISMATCH")
             vehicle_rows = list(transaction.execute_sql(
                 "SELECT max_capacity_cases, current_load_cases, is_operational "
@@ -1134,6 +1158,7 @@ class SpannerLedgerCommandExecutor:
                 "caller_subject",
                 "caller_email",
                 "agent_role",
+                "request_fingerprint",
                 "timestamp",
             ],
             values=[[
@@ -1150,6 +1175,7 @@ class SpannerLedgerCommandExecutor:
                 caller.subject,
                 caller.email,
                 command.agent_role,
+                command.request_fingerprint(),
                 spanner.COMMIT_TIMESTAMP,
             ]],
         )

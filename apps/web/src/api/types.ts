@@ -24,15 +24,26 @@ export interface PlanPreviewResponse {
 
 export interface ApprovalEnvelope {
   approval_id: string;
+  tenant_id: string;
+  operating_day: string;
+  authority_scope: string;
   rev_id: string;
   principal_id: string;
   incident_id: string;
   plan_id: string;
-  expected_revision: string;
-  action_type: string;
-  target_order_id: string;
-  target_cases: number;
-  payload_hash: string;
+  source_revision: string;
+  proposed_revision: string;
+  plan_diff: {
+    source_revision: string;
+    proposed_revision: string;
+    reroute_order_id: string;
+    reroute_cases: number;
+    reroute_target_vehicle: string;
+    pickup_order_id: string;
+    pickup_cases: number;
+    plan_diff_hash: string;
+  };
+  kms_key_version: string;
   kms_signature: string;
   expires_at: string;
 }

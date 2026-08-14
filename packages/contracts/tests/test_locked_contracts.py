@@ -24,7 +24,9 @@ def test_schema_is_valid_draft_2020_12(name):
 def test_complete_approval_binding_accepts_both_actions_and_rejects_partial_diff():
     schema = _schema("approval.json")
     envelope = {
-        "approval_id": "APP-1", "rev_id": "rev08", "principal_id": "human-subject",
+        "approval_id": "APP-1", "tenant_id": "tenant-a",
+        "operating_day": "2026-08-14", "authority_scope": "tenant-a@2026-08-14",
+        "rev_id": "rev08", "principal_id": "human-subject",
         "incident_id": "INC-TRUCK", "plan_id": "PLAN-1",
         "source_revision": "rev07", "proposed_revision": "rev08",
         "plan_diff": {

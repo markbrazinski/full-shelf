@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from typing import Dict, Any, Optional, List
 from zoneinfo import ZoneInfo
-from fastapi import FastAPI, Header, HTTPException, Query, BackgroundTasks, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, BackgroundTasks, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 import httpx
@@ -23,7 +23,8 @@ from full_shelf_observability import (
 )
 from full_shelf_domain.identity import (
     GoogleOidcVerifier, IdentityConfigurationError, InvalidIdentityToken,
-    MissingIdentityToken, UnauthorizedIdentity, fetch_google_id_token,
+    MissingIdentityToken, UnauthorizedIdentity, VerifiedGoogleIdentity,
+    fetch_google_id_token,
 )
 from full_shelf_domain.authority import (
     AuthorityConfigurationError,
@@ -169,6 +170,7 @@ class HumanApprovalProposal(BaseModel):
     command_id: str = Field(min_length=1, max_length=48)
     idempotency_key: str = Field(min_length=1, max_length=112)
     tenant_id: str
+    operating_day: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
     incident_id: str
     plan_id: str
     source_revision: str
@@ -206,6 +208,7 @@ class DeadlineTaskCallbackPayload(BaseModel):
     site_id: str = Field(min_length=1, max_length=64)
     unconfirmed_cases: int = Field(gt=0)
     task_decision_id: str = Field(min_length=1, max_length=500)
+    event_idempotency_key: Optional[str] = Field(default=None, min_length=1, max_length=500)
     correlation_trace_id: str = Field(min_length=32, max_length=32)
 
 
@@ -253,6 +256,41 @@ def _verify_managed_callback(authorization: Optional[str]):
         raise HTTPException(403, "MANAGED_CALLBACK_GOOGLE_IDENTITY_NOT_ALLOWED") from exc
 
 
+def require_frontend_authority(
+    authorization: Optional[str] = Header(None),
+) -> tuple[VerifiedGoogleIdentity, Any, str]:
+    """Derive the sole frontend tenant/day from verified identity and config."""
+    tenant_id = os.getenv("FRONTEND_AUTHORITY_TENANT_ID", "").strip()
+    operating_day = os.getenv("FRONTEND_AUTHORITY_OPERATING_DAY", "").strip()
+    if not tenant_id or not operating_day:
+        raise HTTPException(503, "FRONTEND_AUTHORITY_SCOPE_NOT_CONFIGURED")
+    try:
+        datetime.fromisoformat(operating_day)
+        identity = GoogleOidcVerifier(
+            audience=os.getenv("FRONTEND_AUTHORITY_AUDIENCE", "")
+                or os.getenv("OPERATOR_OAUTH_CLIENT_ID", ""),
+            allowed_subjects={
+                os.getenv("FRONTEND_AUTHORITY_SUBJECT", "")
+                or os.getenv("ALLOWED_OPERATOR_SUBJECT", "")
+            },
+            allowed_emails={
+                os.getenv("FRONTEND_AUTHORITY_EMAIL", "")
+                or os.getenv("ALLOWED_OPERATOR_EMAIL", "")
+            },
+        ).verify_authorization(authorization)
+        return identity, _resolve_authority_scope(tenant_id), operating_day
+    except IdentityConfigurationError as exc:
+        raise HTTPException(503, "FRONTEND_IDENTITY_BOUNDARY_NOT_CONFIGURED") from exc
+    except MissingIdentityToken as exc:
+        raise HTTPException(401, "FRONTEND_GOOGLE_ID_TOKEN_REQUIRED") from exc
+    except InvalidIdentityToken as exc:
+        raise HTTPException(401, "FRONTEND_GOOGLE_ID_TOKEN_INVALID") from exc
+    except UnauthorizedIdentity as exc:
+        raise HTTPException(403, "FRONTEND_GOOGLE_IDENTITY_NOT_ALLOWED") from exc
+    except ValueError as exc:
+        raise HTTPException(503, "FRONTEND_OPERATING_DAY_INVALID") from exc
+
+
 @app.post("/api/v1/orchestrator/approvals/approve-and-activate")
 def approve_and_activate(
     proposal: HumanApprovalProposal,
@@ -293,6 +331,62 @@ def _resolve_authority_scope(tenant_id: str):
         ) from exc
     except UnauthorizedAuthorityScope as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+
+def _fresh_qualification_tenant(
+    *, profile: str, message_id: str, publish_time: str
+) -> str:
+    """Derive a new immutable operating-day tenant from managed delivery facts."""
+    if profile not in {"canonical", "altered"}:
+        raise ValueError("QUALIFICATION_PROFILE_NOT_ALLOWED")
+    operating_day = _parse_managed_publish_time(publish_time).astimezone(
+        ZoneInfo(OPERATING_TIME_ZONE)
+    ).date().strftime("%Y%m%d")
+    nonce = hashlib.sha256(message_id.encode("utf-8")).hexdigest()[:10]
+    return f"audit-{profile}-{operating_day}-{nonce}"
+
+
+def _latest_qualification_tenant(*, profile: str) -> str:
+    """Resolve next-day work from committed state, never caller-selected scope."""
+    if profile not in {"canonical", "altered"}:
+        raise ValueError("QUALIFICATION_PROFILE_NOT_ALLOWED")
+    resolver = AuthorityScopeResolver.from_environment()
+    database_id = os.getenv("AUDIT_SPANNER_DATABASE_ID", "")
+    if not database_id:
+        raise HTTPException(503, "AUDIT_DATABASE_NOT_CONFIGURED")
+    prefix = f"audit-{profile}-"
+    with get_spanner_database(database_id).snapshot() as snapshot:
+        rows = list(snapshot.execute_sql(
+            "SELECT tenant_id FROM PlanRevisions "
+            "WHERE STARTS_WITH(tenant_id, @prefix) AND revision = 'rev08' "
+            "AND status = 'INVALIDATED_RECALL' "
+            "ORDER BY created_at DESC LIMIT 1",
+            params={"prefix": prefix},
+            param_types={"prefix": spanner.param_types.STRING},
+        ))
+    if len(rows) != 1:
+        raise HTTPException(409, "FRESH_QUALIFICATION_SCOPE_NOT_READY")
+    tenant_id = rows[0][0]
+    resolver.resolve(tenant_id)
+    return tenant_id
+
+
+def _ack_permanent_pubsub_rejection(
+    *, message_id: str | None, reason: str, trace_id: str
+) -> Dict[str, Any]:
+    """Acknowledge authenticated poison messages without any authoritative write."""
+    logger.warning(
+        "pubsub_permanent_rejection message_id=%s reason=%s trace_id=%s",
+        message_id or "UNKNOWN", reason, trace_id,
+    )
+    return {
+        "status": "PERMANENT_EVENT_REJECTED_ACKNOWLEDGED",
+        "message_id": message_id,
+        "reason": reason,
+        "mutations_applied": 0,
+        "classification": "OBSERVED_LIVE",
+        "trace_id": trace_id,
+    }
 
 
 CUSTODY_GRAPH_GQL = """
@@ -577,6 +671,14 @@ def persist_coordinator_waiting(
             "child_incident_ids": proposal.child_incident_ids,
         },
     )
+    logger.info(
+        "cloud_task_delivery task_name=%s event_idempotency_key=%s "
+        "receipt_id=%s idempotent_replay=%s",
+        task_name,
+        event_idempotency_key,
+        ledger_result["receipt"]["receipt_id"],
+        ledger_result["idempotent_replay"],
+    )
 
     return {
         "status": "COORDINATOR_PERSISTED",
@@ -606,6 +708,7 @@ def handle_site01_deadline_callback(
     site_id = payload.site_id
     tenant_id = payload.tenant_id
     task_decision_id = payload.task_decision_id
+    event_idempotency_key = payload.event_idempotency_key or task_decision_id
     _resolve_authority_scope(tenant_id)
     if not task_decision_id or not (
         task_name == task_decision_id
@@ -619,8 +722,8 @@ def handle_site01_deadline_callback(
     if payload_trace_id and payload_trace_id != trace_id:
         raise HTTPException(400, "CLOUD_TASK_TRACE_CONTEXT_MISMATCH")
     ledger_result = execute_ledger_command(
-        command_id=f"CMD-TASK-{hashlib.sha256(task_decision_id.encode()).hexdigest()[:24]}",
-        idempotency_key=f"cloud-task:{hashlib.sha256(task_decision_id.encode()).hexdigest()}",
+        command_id=f"CMD-TASK-{hashlib.sha256(event_idempotency_key.encode()).hexdigest()[:24]}",
+        idempotency_key=f"cloud-task:{hashlib.sha256(event_idempotency_key.encode()).hexdigest()}",
         tenant_id=tenant_id,
         incident_id=incident_id,
         agent_role="PARTNER_OPERATIONS_AGENT",
@@ -633,7 +736,7 @@ def handle_site01_deadline_callback(
             "lot_id": payload.lot_id,
             "site_id": site_id,
             "unconfirmed_cases": payload.unconfirmed_cases,
-            "task_name": task_name,
+            "task_name": event_idempotency_key,
             "delivery_subject": caller.subject,
             "delivery_email": caller.email,
             "delivery_audience": caller.audience,
@@ -647,6 +750,7 @@ def handle_site01_deadline_callback(
         "unconfirmed_cases": payload.unconfirmed_cases,
         "authenticated_task": True,
         "task_name": task_name,
+        "event_idempotency_key": event_idempotency_key,
         "delivery_identity": caller.email,
         "delivery_subject": caller.subject,
         "delivery_audience": caller.audience,
@@ -740,21 +844,48 @@ def handle_pubsub_push(
     message_id = message.get("messageId")
     publish_time = message.get("publishTime")
     if not message_id or not publish_time:
-        raise HTTPException(status_code=400, detail="PUBSUB_MESSAGE_ID_AND_PUBLISH_TIME_REQUIRED")
+        return _ack_permanent_pubsub_rejection(
+            message_id=message_id,
+            reason="PUBSUB_MESSAGE_ID_AND_PUBLISH_TIME_REQUIRED",
+            trace_id=trace_id,
+        )
     data_b64 = message.get("data", "")
     event_data = {}
     try:
         raw_str = base64.b64decode(data_b64).decode("utf-8")
         event_data = json.loads(raw_str)
     except Exception as exc:
-        raise HTTPException(status_code=400, detail="INVALID_PUBSUB_EVENT_DATA") from exc
+        return _ack_permanent_pubsub_rejection(
+            message_id=message_id, reason="INVALID_PUBSUB_EVENT_DATA",
+            trace_id=trace_id,
+        )
 
     event_type = event_data.get("event_type", "") or message.get("attributes", {}).get("event_type", "")
 
     tenant_id = event_data.get("tenant_id")
-    if not isinstance(tenant_id, str):
-        raise HTTPException(status_code=400, detail="PUBSUB_TENANT_REQUIRED")
-    scope = _resolve_authority_scope(tenant_id)
+    qualification_profile = event_data.get("qualification_profile")
+    try:
+        if event_type == "PLAN_DAY_REQUESTED" and qualification_profile:
+            tenant_id = _fresh_qualification_tenant(
+                profile=qualification_profile,
+                message_id=message_id,
+                publish_time=publish_time,
+            )
+        elif event_type == "PLAN_NEXT_DAY_REQUESTED" and qualification_profile:
+            tenant_id = _latest_qualification_tenant(profile=qualification_profile)
+        if not isinstance(tenant_id, str):
+            raise ValueError("PUBSUB_TENANT_REQUIRED")
+        scope = _resolve_authority_scope(tenant_id)
+    except ValueError as exc:
+        return _ack_permanent_pubsub_rejection(
+            message_id=message_id, reason=str(exc), trace_id=trace_id,
+        )
+    except HTTPException as exc:
+        if exc.status_code not in {400, 403}:
+            raise
+        return _ack_permanent_pubsub_rejection(
+            message_id=message_id, reason=str(exc.detail), trace_id=trace_id,
+        )
     db = get_spanner_database(scope.database_id)
 
     if event_type == "PLAN_NEXT_DAY_REQUESTED":
@@ -779,7 +910,11 @@ def handle_pubsub_push(
                 event_data.get("operating_plan")
             )
         except Exception as exc:
-            raise HTTPException(400, "OPERATING_PLAN_DEFINITION_REQUIRED") from exc
+            return _ack_permanent_pubsub_rejection(
+                message_id=message_id,
+                reason="OPERATING_PLAN_DEFINITION_REQUIRED",
+                trace_id=trace_id,
+            )
         day_res = _generate_daily_morning_plan(
             tenant_id=tenant_id,
             operating_plan=operating_plan,
@@ -797,14 +932,20 @@ def handle_pubsub_push(
         }
 
     if event_type != "RECALL_NOTICE_RECEIVED":
-        raise HTTPException(status_code=400, detail="UNSUPPORTED_PUBSUB_EVENT_TYPE")
+        return _ack_permanent_pubsub_rejection(
+            message_id=message_id, reason="UNSUPPORTED_PUBSUB_EVENT_TYPE",
+            trace_id=trace_id,
+        )
     coord_id = event_data.get("coordinator_id")
     incident_id = event_data.get("incident_id")
     lot_id = event_data.get("lot_id")
     if not all(isinstance(value, str) and value for value in (
         coord_id, incident_id, lot_id
     )):
-        raise HTTPException(400, "RECALL_EVENT_SCOPE_REQUIRED")
+        return _ack_permanent_pubsub_rejection(
+            message_id=message_id, reason="RECALL_EVENT_SCOPE_REQUIRED",
+            trace_id=trace_id,
+        )
     coord_state = None
     active_rev = None
 
@@ -824,10 +965,16 @@ def handle_pubsub_push(
     except Exception as exc:
         raise HTTPException(status_code=503, detail="AUTHORITATIVE_COORDINATOR_READ_UNAVAILABLE") from exc
     if coord_state != "WAITING_FOR_EVENTS" or active_rev is None:
-        raise HTTPException(status_code=409, detail="WAITING_COORDINATOR_NOT_FOUND")
+        return _ack_permanent_pubsub_rejection(
+            message_id=message_id, reason="WAITING_COORDINATOR_NOT_FOUND",
+            trace_id=trace_id,
+        )
     notice_text = event_data.get("notice_text")
     if not isinstance(notice_text, str) or not notice_text.strip():
-        raise HTTPException(400, "RECALL_NOTICE_TEXT_REQUIRED")
+        return _ack_permanent_pubsub_rejection(
+            message_id=message_id, reason="RECALL_NOTICE_TEXT_REQUIRED",
+            trace_id=trace_id,
+        )
     hero_result = _execute_managed_recall_event(
         tenant_id=tenant_id, coordinator_id=coord_id,
         incident_id=incident_id, recalled_lot_id=lot_id,
@@ -1780,112 +1927,60 @@ def get_system_evidence(
 # -------------------------------------------------------------------
 
 @app.get("/api/v1/projections/demo-beats")
-def get_demo_beats_projections():
-    """Versioned frontend projections for every locked demo beat (1 through 15)."""
+def get_demo_beats_projections(
+    authority=Depends(require_frontend_authority),
+):
+    """Project only committed facts from the configured verified authority."""
+    identity, scope, operating_day = authority
+    db = get_spanner_database(scope.database_id)
+    with db.snapshot() as snapshot:
+        plans = list(snapshot.execute_sql(
+            "SELECT plan_id, revision, status FROM PlanRevisions "
+            "WHERE tenant_id=@tenant ORDER BY created_at",
+            params={"tenant": scope.tenant_id},
+            param_types={"tenant": spanner.param_types.STRING},
+        ))
+        approvals = list(snapshot.execute_sql(
+            "SELECT approval_id, plan_id, source_revision, proposed_revision, "
+            "plan_diff_hash, kms_key_version, verified_at FROM Approvals "
+            "WHERE tenant_id=@tenant AND operating_day=@operating_day",
+            params={
+                "tenant": scope.tenant_id,
+                "operating_day": datetime.fromisoformat(operating_day).date(),
+            },
+            param_types={
+                "tenant": spanner.param_types.STRING,
+                "operating_day": spanner.param_types.DATE,
+            },
+        ))
+        incidents = list(snapshot.execute_sql(
+            "SELECT incident_id, incident_type, status, terminal_state "
+            "FROM Incidents WHERE tenant_id=@tenant ORDER BY created_at",
+            params={"tenant": scope.tenant_id},
+            param_types={"tenant": spanner.param_types.STRING},
+        ))
     return {
-        "tenant_id": "east-bay-food-bank",
-        "beats": [
-            {
-                "beat_id": "BEAT_01_OUTCOME_PREVIEW",
-                "title": "FIVE FOOD PROGRAMS STILL OPEN TODAY",
-                "time": "0:00–0:20",
-                "status": "OUTCOME_PREVIEW_ACTIVE"
-            },
-            {
-                "beat_id": "BEAT_02_MORNING_PLAN",
-                "title": "Governed Morning Plan rev07",
-                "time": "0:20–0:43",
-                "provenance": "GENERATED 05:30 · APPROVED 06:45 · ACTIVE rev07",
-                "status": "ACTIVE_REV07"
-            },
-            {
-                "beat_id": "BEAT_03_TRUCK_FAILURE",
-                "title": "Truck 1 Breakdown & 45-Min Timer",
-                "time": "0:43–1:00",
-                "status": "INCIDENT_TRUCK_OPEN"
-            },
-            {
-                "beat_id": "BEAT_04_REV08_PROPOSAL",
-                "title": "KMS-Signed rev08 Approval Proposal",
-                "time": "1:00–1:18",
-                "kms_signature_status": "KMS_SIGNATURE_VERIFIED"
-            },
-            {
-                "beat_id": "BEAT_05_REV08_ACTIVE",
-                "title": "Repaired Plan Active & Truck Incident Resolved",
-                "time": "1:18–1:30",
-                "status": "INCIDENT_TRUCK_RESOLVED"
-            },
-            {
-                "beat_id": "BEAT_06_WAITING_FOR_EVENTS",
-                "title": "Coordinator Persisted WAITING_FOR_EVENTS",
-                "time": "1:30–1:40",
-                "coordinator_state": "WAITING_FOR_EVENTS"
-            },
-            {
-                "beat_id": "BEAT_07_RECALL_RECEIVED",
-                "title": "Pub/Sub Recall Event & Model Armor Inspection",
-                "time": "1:40–1:52",
-                "notice_label": "REPRESENTATIVE DEMO NOTICE",
-                "model_armor_status": "REQUIRES_CORRELATED_LIVE_EXECUTION"
-            },
-            {
-                "beat_id": "BEAT_08_RECALL_SCOPING",
-                "title": "Gemini 3.5+ Extraction & Incident Opened",
-                "time": "1:52–2:10",
-                "model_id": MODEL_ID,
-                "model_execution_status": "REQUIRES_CORRELATED_LIVE_EXECUTION",
-                "incident_status": "DETECTED_SCOPING"
-            },
-            {
-                "beat_id": "BEAT_09_GRAPH_RECONSTRUCTION",
-                "title": "Spanner Graph Custody Traversal",
-                "time": "2:10–2:28",
-                "unique_cases": 96,
-                "site01_deduplicated": True
-            },
-            {
-                "beat_id": "BEAT_10_BARRIER_ACTIVE",
-                "title": "Atomic LTC-4471 Movement Barrier Committed",
-                "time": "2:28–2:45",
-                "status": "CONTAINMENT_IN_PROGRESS"
-            },
-            {
-                "beat_id": "BEAT_11_RECOVERY_APPLIED",
-                "title": "LTC-5090 Safe Stock Allocated & Shortfall Recorded",
-                "time": "2:45–3:08",
-                "safe_allocations": {"AG01": 18, "AG02": 22},
-                "shortfall": {"AG03": 20}
-            },
-            {
-                "beat_id": "BEAT_12_FALSE_CONTAINMENT_DENIAL",
-                "title": "Site 01 Downstream Refusal & Cloud Task Scheduled",
-                "time": "3:08–3:20",
-                "refusal_reason": "DOWNSTREAM_CUSTODY_UNCONFIRMED",
-                "mutations_applied": 0
-            },
-            {
-                "beat_id": "BEAT_13_PARTIAL_CONTAINMENT",
-                "title": "Terminal Board & Partial Containment Calculation",
-                "time": "3:20–3:28",
-                "terminal_state": "PARTIALLY_CONTAINED",
-                "service": "4_OF_5_SUPPLIED_AGENCY03_SHORT_20",
-                "safety": "96_TRACED_88_CONFIRMED_8_UNCONFIRMED_SITE01"
-            },
-            {
-                "beat_id": "BEAT_14_NEXT_DAY_DRAFT",
-                "title": "17:00 · NEXT-DAY PLANNING Constrained Draft rev01",
-                "time": "3:28–3:38",
-                "scenario_time": "17:00 · NEXT-DAY PLANNING",
-                "status": "DRAFT_WITH_CONSTRAINTS — HUMAN APPROVAL REQUIRED"
-            },
-            {
-                "beat_id": "BEAT_15_SYSTEM_EVIDENCE",
-                "title": "System Evidence & Deployed Console Proof",
-                "time": "3:38–3:55",
-                "services": ["full-shelf-orchestrator", "full-shelf-plan-ledger"]
-            }
-        ]
+        "tenant_id": scope.tenant_id,
+        "operating_day": operating_day,
+        "authority_scope": f"{scope.tenant_id}@{operating_day}",
+        "verified_principal_subject": identity.subject,
+        "classification": "OBSERVED_LIVE",
+        "plan_revisions": [
+            {"plan_id": row[0], "revision": row[1], "status": row[2]}
+            for row in plans
+        ],
+        "approvals": [
+            {"approval_id": row[0], "plan_id": row[1],
+             "source_revision": row[2], "proposed_revision": row[3],
+             "plan_diff_hash": row[4], "kms_key_version": row[5],
+             "verified_at": str(row[6])}
+            for row in approvals
+        ],
+        "incidents": [
+            {"incident_id": row[0], "incident_type": row[1],
+             "status": row[2], "terminal_state": row[3]}
+            for row in incidents
+        ],
     }
 
 
@@ -2038,12 +2133,11 @@ async def _stream_committed_receipts(
 @app.get("/api/v1/projections/stream")
 async def stream_projections(
     request: Request,
-    tenant_id: str = "east-bay-food-bank",
-    x_api_key: Optional[str] = Header(None, alias="X-Full-Shelf-API-Key"),
+    authority=Depends(require_frontend_authority),
 ):
     """Tail committed Spanner receipts and resume strictly after Last-Event-ID."""
-    verify_judge_key(x_api_key)
-    scope = _resolve_authority_scope(tenant_id)
+    _, scope, _ = authority
+    tenant_id = scope.tenant_id
     db = get_spanner_database(scope.database_id)
     last_event_id = request.headers.get("Last-Event-ID", "").strip()
     try:

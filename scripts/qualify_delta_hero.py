@@ -4,7 +4,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
+import subprocess
 import time
 from datetime import date, datetime
 from pathlib import Path
@@ -12,6 +15,8 @@ from typing import Any
 
 import httpx
 from google.cloud import secretmanager, spanner
+
+from full_shelf_domain.recall import schedule_site01_deadline_task
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -48,6 +53,7 @@ def _post(client: httpx.Client, path: str, *, tenant_id: str, body: dict) -> dic
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--fixture", choices=["canonical", "altered"], required=True)
+    parser.add_argument("--tenant-id", required=True)
     parser.add_argument("--timeout", type=int, default=240)
     args = parser.parse_args()
     fixture_name = (
@@ -56,7 +62,7 @@ def main() -> int:
         else "audit_altered.json"
     )
     fixture = json.loads((ROOT / "test-fixtures" / fixture_name).read_text())
-    tenant_id = fixture["tenant_id"]
+    tenant_id = args.tenant_id
     if not tenant_id.startswith("audit-") or "audit" not in DATABASE:
         raise SystemExit("isolated audit scope required")
 
@@ -136,6 +142,90 @@ def main() -> int:
     else:
         raise SystemExit("managed recall or Cloud Tasks callback did not complete")
 
+    hold_rows = _rows(
+        database,
+        "SELECT incident_id, details FROM Incidents WHERE tenant_id=@tenant "
+        "AND incident_type='DEADLINE_HOLD'",
+        tenant_id,
+    )
+    if len(hold_rows) != 1:
+        raise SystemExit("exactly one committed acknowledgment hold required")
+    hold_details = json.loads(hold_rows[0][1])
+    event_key = hold_details["task_name"]
+    duplicate_task_names = []
+    task_prefix = hashlib.sha256(tenant_id.encode()).hexdigest()[:16]
+    for suffix in ("a", "b"):
+        task = schedule_site01_deadline_task(
+            tenant_id=tenant_id,
+            incident_id=recall["incident_id"],
+            hold_incident_id=hold_rows[0][0],
+            coordinator_id=coordinator["coordinator_id"],
+            lot_id=recall["lot_id"],
+            site_id=hold_details["site_id"],
+            unconfirmed_cases=hold_details["unconfirmed_cases"],
+            task_id=f"duplicate-{task_prefix}-{suffix}",
+            event_idempotency_key=event_key,
+            orchestrator_url=ORCHESTRATOR,
+            oidc_audience=ORCHESTRATOR,
+            delivery_service_account=(
+                "full-shelf-orchestrator-sa@preflight-hackathon.iam.gserviceaccount.com"
+            ),
+        )
+        duplicate_task_names.append(task["task_name"])
+
+    receipt_count_before_duplicates = len(receipts)
+    gcloud_env = os.environ.copy()
+    gcloud_env.setdefault("CLOUDSDK_PYTHON", "/opt/homebrew/bin/python3.12")
+    duplicate_deadline = time.monotonic() + args.timeout
+    while time.monotonic() < duplicate_deadline:
+        after_duplicate_receipts = _rows(
+            database,
+            "SELECT receipt_id, action_type, status, mutations_applied, trace_id, "
+            "idempotency_key, timestamp FROM Receipts WHERE tenant_id=@tenant "
+            "ORDER BY timestamp, receipt_id",
+            tenant_id,
+        )
+        log_result = subprocess.run([
+            "gcloud", "logging", "read",
+            "resource.type=cloud_run_revision AND "
+            "resource.labels.service_name=full-shelf-orchestrator AND "
+            f'textPayload:"duplicate-{task_prefix}-"',
+            f"--project={PROJECT}", "--freshness=20m",
+            "--format=value(textPayload)", "--limit=50",
+        ], check=True, env=gcloud_env, text=True, capture_output=True)
+        logs = log_result.stdout
+        if (
+            len(after_duplicate_receipts) == receipt_count_before_duplicates
+            and f"duplicate-{task_prefix}-a" in logs
+            and f"duplicate-{task_prefix}-b" in logs
+            and logs.count("idempotent_replay=True") >= 2
+        ):
+            break
+        if len(after_duplicate_receipts) != receipt_count_before_duplicates:
+            raise SystemExit("duplicate task delivery created an additional receipt")
+        time.sleep(3)
+    else:
+        raise SystemExit("two managed duplicate task deliveries were not observed")
+
+    subprocess.run([
+        "gcloud", "scheduler", "jobs", "run",
+        f"full-shelf-delta-{args.fixture}-next-day",
+        "--location=us-central1", f"--project={PROJECT}", "--quiet",
+    ], check=True, env=gcloud_env)
+    next_day_deadline = time.monotonic() + args.timeout
+    while time.monotonic() < next_day_deadline:
+        next_day = _rows(
+            database,
+            "SELECT plan_id, revision, status FROM PlanRevisions "
+            "WHERE tenant_id=@tenant AND revision='rev01'",
+            tenant_id,
+        )
+        if len(next_day) == 1 and next_day[0][2] == "DRAFT_WITH_CONSTRAINTS":
+            break
+        time.sleep(3)
+    else:
+        raise SystemExit("managed next-day Scheduler delivery did not commit")
+
     evidence = {
         "fixture": args.fixture,
         "tenant_id": tenant_id,
@@ -175,6 +265,11 @@ def main() -> int:
             tenant_id,
         ),
         "receipts": receipts,
+        "duplicate_task_names": duplicate_task_names,
+        "duplicate_task_event_idempotency_key": event_key,
+        "receipt_count_before_duplicate_tasks": receipt_count_before_duplicates,
+        "receipt_count_after_duplicate_tasks": len(after_duplicate_receipts),
+        "next_day_plan": next_day,
     }
     print(json.dumps(evidence, sort_keys=True))
     return 0

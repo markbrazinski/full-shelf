@@ -11,11 +11,12 @@ paths:
         Accepts PLAN_DAY_REQUESTED, PLAN_NEXT_DAY_REQUESTED, or
         RECALL_NOTICE_RECEIVED. Recall notices pass managed Model Armor before
         ADK/Gemini or any recall ledger mutation. Duplicate deliveries resolve
-        to stable command receipts.
+        to stable command receipts. Authenticated permanently malformed or
+        unsupported messages are acknowledged with 2xx and zero mutations;
+        transient managed or authoritative failures remain retryable.
       security: [{ googleManagedOidc: [] }]
       responses:
         '200': { description: Accepted or idempotently replayed managed event }
-        '400': { description: Invalid envelope or event contract }
         '401': { description: Missing, invalid, expired, or wrong-audience token }
         '403': { description: Valid but unauthorized managed identity or tenant }
         '409': { description: Authoritative coordinator or plan precondition failed }
@@ -97,15 +98,24 @@ paths:
   /api/v1/projections/stream:
     get:
       summary: Live-tail committed receipts with durable Last-Event-ID resume
-      security: [{ judgeApiKey: [] }]
+      security: [{ googleFrontendOidc: [] }]
       parameters:
-        - $ref: '#/components/parameters/TenantId'
         - in: header
           name: Last-Event-ID
           schema: { type: string }
       responses:
         '200': { description: text/event-stream projection updates and heartbeats }
         '400': { description: Invalid receipt cursor }
+        '401': { description: Verified frontend Google identity required }
+        '503': { description: Deployment-bound frontend tenant/day unavailable }
+  /api/v1/projections/demo-beats:
+    get:
+      summary: Project committed state for the deployment-bound frontend tenant/day
+      security: [{ googleFrontendOidc: [] }]
+      responses:
+        '200': { description: Authority-bound committed plan, approval, and incident facts }
+        '401': { description: Verified frontend Google identity required }
+        '503': { description: Deployment-bound frontend tenant/day unavailable }
   /api/v1/evidence/system:
     get:
       summary: Read classified evidence for an explicitly resolved authority scope
@@ -142,6 +152,10 @@ components:
       type: http
       scheme: bearer
       bearerFormat: Google ID token
+    googleFrontendOidc:
+      type: http
+      scheme: bearer
+      bearerFormat: Google-signed operator ID token bound to configured tenant/day
     judgeApiKey:
       type: apiKey
       in: header

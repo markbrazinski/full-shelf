@@ -1,5 +1,5 @@
 import json
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import pytest
 
@@ -162,6 +162,7 @@ def test_duplicate_returns_stable_receipt_and_zero_additional_mutations():
         IDENTITY.subject,
         IDENTITY.email,
         "INCIDENT_COORDINATOR",
+        coordinator_command().request_fingerprint(),
     )
     transaction = FakeTransaction(existing_receipt=existing)
     result = SpannerLedgerCommandExecutor(FakeDatabase(transaction), allowed_tenant_ids={"audit-tenant"}).execute(
@@ -361,6 +362,8 @@ def test_repair_approval_commits_before_any_plan_activation():
         agent_role="FULFILLMENT_RECOVERY_PLANNER",
         payload={"plan_id": "PLAN-ALT", "source_revision": "rev42",
                  "proposed_revision": "rev43", "approval_id": "APP-ALT",
+                 "operating_day": "2026-08-14",
+                 "authority_scope": "audit-tenant@2026-08-14",
                  "approver_subject": "operator-sub", "approver_email": "operator@example.com",
                  "oauth_audience": "client.apps.googleusercontent.com",
                  "plan_diff_hash": diff.plan_diff_hash,
@@ -382,7 +385,53 @@ def test_repair_approval_commits_before_any_plan_activation():
     assert result.additional_mutations == 1
     assert [item["table"] for item in transaction.inserts] == ["Approvals", "Receipts"]
     assert transaction.updates == []
-    assert json.loads(transaction.inserts[0]["values"][0][10]) == command.payload["plan_diff"]
+    assert json.loads(transaction.inserts[0]["values"][0][12]) == command.payload["plan_diff"]
+
+
+def test_changed_signed_envelope_reusing_idempotency_key_is_rejected():
+    diff = _signed_diff()
+    base = coordinator_command(
+        command_type=LedgerCommandType.PERSIST_REPAIR_APPROVAL,
+        agent_role="FULFILLMENT_RECOVERY_PLANNER",
+        payload={
+            "operating_day": "2026-08-14",
+            "authority_scope": "audit-tenant@2026-08-14",
+            "plan_id": "PLAN-ALT", "source_revision": "rev42",
+            "proposed_revision": "rev43", "approval_id": "APP-ALT",
+            "approver_subject": "operator-sub",
+            "approver_email": "operator@example.com",
+            "oauth_audience": "client.apps.googleusercontent.com",
+            "plan_diff_hash": diff.plan_diff_hash,
+            "kms_key_version": "projects/p/keys/k/versions/1",
+            "kms_signature": "signature",
+            "expires_at": "2099-01-01T00:00:00Z",
+            "plan_diff": {
+                "reroute_order_id": diff.reroute_order_id,
+                "reroute_cases": diff.reroute_cases,
+                "reroute_target_vehicle": diff.reroute_target_vehicle,
+                "pickup_order_id": diff.pickup_order_id,
+                "pickup_cases": diff.pickup_cases,
+            },
+        },
+    )
+    existing = (
+        "RCT-STABLE", base.command_id, "rev43", "PERSIST_REPAIR_APPROVAL",
+        "SUCCESS", 1, "PERSIST_REPAIR_APPROVAL committed",
+        base.trace_id, datetime(2026, 8, 14, tzinfo=timezone.utc),
+        IDENTITY.subject, IDENTITY.email, base.agent_role,
+        base.request_fingerprint(),
+    )
+    changed = base.model_copy(deep=True)
+    changed.payload["expires_at"] = "2099-01-02T00:00:00Z"
+    transaction = FakeTransaction(existing_receipt=existing)
+
+    with pytest.raises(ValueError, match="IDEMPOTENCY_KEY_COLLISION"):
+        SpannerLedgerCommandExecutor(
+            FakeDatabase(transaction), allowed_tenant_ids={"audit-tenant"}
+        ).execute(changed, IDENTITY)
+
+    assert transaction.inserts == []
+    assert transaction.updates == []
 
 
 def test_separate_activation_reads_persisted_approval_and_derives_only_signed_changes():
@@ -393,7 +442,9 @@ def test_separate_activation_reads_persisted_approval_and_derives_only_signed_ch
         command_type=LedgerCommandType.ACTIVATE_APPROVED_REPAIR_PLAN,
         agent_role="FULFILLMENT_RECOVERY_PLANNER",
         payload={"plan_id": "PLAN-ALT", "source_revision": "rev42",
-                 "proposed_revision": "rev43", "approval_id": "APP-ALT"},
+                 "proposed_revision": "rev43", "approval_id": "APP-ALT",
+                 "operating_day": "2026-08-14",
+                 "authority_scope": "audit-tenant@2026-08-14"},
     )
     source = [
         ("O201", "AG1", "Agency 1", 18, "LOT-X", "TRUCK-01", "PLANNED"),
@@ -410,7 +461,8 @@ def test_separate_activation_reads_persisted_approval_and_derives_only_signed_ch
     transaction = FakeTransaction(
         source_orders=source,
         approval_rows=[(
-            "INC-ALT-777", "PLAN-ALT", "rev42", "rev43",
+            "INC-ALT-777", "PLAN-ALT", date(2026, 8, 14),
+            "audit-tenant@2026-08-14", "rev42", "rev43",
             diff.plan_diff_hash, plan_diff_json,
             datetime(2099, 1, 1, tzinfo=timezone.utc),
         )],

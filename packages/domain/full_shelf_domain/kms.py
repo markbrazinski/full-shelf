@@ -45,7 +45,8 @@ def compute_plan_diff_hash(diff: PlanDiff) -> str:
 def construct_signed_payload_string(envelope: ApprovalEnvelope) -> str:
     diff = envelope.plan_diff
     return (
-        f"{envelope.approval_id}:{envelope.rev_id}:{envelope.principal_id}:"
+        f"{envelope.approval_id}:{envelope.tenant_id}:{envelope.operating_day}:"
+        f"{envelope.authority_scope}:{envelope.rev_id}:{envelope.principal_id}:"
         f"{envelope.incident_id}:{envelope.plan_id}:{envelope.source_revision}:"
         f"{envelope.proposed_revision}:{diff.reroute_order_id}:{diff.reroute_cases}:"
         f"{diff.reroute_target_vehicle}:{diff.pickup_order_id}:{diff.pickup_cases}:"
@@ -66,6 +67,8 @@ def _parse_expiry(value: str) -> datetime:
 def create_signed_approval_envelope(
     *,
     approval_id: str,
+    tenant_id: str,
+    operating_day: str,
     rev_id: str,
     principal_id: str,
     incident_id: str,
@@ -99,6 +102,9 @@ def create_signed_approval_envelope(
     diff.plan_diff_hash = compute_plan_diff_hash(diff)
     envelope = ApprovalEnvelope(
         approval_id=approval_id,
+        tenant_id=tenant_id,
+        operating_day=operating_day,
+        authority_scope=f"{tenant_id}@{operating_day}",
         rev_id=rev_id,
         principal_id=principal_id,
         incident_id=incident_id,

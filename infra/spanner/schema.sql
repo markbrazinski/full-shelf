@@ -111,6 +111,7 @@ CREATE TABLE Receipts (
   caller_subject STRING(128),
   caller_email STRING(320),
   agent_role STRING(64),
+  request_fingerprint STRING(64),
   timestamp TIMESTAMP NOT NULL OPTIONS (allow_commit_timestamp=true)
 ) PRIMARY KEY (tenant_id, receipt_id),
   INTERLEAVE IN PARENT Tenants ON DELETE CASCADE;
@@ -123,6 +124,8 @@ CREATE TABLE Approvals (
   approval_id STRING(64) NOT NULL,
   incident_id STRING(64) NOT NULL,
   plan_id STRING(64) NOT NULL,
+  operating_day DATE NOT NULL,
+  authority_scope STRING(128) NOT NULL,
   source_revision STRING(32) NOT NULL,
   proposed_revision STRING(32) NOT NULL,
   approver_subject STRING(128) NOT NULL,

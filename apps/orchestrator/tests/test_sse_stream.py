@@ -3,6 +3,7 @@ import os
 import sys
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
@@ -163,14 +164,21 @@ def test_authoritative_read_failure_emits_truthful_error_then_closes():
 
 def test_endpoint_rejects_malformed_last_event_id_before_streaming():
     client = TestClient(orchestrator_main.app)
+    orchestrator_main.app.dependency_overrides[
+        orchestrator_main.require_frontend_authority
+    ] = lambda: (
+        SimpleNamespace(subject="operator-sub"),
+        SimpleNamespace(tenant_id="audit-fresh", database_id="audit-db"),
+        "2026-08-14",
+    )
     with (
-        patch.object(orchestrator_main, "verify_judge_key"),
         patch.object(orchestrator_main, "get_spanner_database", return_value=MagicMock()),
     ):
         response = client.get(
-            "/api/v1/projections/stream?tenant_id=east-bay-food-bank",
+            "/api/v1/projections/stream",
             headers={"Last-Event-ID": "evt-legacy-ambiguous"},
         )
+    orchestrator_main.app.dependency_overrides.clear()
 
     assert response.status_code == 400
     assert response.json()["detail"] == "INVALID_LAST_EVENT_ID"

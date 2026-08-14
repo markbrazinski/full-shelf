@@ -155,6 +155,7 @@ def test_approval_route_requires_independent_human_token_before_kms(monkeypatch)
     monkeypatch.setattr(ledger_main, "create_signed_approval_envelope", forbidden_kms)
     response = client.post("/api/v1/approvals/approve-and-activate", json={
         "command_id": "CMD-ALT", "idempotency_key": "alt", "tenant_id": "audit-tenant",
+        "operating_day": "2026-08-14",
         "incident_id": "INC-ALT", "plan_id": "PLAN-ALT", "source_revision": "rev07",
         "proposed_revision": "rev08", "approval_id": "APP-ALT",
         "expires_at": "2099-01-01T00:00:00Z",
@@ -250,7 +251,10 @@ def test_human_route_persists_approval_before_separate_activation(monkeypatch):
     )
     diff.plan_diff_hash = compute_plan_diff_hash(diff)
     envelope = ApprovalEnvelope(
-        approval_id="APP-ALT", rev_id="rev08", principal_id=operator.subject,
+        approval_id="APP-ALT", tenant_id="east-bay-food-bank",
+        operating_day="2026-08-14",
+        authority_scope="east-bay-food-bank@2026-08-14",
+        rev_id="rev08", principal_id=operator.subject,
         incident_id="INC-ALT", plan_id="PLAN-ALT", source_revision="rev07",
         proposed_revision="rev08", plan_diff=diff,
         kms_key_version="projects/p/keys/k/versions/1", kms_signature="signed",
@@ -277,7 +281,8 @@ def test_human_route_persists_approval_before_separate_activation(monkeypatch):
         headers={"X-Full-Shelf-Operator-Authorization": "Bearer human-token"},
         json={
             "command_id": "CMD-ALT", "idempotency_key": "alt",
-            "tenant_id": "east-bay-food-bank", "incident_id": "INC-ALT",
+            "tenant_id": "east-bay-food-bank", "operating_day": "2026-08-14",
+            "incident_id": "INC-ALT",
             "plan_id": "PLAN-ALT", "source_revision": "rev07",
             "proposed_revision": "rev08", "approval_id": "APP-ALT",
             "expires_at": "2099-01-01T00:00:00Z",

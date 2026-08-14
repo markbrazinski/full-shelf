@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from enum import Enum
 from typing import Any, Dict, Literal, Type
 
@@ -97,6 +98,8 @@ class SignedRepairDiffPayload(StrictPayload):
 
 
 class PersistRepairApprovalPayload(StrictPayload):
+    operating_day: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    authority_scope: str = Field(min_length=3, max_length=128)
     plan_id: str = Field(min_length=1, max_length=64)
     source_revision: str = Field(min_length=1, max_length=32)
     proposed_revision: str = Field(min_length=1, max_length=32)
@@ -113,6 +116,8 @@ class PersistRepairApprovalPayload(StrictPayload):
 
 class ActivateApprovedRepairPlanPayload(StrictPayload):
     approval_id: str = Field(min_length=1, max_length=64)
+    operating_day: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    authority_scope: str = Field(min_length=3, max_length=128)
     plan_id: str = Field(min_length=1, max_length=64)
     source_revision: str = Field(min_length=1, max_length=32)
     proposed_revision: str = Field(min_length=1, max_length=32)
@@ -263,3 +268,16 @@ class LedgerCommand(BaseModel):
         material = f"{self.tenant_id}\x00{self.idempotency_key}".encode("utf-8")
         digest = hashlib.sha256(material).hexdigest()[:24].upper()
         return f"RCT-{digest}"
+
+    def request_fingerprint(self) -> str:
+        """Hash mutation semantics while excluding delivery trace/command IDs."""
+        material = {
+            "tenant_id": self.tenant_id,
+            "incident_id": self.incident_id,
+            "agent_role": self.agent_role,
+            "command_type": self.command_type.value,
+            "expected_plan_revision": self.expected_plan_revision,
+            "payload": self.validated_payload().model_dump(mode="json"),
+        }
+        canonical = json.dumps(material, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()

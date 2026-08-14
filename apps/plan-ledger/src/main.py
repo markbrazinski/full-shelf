@@ -122,6 +122,7 @@ class HumanApprovalRequest(BaseModel):
     command_id: str = Field(min_length=1, max_length=48)
     idempotency_key: str = Field(min_length=1, max_length=112)
     tenant_id: str
+    operating_day: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
     incident_id: str
     plan_id: str
     source_revision: str
@@ -169,12 +170,18 @@ def approve_and_activate(
 ):
     """Authenticate, KMS-bind, persist approval, then activate in a later txn."""
     operator = verify_human_operator(operator_authorization)
-    _resolve_authority_scope(req.tenant_id)
+    approval_scope, _ = _resolve_authority_scope(req.tenant_id)
+    if (
+        approval_scope.kind == "AUDIT_ISOLATED_FRESH_OPERATING_DAY"
+        and req.operating_day.replace("-", "") not in req.tenant_id
+    ):
+        raise HTTPException(409, "OPERATING_DAY_AUTHORITY_SCOPE_MISMATCH")
     if req.source_revision != "rev07" or req.proposed_revision != "rev08":
         raise HTTPException(409, "CANONICAL_REVISION_TRANSITION_REQUIRED")
     try:
         envelope = create_signed_approval_envelope(
-            approval_id=req.approval_id, rev_id=req.proposed_revision,
+            approval_id=req.approval_id, tenant_id=req.tenant_id,
+            operating_day=req.operating_day, rev_id=req.proposed_revision,
             principal_id=operator.subject, incident_id=req.incident_id,
             plan_id=req.plan_id, source_revision=req.source_revision,
             proposed_revision=req.proposed_revision,
@@ -200,6 +207,8 @@ def approve_and_activate(
         "expected_plan_revision": req.source_revision,
         "trace_id": trace_id,
         "payload": {
+            "operating_day": envelope.operating_day,
+            "authority_scope": envelope.authority_scope,
             "plan_id": req.plan_id,
             "source_revision": req.source_revision,
             "proposed_revision": req.proposed_revision,
@@ -214,7 +223,10 @@ def approve_and_activate(
             "plan_diff": req.plan_diff.model_dump(),
         },
     })
-    approval_result = _execute_command(approval_command, caller)
+    try:
+        approval_result = _execute_command(approval_command, caller)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
     if approval_result.receipt.get("status") != "SUCCESS":
         raise HTTPException(409, "REPAIR_APPROVAL_NOT_PERSISTED")
     if not verify_kms_approval_envelope(envelope):
@@ -230,12 +242,17 @@ def approve_and_activate(
         "trace_id": trace_id,
         "payload": {
             "approval_id": req.approval_id,
+            "operating_day": envelope.operating_day,
+            "authority_scope": envelope.authority_scope,
             "plan_id": req.plan_id,
             "source_revision": req.source_revision,
             "proposed_revision": req.proposed_revision,
         },
     })
-    activation_result = _execute_command(activation_command, caller)
+    try:
+        activation_result = _execute_command(activation_command, caller)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
     if activation_result.receipt.get("status") != "SUCCESS":
         raise HTTPException(409, "APPROVED_REPAIR_PLAN_NOT_ACTIVATED")
     return {"approval_receipt": approval_result.receipt,
@@ -279,7 +296,7 @@ def _execute_command(command: LedgerCommand, caller: VerifiedGoogleIdentity):
     try:
         return SpannerLedgerCommandExecutor(
             get_spanner_database(scope.database_id),
-            allowed_tenant_ids=set(resolver.allowed_tenant_ids),
+            allowed_tenant_ids={*resolver.allowed_tenant_ids, scope.tenant_id},
         ).execute(command, caller)
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc

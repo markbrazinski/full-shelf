@@ -32,7 +32,9 @@ class ManagedKmsDouble:
 
 def envelope():
     return create_signed_approval_envelope(
-        approval_id="APP-008", rev_id="rev08", principal_id="108080450585792522893",
+        approval_id="APP-008", tenant_id="audit-canonical-20990813",
+        operating_day="2099-08-13", rev_id="rev08",
+        principal_id="108080450585792522893",
         incident_id="INC-TRUCK-01", plan_id="PLAN-2026-08-07",
         source_revision="rev07", proposed_revision="rev08",
         reroute_order_id="O202", reroute_cases=22,
@@ -55,6 +57,8 @@ def test_managed_signature_verifies():
 
 
 @pytest.mark.parametrize(("path", "value"), [
+    ("tenant_id", "other-tenant"), ("operating_day", "2099-08-14"),
+    ("authority_scope", "other-tenant@2099-08-13"),
     ("source_revision", "rev06"), ("proposed_revision", "rev09"),
     ("principal_id", "attacker"), ("incident_id", "INC-FAKE"),
     ("plan_id", "PLAN-FAKE"), ("expires_at", "2099-08-14T23:00:00Z"),
@@ -94,7 +98,8 @@ def test_managed_signing_failure_has_no_hmac_fallback():
 
     with pytest.raises(KmsApprovalError, match="MANAGED_KMS_SIGNING_FAILED"):
         create_signed_approval_envelope(
-            approval_id="APP-X", rev_id="rev08", principal_id="sub",
+            approval_id="APP-X", tenant_id="audit-x", operating_day="2099-08-13",
+            rev_id="rev08", principal_id="sub",
             incident_id="INC-X", plan_id="PLAN-X", source_revision="rev07",
             proposed_revision="rev08", reroute_order_id="O202", reroute_cases=22,
             reroute_target_vehicle="TRUCK-02", pickup_order_id="O203",

@@ -77,6 +77,7 @@ components:
         - command_id
         - idempotency_key
         - tenant_id
+        - operating_day
         - incident_id
         - plan_id
         - source_revision
@@ -88,6 +89,7 @@ components:
         command_id: { type: string, minLength: 1, maxLength: 48 }
         idempotency_key: { type: string, minLength: 1, maxLength: 112 }
         tenant_id: { type: string, minLength: 1, maxLength: 64 }
+        operating_day: { type: string, format: date }
         incident_id: { type: string, minLength: 1, maxLength: 64 }
         plan_id: { type: string, minLength: 1, maxLength: 64 }
         source_revision: { type: string, enum: [rev07] }

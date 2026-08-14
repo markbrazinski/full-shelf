@@ -97,6 +97,9 @@ class PlanDiff(BaseModel):
 
 class ApprovalEnvelope(BaseModel):
     approval_id: str
+    tenant_id: str
+    operating_day: str
+    authority_scope: str
     rev_id: str
     principal_id: str
     incident_id: str

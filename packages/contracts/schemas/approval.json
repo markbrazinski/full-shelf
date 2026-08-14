@@ -5,6 +5,9 @@
   "additionalProperties": false,
   "properties": {
     "approval_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "tenant_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "operating_day": { "type": "string", "format": "date" },
+    "authority_scope": { "type": "string", "minLength": 3, "maxLength": 128 },
     "rev_id": { "const": "rev08" },
     "principal_id": { "type": "string", "minLength": 1, "maxLength": 128 },
     "incident_id": { "type": "string", "minLength": 1, "maxLength": 64 },
@@ -34,7 +37,8 @@
     "expires_at": { "type": "string", "format": "date-time" }
   },
   "required": [
-    "approval_id", "rev_id", "principal_id", "incident_id", "plan_id",
+    "approval_id", "tenant_id", "operating_day", "authority_scope", "rev_id",
+    "principal_id", "incident_id", "plan_id",
     "source_revision", "proposed_revision", "plan_diff", "kms_key_version",
     "kms_signature", "expires_at"
   ]

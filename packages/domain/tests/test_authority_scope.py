@@ -39,6 +39,23 @@ def test_unknown_tenant_fails_closed():
         resolver.resolve("caller-selected-database")
 
 
+def test_configured_fresh_operating_day_prefix_resolves_without_static_allowlist():
+    resolver = AuthorityScopeResolver(
+        canonical_tenant_id="east-bay-food-bank",
+        canonical_database_id="full-shelf-main",
+        audit_database_id="full-shelf-audit",
+        audit_tenant_ids=set(),
+        audit_tenant_prefixes={"audit-canonical-", "audit-altered-"},
+    )
+
+    scope = resolver.resolve("audit-canonical-20260814-a1b2c3d4e5")
+
+    assert scope.database_id == "full-shelf-audit"
+    assert scope.kind == "AUDIT_ISOLATED_FRESH_OPERATING_DAY"
+    with pytest.raises(UnauthorizedAuthorityScope):
+        resolver.resolve("audit-unconfigured-20260814-a1b2c3d4e5")
+
+
 @pytest.mark.parametrize(
     ("canonical_database", "audit_database", "audit_tenants", "error"),
     [
