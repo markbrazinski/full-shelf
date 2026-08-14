@@ -37,6 +37,8 @@ def _receipt(receipt_id, timestamp):
         "SUCCESS",
         f"Committed {receipt_id}",
         timestamp,
+        "0123456789abcdef0123456789abcdef",
+        "orchestrator@example.iam.gserviceaccount.com",
     )
 
 
@@ -93,6 +95,8 @@ def test_stream_stays_open_and_emits_new_commit_without_reconnect():
     assert len(chunks) == 1
     assert "event: projection_update" in chunks[0]
     assert "RCT-NEW" in chunks[0]
+    assert "0123456789abcdef0123456789abcdef" in chunks[0]
+    assert "orchestrator@example.iam.gserviceaccount.com" in chunks[0]
 
 
 def test_stream_advances_cursor_without_skip_or_duplicate():

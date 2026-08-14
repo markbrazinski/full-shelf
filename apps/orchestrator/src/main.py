@@ -1924,7 +1924,7 @@ def _query_committed_receipts_after(db, *, tenant_id: str, cursor):
 
     sql = f"""
       SELECT receipt_id, action_id, plan_revision_id, action_type, status,
-             message, timestamp
+             message, timestamp, trace_id, caller_email
       FROM Receipts
       WHERE tenant_id = @tenant_id
       {cursor_predicate}
@@ -1947,6 +1947,8 @@ def _receipt_projection(row) -> Dict[str, Any]:
         "status": row[4],
         "message": row[5],
         "timestamp": timestamp.isoformat(),
+        "correlation_trace_id": row[7],
+        "committed_by": row[8],
     }
 
 
