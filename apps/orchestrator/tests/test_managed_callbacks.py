@@ -96,3 +96,32 @@ def test_task_creation_is_explicitly_audience_bound_without_local_fallback():
         "00-0123456789abcdef0123456789abcdef-"
     )
     assert result["correlation_trace_id"] == "0123456789abcdef0123456789abcdef"
+
+
+def test_task_redelivery_reuses_deterministic_ledger_idempotency_key():
+    client = TestClient(main.app)
+    result = {
+        "receipt": {"receipt_id": "RCT-TASK-REPLAY", "status": "SUCCESS"},
+        "idempotent_replay": True,
+    }
+    request = {
+        "incident_id": "INC-RECALL-01",
+        "site_id": "SITE-01",
+        "task_decision_id": "task-redelivery",
+    }
+    headers = {
+        "Authorization": "Bearer signed",
+        "X-CloudTasks-TaskName": "task-redelivery",
+        "X-CloudTasks-QueueName": "full-shelf-deadlines",
+    }
+    with patch.object(main, "_verify_managed_callback", return_value=CALLER), patch.object(
+        main, "execute_ledger_command", return_value=result
+    ) as ledger:
+        first = client.post("/api/v1/incidents/site01-deadline", headers=headers, json=request)
+        second = client.post("/api/v1/incidents/site01-deadline", headers=headers, json=request)
+
+    assert first.status_code == second.status_code == 200
+    assert ledger.call_count == 2
+    first_key = ledger.call_args_list[0].kwargs["idempotency_key"]
+    second_key = ledger.call_args_list[1].kwargs["idempotency_key"]
+    assert first_key == second_key == "cloud-task:task-redelivery"

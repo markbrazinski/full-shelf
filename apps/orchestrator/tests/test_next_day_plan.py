@@ -129,3 +129,37 @@ def test_pubsub_push_rejects_missing_identity_before_interpretation():
     ):
         response = client.post("/api/v1/orchestrator/pubsub/push", json={})
     assert response.status_code == 401
+
+
+def test_pubsub_redelivery_preserves_source_idempotency_inputs():
+    client = TestClient(orchestrator_main.app)
+    caller = MagicMock(
+        email="delivery@example.iam.gserviceaccount.com",
+        audience="https://orchestrator.example.run.app",
+    )
+    envelope = {
+        "message": {
+            "messageId": "managed-message-redelivery-123",
+            "publishTime": "2026-08-14T00:30:00Z",
+            "data": "eyJldmVudF90eXBlIjoiUExBTl9ORVhUX0RBWV9SRVFVRVNURUQiLCJ0ZW5hbnRfaWQiOiJlYXN0LWJheS1mb29kLWJhbmsifQ==",
+        }
+    }
+    result = {"status": "NEXT_DAY_DRAFT_CREATED", "idempotent_replay": False}
+    with patch.object(orchestrator_main, "_verify_managed_callback", return_value=caller), patch.object(
+        orchestrator_main, "_generate_next_day_plan", return_value=result
+    ) as generate:
+        first = client.post(
+            "/api/v1/orchestrator/pubsub/push",
+            headers={"Authorization": "Bearer signed"},
+            json=envelope,
+        )
+        second = client.post(
+            "/api/v1/orchestrator/pubsub/push",
+            headers={"Authorization": "Bearer signed"},
+            json=envelope,
+        )
+
+    assert first.status_code == second.status_code == 200
+    assert generate.call_count == 2
+    assert generate.call_args_list[0].kwargs == generate.call_args_list[1].kwargs
+    assert generate.call_args_list[0].kwargs["source_event_id"] == "managed-message-redelivery-123"

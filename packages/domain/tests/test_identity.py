@@ -83,6 +83,21 @@ def test_invalid_required_claim_is_rejected(claim_overrides):
         verifier_for(valid_claims(**claim_overrides)).verify_token("signed-token")
 
 
+@pytest.mark.parametrize(
+    "claim_overrides",
+    [
+        {"sub": None},
+        {"sub": ""},
+        {"email": None},
+        {"email": ""},
+        {"exp": "not-a-timestamp"},
+    ],
+)
+def test_missing_or_malformed_identity_claim_is_rejected(claim_overrides):
+    with pytest.raises(InvalidIdentityToken):
+        verifier_for(valid_claims(**claim_overrides)).verify_token("signed-token")
+
+
 def test_unauthorized_subject_is_forbidden():
     with pytest.raises(UnauthorizedIdentity):
         verifier_for(valid_claims(sub="999999999999999999999")).verify_token("signed-token")
