@@ -68,6 +68,7 @@ def test_task_callback_uses_verified_identity_and_cannot_bypass_ledger():
     assert command["payload"]["delivery_subject"] == CALLER.subject
     assert command["payload"]["delivery_audience"] == CALLER.audience
     assert command["trace_id"] == "0123456789abcdef0123456789abcdef"
+    assert "correlation_trace_id" not in command["payload"]
 
 
 def test_task_creation_is_explicitly_audience_bound_without_local_fallback():

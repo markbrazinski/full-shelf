@@ -564,7 +564,6 @@ def handle_site01_deadline_callback(
             "delivery_subject": caller.subject,
             "delivery_email": caller.email,
             "delivery_audience": caller.audience,
-            "correlation_trace_id": trace_id,
         },
     )
 
@@ -638,6 +637,7 @@ def schedule_site01_escalation(
         "target_url": task["target_url"],
         "oidc_audience": task["oidc_audience"],
         "delivery_service_account": task["delivery_service_account"],
+        "correlation_trace_id": task["correlation_trace_id"],
     }
     print(json.dumps(evidence, sort_keys=True))
     return {"status": "SITE01_ESCALATION_SCHEDULED", **evidence}
