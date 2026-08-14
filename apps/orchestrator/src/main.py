@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import base64
 from datetime import datetime, timedelta, timezone
@@ -37,6 +38,7 @@ app = FastAPI(
 )
 
 tracer = get_tracer("orchestrator")
+logger = logging.getLogger("full_shelf.orchestrator")
 
 PROJECT_ID = os.getenv("GCP_PROJECT_ID", "preflight-hackathon")
 SPANNER_INSTANCE = os.getenv("SPANNER_INSTANCE_ID", "fef-smoke-spanner")
@@ -1157,6 +1159,11 @@ def _generate_next_day_plan(
                 param_types={"t": spanner.param_types.STRING},
             ))
     except Exception as exc:
+        logger.error(
+            "authoritative_continuity_read_failed exception_type=%s status_code=%s",
+            type(exc).__name__,
+            getattr(exc, "code", "UNAVAILABLE"),
+        )
         raise HTTPException(503, "AUTHORITATIVE_CONTINUITY_READ_UNAVAILABLE") from exc
 
     incident_status = incident_rows[0][0] if incident_rows else None
