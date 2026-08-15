@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://full-shelf.example/schemas/ledger_error.json",
+  "title": "Ledger permanent business rejection",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "code",
+    "category",
+    "retryable",
+    "mutations_applied",
+    "collision_kind"
+  ],
+  "properties": {
+    "code": { "const": "IDEMPOTENCY_KEY_COLLISION" },
+    "category": { "const": "PERMANENT_BUSINESS_REJECTION" },
+    "retryable": { "const": false },
+    "mutations_applied": { "const": 0 },
+    "collision_kind": {
+      "enum": ["FINGERPRINT_MISMATCH", "BUSINESS_IDENTITY_ALREADY_EXISTS"]
+    }
+  }
+}

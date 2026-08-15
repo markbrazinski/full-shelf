@@ -18,7 +18,7 @@ def _schema(name):
     [
         "approval.json", "event.json", "incident.json", "plan.json",
         "ledger_command.json", "operating_day_request.json",
-        "recurring_daily_request.json",
+        "recurring_daily_request.json", "ledger_error.json",
     ],
 )
 def test_schema_is_valid_draft_2020_12(name):
@@ -101,6 +101,18 @@ def test_next_day_draft_requires_constraints_and_human_approval():
     draft["human_approval_required"] = False
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate(draft, schema)
+
+
+def test_ledger_collision_contract_is_permanent_and_zero_mutation():
+    schema = _schema("ledger_error.json")
+    rejection = {
+        "code": "IDEMPOTENCY_KEY_COLLISION",
+        "category": "PERMANENT_BUSINESS_REJECTION",
+        "retryable": False,
+        "mutations_applied": 0,
+        "collision_kind": "BUSINESS_IDENTITY_ALREADY_EXISTS",
+    }
+    jsonschema.validate(rejection, schema)
 
 
 def test_openapi_records_managed_and_retired_paths_truthfully():

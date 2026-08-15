@@ -26,7 +26,10 @@ from full_shelf_domain.authority import (
     UnauthorizedAuthorityScope,
 )
 from full_shelf_domain.ledger_commands import LedgerCommand
-from full_shelf_domain.ledger_executor import SpannerLedgerCommandExecutor
+from full_shelf_domain.ledger_executor import (
+    PermanentLedgerBusinessError,
+    SpannerLedgerCommandExecutor,
+)
 from full_shelf_domain.reconciliation import reconcile_recall_graph
 from full_shelf_domain.spanner import (
     get_spanner_database, get_active_plan_revision
@@ -281,6 +284,17 @@ def execute_ledger_command(
         result = _execute_command(command, caller)
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except PermanentLedgerBusinessError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": exc.code,
+                "category": "PERMANENT_BUSINESS_REJECTION",
+                "retryable": False,
+                "mutations_applied": 0,
+                "collision_kind": exc.collision_kind,
+            },
+        ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {

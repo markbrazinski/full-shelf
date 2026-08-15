@@ -1,5 +1,6 @@
 import importlib.util
 import os
+from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
@@ -108,7 +109,10 @@ def test_pubsub_next_day_delivery_requires_verified_identity_and_uses_publish_da
             "data": "eyJldmVudF90eXBlIjoiUExBTl9ORVhUX0RBWV9SRVFVRVNURUQiLCJ0ZW5hbnRfaWQiOiJlYXN0LWJheS1mb29kLWJhbmsifQ==",
         }
     }
-    with patch.object(orchestrator_main, "_verify_managed_callback", return_value=caller), patch.object(
+    frozen_now = datetime.fromisoformat("2026-08-14T00:31:00+00:00")
+    with patch.object(orchestrator_main, "_utc_now", return_value=frozen_now), patch.object(
+        orchestrator_main, "_verify_managed_callback", return_value=caller
+    ), patch.object(
         orchestrator_main, "_generate_next_day_plan", return_value=result
     ) as generate:
         response = client.post(
@@ -152,7 +156,10 @@ def test_pubsub_redelivery_preserves_source_idempotency_inputs():
         "status": "NEXT_DAY_DRAFT_CREATED", "idempotent_replay": False,
         "ledger_receipt": {"receipt_id": "RCT-NEXT"},
     }
-    with patch.object(orchestrator_main, "_verify_managed_callback", return_value=caller), patch.object(
+    frozen_now = datetime.fromisoformat("2026-08-14T00:31:00+00:00")
+    with patch.object(orchestrator_main, "_utc_now", return_value=frozen_now), patch.object(
+        orchestrator_main, "_verify_managed_callback", return_value=caller
+    ), patch.object(
         orchestrator_main, "_generate_next_day_plan", return_value=result
     ) as generate:
         first = client.post(

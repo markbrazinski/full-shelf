@@ -33,6 +33,22 @@ from .models import IncidentStatus
 from .state_machines import IncidentStateMachine
 
 
+class PermanentLedgerBusinessError(ValueError):
+    """A deterministic zero-mutation rejection safe for transport acknowledgment."""
+
+    def __init__(self, code: str, *, collision_kind: str) -> None:
+        super().__init__(code)
+        self.code = code
+        self.collision_kind = collision_kind
+
+
+class IdempotencyKeyCollision(PermanentLedgerBusinessError):
+    def __init__(self, *, collision_kind: str = "FINGERPRINT_MISMATCH") -> None:
+        super().__init__(
+            "IDEMPOTENCY_KEY_COLLISION", collision_kind=collision_kind
+        )
+
+
 @dataclass(frozen=True)
 class CommandExecutionResult:
     receipt: Dict[str, Any]
@@ -90,7 +106,7 @@ class SpannerLedgerCommandExecutor:
                             transaction, command, payload, existing
                         )
                     ):
-                        raise ValueError("IDEMPOTENCY_KEY_COLLISION")
+                        raise IdempotencyKeyCollision()
                 return CommandExecutionResult(
                     receipt=existing,
                     idempotent_replay=True,
@@ -378,9 +394,9 @@ class SpannerLedgerCommandExecutor:
             )
             existing_status = next((row[0] for row in existing_rows), None)
             if existing_status is not None:
-                if existing_status != payload.status:
-                    raise ValueError("PLAN_REVISION_ALREADY_EXISTS_WITH_DIFFERENT_STATUS")
-                return 0
+                raise IdempotencyKeyCollision(
+                    collision_kind="BUSINESS_IDENTITY_ALREADY_EXISTS"
+                )
             if (
                 payload.status == "ACTIVE"
                 and active_revision is not None

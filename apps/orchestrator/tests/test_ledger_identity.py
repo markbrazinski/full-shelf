@@ -2,6 +2,7 @@ import importlib.util
 import os
 
 import pytest
+import httpx
 from fastapi import HTTPException
 
 from full_shelf_domain.identity import IdentityConfigurationError
@@ -34,6 +35,23 @@ class FakeCommandResponse(FakeResponse):
             "idempotent_replay": False,
             "additional_mutations": 0,
         }
+
+
+def test_machine_readable_ledger_collision_is_parsed_by_code():
+    response = httpx.Response(
+        409,
+        request=httpx.Request("POST", "https://ledger.example/commands"),
+        json={"detail": {
+            "code": "IDEMPOTENCY_KEY_COLLISION",
+            "category": "PERMANENT_BUSINESS_REJECTION",
+            "retryable": False,
+            "mutations_applied": 0,
+            "collision_kind": "BUSINESS_IDENTITY_ALREADY_EXISTS",
+        }},
+    )
+    assert orchestrator_main._ledger_error_detail(response)["code"] == (
+        "IDEMPOTENCY_KEY_COLLISION"
+    )
 
 
 def test_ledger_call_requires_explicit_url_and_audience(monkeypatch):

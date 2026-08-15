@@ -3,10 +3,13 @@ import os
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
+from fastapi import HTTPException
 
 from full_shelf_domain.identity import VerifiedGoogleIdentity
 from full_shelf_domain.ledger_commands import LedgerCommand
+from full_shelf_domain.ledger_executor import IdempotencyKeyCollision
 from full_shelf_domain.kms import compute_plan_diff_hash
 from full_shelf_domain.models import ApprovalEnvelope, PlanDiff
 
@@ -118,7 +121,58 @@ def test_correct_orchestrator_identity_reaches_allowed_ledger_route(monkeypatch)
         headers={"Authorization": "Bearer valid-google-token"},
     )
     assert response.status_code == 200
-    assert response.json()["services"] == ["full-shelf-orchestrator", "full-shelf-plan-ledger"]
+    assert response.json()["services"] == [
+        "full-shelf-orchestrator", "full-shelf-plan-ledger"
+    ]
+
+
+def test_command_collision_has_machine_readable_permanent_error_contract(monkeypatch):
+    identity = VerifiedGoogleIdentity(
+        subject="105774551577568412756",
+        email="full-shelf-orchestrator-sa@example.iam.gserviceaccount.com",
+        audience="https://ledger.example.run.app",
+        issuer="https://accounts.google.com",
+        expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+    )
+    command = LedgerCommand.model_validate({
+        "command_id": "CMD-COLLISION-TEST",
+        "idempotency_key": "daily-plan:collision-test",
+        "tenant_id": "audit-tenant-20260814",
+        "incident_id": "INC-DAY-COLLISION-TEST",
+        "agent_role": "INCIDENT_COORDINATOR",
+        "command_type": "PERSIST_COORDINATOR",
+        "expected_plan_revision": "rev07",
+        "trace_id": "0123456789abcdef0123456789abcdef",
+        "payload": {
+            "coordinator_id": "COORD-COLLISION-TEST",
+            "state": "WAITING_FOR_EVENTS",
+            "checkpoint": "CHK-COLLISION-TEST",
+            "active_plan_revision": "rev07",
+            "child_incident_ids": [],
+        },
+    })
+    monkeypatch.setattr(
+        ledger_main,
+        "_execute_command",
+        lambda command, caller: (_ for _ in ()).throw(
+            IdempotencyKeyCollision(
+                collision_kind="BUSINESS_IDENTITY_ALREADY_EXISTS"
+            )
+        ),
+    )
+    monkeypatch.setattr(ledger_main, "generate_trace_id", lambda: command.trace_id)
+
+    with pytest.raises(HTTPException) as exc:
+        ledger_main.execute_ledger_command(command, caller=identity)
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail == {
+        "code": "IDEMPOTENCY_KEY_COLLISION",
+        "category": "PERMANENT_BUSINESS_REJECTION",
+        "retryable": False,
+        "mutations_applied": 0,
+        "collision_kind": "BUSINESS_IDENTITY_ALREADY_EXISTS",
+    }
 
 
 def test_every_ledger_api_route_has_workload_auth_dependency():

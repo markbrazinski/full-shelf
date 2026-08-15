@@ -5,7 +5,10 @@ import pytest
 
 from full_shelf_domain.identity import VerifiedGoogleIdentity
 from full_shelf_domain.ledger_commands import LedgerCommand, LedgerCommandType
-from full_shelf_domain.ledger_executor import SpannerLedgerCommandExecutor
+from full_shelf_domain.ledger_executor import (
+    IdempotencyKeyCollision,
+    SpannerLedgerCommandExecutor,
+)
 from full_shelf_domain.kms import compute_plan_diff_hash
 from full_shelf_domain.models import PlanDiff
 
@@ -177,11 +180,17 @@ def test_duplicate_returns_stable_receipt_and_zero_additional_mutations():
 
 def test_daily_scheduler_command_atomically_initializes_isolated_operating_plan():
     class DailyTransaction(FakeTransaction):
+        def __init__(self, *, existing_business_identity=False):
+            super().__init__(active_revision=None)
+            self.existing_business_identity = existing_business_identity
+
         def execute_sql(self, sql, params, param_types):
             if "idempotency_key" in sql:
                 return []
             if "SELECT revision FROM PlanRevisions" in sql:
                 return []
+            if "AND plan_id = @plan_id" in sql:
+                return [("SUPERSEDED",)] if self.existing_business_identity else []
             if "SELECT status FROM PlanRevisions" in sql:
                 return []
             if "FROM Tenants" in sql:
@@ -236,7 +245,7 @@ def test_daily_scheduler_command_atomically_initializes_isolated_operating_plan(
             }],
         },
     )
-    transaction = DailyTransaction(active_revision=None)
+    transaction = DailyTransaction()
     result = SpannerLedgerCommandExecutor(
         FakeDatabase(transaction), allowed_tenant_ids={"audit-tenant-20260814"}
     ).execute(command, IDENTITY)
@@ -248,6 +257,18 @@ def test_daily_scheduler_command_atomically_initializes_isolated_operating_plan(
         "CustodyNodes", "CustodyEdges", "InboundEvents", "Receipts",
     ]
     assert transaction.updates == []
+
+    collision = DailyTransaction(existing_business_identity=True)
+    with pytest.raises(IdempotencyKeyCollision) as exc:
+        SpannerLedgerCommandExecutor(
+            FakeDatabase(collision),
+            allowed_tenant_ids={"audit-tenant-20260814"},
+        ).execute(command, IDENTITY)
+    assert exc.value.code == "IDEMPOTENCY_KEY_COLLISION"
+    assert exc.value.collision_kind == "BUSINESS_IDENTITY_ALREADY_EXISTS"
+    assert collision.inserts == []
+    assert collision.upserts == []
+    assert collision.updates == []
 
 
 def test_open_recall_preserves_existing_coordinator_child_incident():

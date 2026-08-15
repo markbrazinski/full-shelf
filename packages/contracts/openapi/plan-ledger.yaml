@@ -41,7 +41,20 @@ paths:
         '200': { description: Stable transactional command receipt and replay metadata }
         '400': { description: Trace context does not match the command }
         '403': { description: Command type not allowed for the caller or tenant }
-        '409': { description: Deterministic policy or revision precondition rejected }
+        '409':
+          description: Deterministic policy, idempotency, or revision precondition rejected
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    required: [detail]
+                    properties:
+                      detail: { $ref: ../schemas/ledger_error.json }
+                  - type: object
+                    required: [detail]
+                    properties:
+                      detail: { type: string }
   /api/v1/plans/preview:
     get:
       summary: Read an authoritative plan projection

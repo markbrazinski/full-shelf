@@ -138,6 +138,80 @@ def test_authenticated_duplicate_daily_deliveries_return_stable_2xx_result():
     assert generate.call_args_list[0].kwargs["request"].tenant_id == "audit-canonical"
 
 
+def test_daily_idempotency_collision_is_visible_but_transport_acknowledged(caplog):
+    client = TestClient(main.app)
+    event = {"event_type": "PLAN_DAY_REQUESTED", "tenant_id": "audit-canonical",
+             "operating_plan": _minimal_operating_plan()}
+    detail = {
+        "code": "IDEMPOTENCY_KEY_COLLISION",
+        "category": "PERMANENT_BUSINESS_REJECTION",
+        "retryable": False,
+        "mutations_applied": 0,
+        "collision_kind": "BUSINESS_IDENTITY_ALREADY_EXISTS",
+    }
+    with patch.object(main, "_verify_managed_callback", return_value=CALLER), patch.object(
+        main, "_resolve_authority_scope"
+    ), patch.object(
+        main, "_generate_daily_morning_plan",
+        side_effect=main.HTTPException(409, detail=detail),
+    ):
+        response = client.post(
+            "/api/v1/orchestrator/pubsub/push",
+            headers={"Authorization": "Bearer signed"},
+            json=_pubsub_envelope(event, "daily-collision-1"),
+        )
+
+    assert response.status_code == 200
+    assert response.json()["disposition"] == "PERMANENTLY_REJECTED_ACKNOWLEDGED"
+    assert response.json()["error_code"] == "IDEMPOTENCY_KEY_COLLISION"
+    assert response.json()["mutations_applied"] == 0
+    assert response.json()["authority"] == "audit-canonical-20260814"
+    assert "message_id=daily-collision-1" in caplog.text
+    assert "authority=audit-canonical-20260814" in caplog.text
+    assert "error_code=IDEMPOTENCY_KEY_COLLISION" in caplog.text
+
+
+def test_unknown_daily_409_remains_retryable_5xx():
+    client = TestClient(main.app)
+    event = {"event_type": "PLAN_DAY_REQUESTED", "tenant_id": "audit-canonical",
+             "operating_plan": _minimal_operating_plan()}
+    with patch.object(main, "_verify_managed_callback", return_value=CALLER), patch.object(
+        main, "_resolve_authority_scope"
+    ), patch.object(
+        main, "_generate_daily_morning_plan",
+        side_effect=main.HTTPException(409, detail={"code": "UNKNOWN_COLLISION"}),
+    ):
+        response = client.post(
+            "/api/v1/orchestrator/pubsub/push",
+            headers={"Authorization": "Bearer signed"},
+            json=_pubsub_envelope(event, "daily-unknown-409"),
+        )
+
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "UNKNOWN_DAILY_APPLICATION_FAILURE"
+
+
+def test_daily_transient_persistence_failure_remains_retryable():
+    client = TestClient(main.app)
+    event = {"event_type": "PLAN_DAY_REQUESTED", "tenant_id": "audit-canonical",
+             "operating_plan": _minimal_operating_plan()}
+    with patch.object(main, "_verify_managed_callback", return_value=CALLER), patch.object(
+        main, "_resolve_authority_scope"
+    ), patch.object(
+        main, "_generate_daily_morning_plan",
+        side_effect=main.HTTPException(
+            503, detail={"code": "AUTHORITATIVE_PERSISTENCE_UNAVAILABLE"}
+        ),
+    ):
+        response = client.post(
+            "/api/v1/orchestrator/pubsub/push",
+            headers={"Authorization": "Bearer signed"},
+            json=_pubsub_envelope(event, "daily-transient-1"),
+        )
+
+    assert response.status_code == 503
+
+
 def test_managed_publish_time_uses_food_bank_day_boundary():
     before_midnight = datetime.fromisoformat("2026-08-15T06:59:59+00:00")
     at_midnight = datetime.fromisoformat("2026-08-15T07:00:00+00:00")

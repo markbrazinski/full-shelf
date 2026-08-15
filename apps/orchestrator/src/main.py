@@ -350,9 +350,41 @@ def _operating_day_from_managed_publish_time(published_at: datetime) -> str:
     return published_at.astimezone(operating_zone).date().isoformat()
 
 
+def _utc_now() -> datetime:
+    """Clock seam for deterministic managed-event age tests."""
+    return datetime.now(timezone.utc)
+
+
+PERMANENT_PUBSUB_BUSINESS_REJECTION_CODES = frozenset({
+    "IDEMPOTENCY_KEY_COLLISION",
+})
+
+
+def _ledger_error_detail(response: httpx.Response) -> Dict[str, Any]:
+    """Parse the private ledger's bounded machine-readable error contract."""
+    try:
+        body = response.json()
+    except (TypeError, ValueError):
+        return {"code": "UNPARSEABLE_LEDGER_ERROR"}
+    detail = body.get("detail") if isinstance(body, dict) else None
+    if isinstance(detail, dict) and isinstance(detail.get("code"), str):
+        return detail
+    if isinstance(detail, str):
+        return {"code": detail}
+    return {"code": "UNKNOWN_LEDGER_ERROR"}
+
+
+def _http_exception_code(exc: HTTPException) -> str:
+    if isinstance(exc.detail, dict):
+        code = exc.detail.get("code")
+        return code if isinstance(code, str) else "UNKNOWN_LEDGER_ERROR"
+    return str(exc.detail)
+
+
 def _ack_permanent_pubsub_rejection(
     *, message_id: str | None, event_type: str | None, reason: str,
     trace_id: str, age_seconds: float | None = None,
+    authority: str | None = None, error_code: str | None = None,
 ) -> Dict[str, Any]:
     """Acknowledge authenticated poison messages without any authoritative write."""
     disposition = (
@@ -361,10 +393,11 @@ def _ack_permanent_pubsub_rejection(
     )
     logger.warning(
         "pubsub_disposition message_id=%s event_type=%s disposition=%s "
-        "age_seconds=%s trace_id=%s receipt_id=NONE reason=%s",
+        "age_seconds=%s trace_id=%s receipt_id=NONE authority=%s "
+        "error_code=%s reason=%s",
         message_id or "UNKNOWN", event_type or "UNKNOWN", disposition,
         round(age_seconds, 3) if age_seconds is not None else "UNKNOWN",
-        trace_id, reason,
+        trace_id, authority or "UNKNOWN", error_code or reason, reason,
     )
     return {
         "status": disposition,
@@ -375,19 +408,24 @@ def _ack_permanent_pubsub_rejection(
         "mutations_applied": 0,
         "classification": "OBSERVED_LIVE",
         "trace_id": trace_id,
+        "authority": authority,
+        "error_code": error_code or reason,
     }
 
 
 def _log_pubsub_result(
     *, message_id: str, event_type: str, disposition: str, trace_id: str,
     age_seconds: float, receipt_id: str | None = None, reason: str | None = None,
+    authority: str | None = None, error_code: str | None = None,
 ) -> None:
     log = logger.error if disposition == "RETRYABLE_FAILURE" else logger.warning
     log(
         "pubsub_disposition message_id=%s event_type=%s disposition=%s "
-        "age_seconds=%s trace_id=%s receipt_id=%s reason=%s",
+        "age_seconds=%s trace_id=%s receipt_id=%s authority=%s "
+        "error_code=%s reason=%s",
         message_id, event_type, disposition, round(age_seconds, 3), trace_id,
-        receipt_id or "NONE", reason or "NONE",
+        receipt_id or "NONE", authority or "UNKNOWN", error_code or "NONE",
+        reason or "NONE",
     )
 
 
@@ -594,8 +632,25 @@ def _generate_daily_morning_plan(
                 "authority_scope": authority_scope,
             },
         )
+    except httpx.HTTPStatusError as exc:
+        detail = _ledger_error_detail(exc.response)
+        if (
+            exc.response.status_code == 409
+            and detail["code"] in PERMANENT_PUBSUB_BUSINESS_REJECTION_CODES
+        ):
+            raise HTTPException(status_code=409, detail=detail) from exc
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "code": "PLAN_LEDGER_DAILY_PLAN_COMMIT_FAILED",
+                "ledger_status": exc.response.status_code,
+            },
+        ) from exc
     except Exception as exc:
-        raise HTTPException(status_code=502, detail="PLAN_LEDGER_DAILY_PLAN_COMMIT_FAILED") from exc
+        raise HTTPException(
+            status_code=502,
+            detail={"code": "PLAN_LEDGER_DAILY_PLAN_COMMIT_FAILED"},
+        ) from exc
 
     return {
         "status": (
@@ -859,7 +914,7 @@ def handle_pubsub_push(
     age_seconds = None
     try:
         published_at = _parse_managed_publish_time(publish_time)
-        age_seconds = (datetime.now(timezone.utc) - published_at).total_seconds()
+        age_seconds = (_utc_now() - published_at).total_seconds()
         max_age_seconds = int(os.getenv("PUBSUB_MAX_EVENT_AGE_SECONDS", "86400"))
         if age_seconds > max_age_seconds:
             return _ack_permanent_pubsub_rejection(
@@ -953,12 +1008,13 @@ def handle_pubsub_push(
                 return _ack_permanent_pubsub_rejection(
                     message_id=message_id, event_type=event_type,
                     reason=str(exc.detail), trace_id=trace_id,
-                    age_seconds=age_seconds,
+                    age_seconds=age_seconds, authority=tenant_id,
                 )
             _log_pubsub_result(
                 message_id=message_id, event_type=event_type,
                 disposition="RETRYABLE_FAILURE", trace_id=trace_id,
                 age_seconds=age_seconds, reason=str(exc.detail),
+                authority=tenant_id,
             )
             raise
         disposition = (
@@ -969,6 +1025,7 @@ def handle_pubsub_push(
             message_id=message_id, event_type=event_type,
             disposition=disposition, trace_id=trace_id,
             age_seconds=age_seconds, receipt_id=receipt_id,
+            authority=tenant_id,
         )
         return {
             "status": "SCHEDULER_NEXT_DAY_PLAN_GENERATED",
@@ -985,24 +1042,39 @@ def handle_pubsub_push(
         try:
             day_res = _generate_daily_morning_plan(request=operating_day_request)
         except HTTPException as exc:
-            if exc.status_code in {400, 404, 409, 422}:
+            error_code = _http_exception_code(exc)
+            if (
+                exc.status_code == 409
+                and error_code in PERMANENT_PUBSUB_BUSINESS_REJECTION_CODES
+            ):
                 return _ack_permanent_pubsub_rejection(
                     message_id=message_id, event_type=event_type,
-                    reason=str(exc.detail), trace_id=trace_id,
-                    age_seconds=age_seconds,
+                    reason=error_code, trace_id=trace_id,
+                    age_seconds=age_seconds, authority=tenant_id,
+                    error_code=error_code,
                 )
+            if exc.status_code in {401, 403}:
+                raise
             _log_pubsub_result(
                 message_id=message_id, event_type=event_type,
                 disposition="RETRYABLE_FAILURE", trace_id=trace_id,
                 age_seconds=age_seconds, reason=str(exc.detail),
+                authority=tenant_id, error_code=error_code,
             )
-            raise
+            if exc.status_code >= 500:
+                raise
+            raise HTTPException(
+                status_code=502,
+                detail={"code": "UNKNOWN_DAILY_APPLICATION_FAILURE",
+                        "upstream_code": error_code},
+            ) from exc
         disposition = "IDEMPOTENT_REPLAY" if day_res["idempotent_replay"] else "COMMITTED"
         receipt_id = (day_res.get("ledger_receipt") or {}).get("receipt_id")
         _log_pubsub_result(
             message_id=message_id, event_type=event_type,
             disposition=disposition, trace_id=trace_id,
             age_seconds=age_seconds, receipt_id=receipt_id,
+            authority=tenant_id,
         )
         return {
             "status": "SCHEDULER_DAILY_PLAN_GENERATED",
