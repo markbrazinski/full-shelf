@@ -2,6 +2,7 @@
 
 import json
 import os
+import secrets
 from datetime import datetime, timedelta, timezone
 
 from google.cloud import spanner
@@ -12,7 +13,8 @@ from full_shelf_domain.ledger_executor import SpannerLedgerCommandExecutor
 from full_shelf_domain.spanner import get_spanner_database
 
 
-AUDIT_TENANT = "wp2-audit-tenant-20260813-v3"
+AUDIT_TENANT = f"wp2-audit-{secrets.token_hex(8)}"
+STRUCTURAL_CORRELATION_ID = "a1b2c3d4e5f60718293a4b5c6d7e8f90"
 
 
 def require_isolated_database() -> str:
@@ -98,7 +100,7 @@ def command(command_id, idempotency_key, command_type, payload, expected="rev42"
             "agent_role": agent_role,
             "command_type": command_type,
             "expected_plan_revision": expected,
-            "trace_id": "a1b2c3d4e5f60718293a4b5c6d7e8f90",
+            "trace_id": STRUCTURAL_CORRELATION_ID,
             "payload": payload,
         }
     )
@@ -155,7 +157,10 @@ def main() -> None:
                 "lot_id": "LOT-ALT-908",
                 "source_event_id": "wp2-isolated-recall",
                 "source_publish_time": "2026-08-14T15:00:00Z",
-                "model_armor_correlation_id": "0123456789abcdef0123456789abcdef",
+                # This is an isolated structural executor test. It deliberately
+                # uses the command trace as one internally consistent correlation
+                # and does not claim that a managed Model Armor call occurred.
+                "model_armor_correlation_id": STRUCTURAL_CORRELATION_ID,
                 "details": {"hazard": "ALTERED_TEST_HAZARD", "cases": 13},
             },
         ),
@@ -267,8 +272,8 @@ def main() -> None:
     assert first.receipt["receipt_id"] == duplicate.receipt["receipt_id"]
     assert duplicate.idempotent_replay is True and duplicate.additional_mutations == 0
     assert stale.receipt["status"] == "DENIED" and stale.additional_mutations == 0
-    assert opened.receipt["mutations_applied"] == 2
-    assert opened.additional_mutations in {0, 2}
+    assert opened.receipt["mutations_applied"] == 3
+    assert opened.additional_mutations in {0, 3}
     assert barrier.receipt["mutations_applied"] == 3
     assert barrier.additional_mutations in {0, 3}
     assert recovery.receipt["mutations_applied"] == 2
@@ -298,6 +303,9 @@ def main() -> None:
                 "recovery_allocation_count": allocation_count,
                 "recovery_shortfall_count": shortfall_count,
                 "refusal_status": refusal.receipt["status"],
+                "model_armor_correlation_id": STRUCTURAL_CORRELATION_ID,
+                "managed_model_armor_invoked": False,
+                "classification": "STRUCTURALLY_VERIFIED",
             },
             sort_keys=True,
         )

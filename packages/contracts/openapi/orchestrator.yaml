@@ -4,6 +4,15 @@ info:
   version: 1.4.0
   description: Read-only orchestration, managed event ingress, and durable projections.
 paths:
+  /api/v1/orchestrator/approvals/approve-and-activate:
+    post:
+      summary: Verify one human GIS token and forward its original assertion to the private ledger
+      security: [{ googleHumanOperatorOidc: [] }]
+      responses:
+        '200': { description: Independently verified, KMS-bound approval and activation receipts }
+        '401': { description: Missing, forged, expired, or wrong-audience human token }
+        '403': { description: Valid Google identity is not the allowlisted operator }
+        '502': { description: Private ledger approval failed closed }
   /api/v1/orchestrator/daily-plan/generate:
     post:
       summary: Create or replay one ordinary operating-day rev07
@@ -11,7 +20,7 @@ paths:
         Product identity is the logical tenant, ISO operating day,
         PLAN_DAY_REQUESTED type, plan ID, and rev07. Managed delivery IDs do
         not create authority. The same request returns the existing receipt.
-      security: [{ judgeApiKey: [] }]
+      security: [{ googleInternalWorkloadOidc: [] }]
       requestBody:
         required: true
         content:
@@ -19,7 +28,7 @@ paths:
             schema: { $ref: '../schemas/operating_day_request.json' }
       responses:
         '200': { description: Created or idempotently replayed rev07 and receipt }
-        '403': { description: Judge key or operating-day authority rejected }
+        '403': { description: Workload identity or operating-day authority rejected }
         '409': { description: Stable key reused for different mutation semantics }
         '502': { description: Private ledger commit failed }
   /api/v1/orchestrator/pubsub/push:
@@ -57,7 +66,7 @@ paths:
   /api/v1/orchestrator/recall/trigger:
     post:
       summary: Publish one scoped recall event for managed Pub/Sub delivery
-      security: [{ judgeApiKey: [] }]
+      security: [{ googleInternalWorkloadOidc: [] }]
       parameters:
         - $ref: '#/components/parameters/TenantId'
       requestBody:
@@ -67,7 +76,7 @@ paths:
             schema: { $ref: '#/components/schemas/RecallTrigger' }
       responses:
         '200': { description: Pub/Sub message ID; not evidence of downstream execution }
-        '403': { description: Judge key or tenant rejected }
+        '403': { description: Workload identity or tenant rejected }
   /api/v1/orchestrator/recall/execute-hero-loop:
     post:
       deprecated: true
@@ -77,7 +86,7 @@ paths:
   /api/v1/orchestrator/recall/model-armor-preflight:
     post:
       summary: Exercise only the managed sanitizeUserPrompt boundary
-      security: [{ judgeApiKey: [] }]
+      security: [{ googleInternalWorkloadOidc: [] }]
       requestBody:
         required: true
         content:
@@ -88,7 +97,7 @@ paths:
   /api/v1/orchestrator/recall/extraction-preflight:
     post:
       summary: Exercise managed Model Armor then ADK/Gemini without mutation
-      security: [{ judgeApiKey: [] }]
+      security: [{ googleInternalWorkloadOidc: [] }]
       requestBody:
         required: true
         content:
@@ -99,7 +108,7 @@ paths:
   /api/v1/orchestrator/custody/graph:
     get:
       summary: Execute parameterized variable-depth Spanner Graph custody traversal
-      security: [{ judgeApiKey: [] }]
+      security: [{ googleInternalWorkloadOidc: [] }]
       parameters:
         - $ref: '#/components/parameters/TenantId'
         - in: query
@@ -113,7 +122,7 @@ paths:
   /api/v1/orchestrator/site01-escalation/schedule:
     post:
       summary: Validate authoritative hold state and create one deterministic Cloud Task
-      security: [{ judgeApiKey: [] }]
+      security: [{ googleInternalWorkloadOidc: [] }]
       parameters:
         - $ref: '#/components/parameters/TenantId'
       responses:
@@ -122,7 +131,7 @@ paths:
   /api/v1/projections/stream:
     get:
       summary: Live-tail committed receipts with durable Last-Event-ID resume
-      security: [{ googleFrontendOidc: [] }]
+      security: [{ googleHumanOperatorOidc: [] }]
       parameters:
         - in: header
           name: Last-Event-ID
@@ -135,7 +144,7 @@ paths:
   /api/v1/projections/demo-beats:
     get:
       summary: Project committed state for the deployment-bound frontend tenant/day
-      security: [{ googleFrontendOidc: [] }]
+      security: [{ googleHumanOperatorOidc: [] }]
       responses:
         '200': { description: Authority-bound committed plan, approval, and incident facts }
         '401': { description: Verified frontend Google identity required }
@@ -143,7 +152,7 @@ paths:
   /api/v1/evidence/system:
     get:
       summary: Read classified evidence for an explicitly resolved authority scope
-      security: [{ judgeApiKey: [] }]
+      security: [{ googleInternalWorkloadOidc: [] }]
       parameters:
         - $ref: '#/components/parameters/TenantId'
       responses:
@@ -176,11 +185,11 @@ components:
       type: http
       scheme: bearer
       bearerFormat: Google ID token
-    googleFrontendOidc:
+    googleHumanOperatorOidc:
       type: http
       scheme: bearer
-      bearerFormat: Google-signed operator ID token bound to configured tenant/day
-    judgeApiKey:
-      type: apiKey
-      in: header
-      name: X-Full-Shelf-API-Key
+      bearerFormat: Google-signed GIS ID token for the configured OAuth web client
+    googleInternalWorkloadOidc:
+      type: http
+      scheme: bearer
+      bearerFormat: Google-signed workload ID token for the exact service audience

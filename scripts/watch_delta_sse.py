@@ -9,7 +9,7 @@ from datetime import timezone
 import json
 
 import httpx
-from google.cloud import secretmanager, spanner
+from google.cloud import spanner
 
 
 def receipt_cursor(timestamp, receipt_id):
@@ -27,13 +27,12 @@ def main():
     parser.add_argument("--expect-no-event", action="store_true")
     parser.add_argument("--read-timeout", type=float, default=90)
     parser.add_argument("--heartbeat-count", type=int, default=2)
-    parser.add_argument(
-        "--orchestrator-url",
-        default="https://full-shelf-orchestrator-620464070103.us-central1.run.app",
-    )
+    parser.add_argument("--session-url", default="http://127.0.0.1:8787")
     args = parser.parse_args()
     if "audit" not in args.database or not args.tenant.startswith("audit-"):
         raise SystemExit("isolated audit scope required")
+    if args.session_url != "http://127.0.0.1:8787":
+        raise SystemExit("the bounded operator session must use fixed loopback authority")
 
     database = spanner.Client(project="preflight-hackathon").instance(
         "fef-smoke-spanner"
@@ -46,15 +45,12 @@ def main():
             param_types={"tenant": spanner.param_types.STRING},
         ))
     cursor = receipt_cursor(rows[0][0], rows[0][1]) if rows else None
-    secret = secretmanager.SecretManagerServiceClient().access_secret_version(
-        request={"name": "projects/preflight-hackathon/secrets/full-shelf-judge-api-key/versions/latest"}
-    ).payload.data.decode().strip()
-    headers = {"X-Full-Shelf-API-Key": secret}
+    headers = {}
     if cursor:
         headers["Last-Event-ID"] = cursor
-    url = f"{args.orchestrator_url}/api/v1/projections/stream"
+    url = f"{args.session_url}/session/sse"
     with httpx.stream(
-        "GET", url, params={"tenant_id": args.tenant}, headers=headers,
+        "GET", url, headers=headers,
         timeout=httpx.Timeout(args.read_timeout, read=args.read_timeout),
     ) as response:
         response.raise_for_status()

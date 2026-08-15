@@ -80,7 +80,7 @@ def test_hero_loop_model_failure_halts_before_ledger(monkeypatch):
 
 
 def test_extraction_preflight_success_persists_ids_without_ledger(monkeypatch):
-    monkeypatch.setattr(orchestrator, "verify_judge_key", lambda value: None)
+    monkeypatch.setattr(orchestrator, "_verify_internal_workload", lambda value: None)
     monkeypatch.setattr(orchestrator, "generate_trace_id", lambda: "corr-preflight-success")
     monkeypatch.setattr(
         orchestrator,
@@ -102,7 +102,6 @@ def test_extraction_preflight_success_persists_ids_without_ledger(monkeypatch):
         orchestrator.RecallArmorPreflightRequest(
             notice_text="Supplier Safety Bulletin SB-8842"
         ),
-        x_api_key="test",
     )
     assert result["preflight_status"] == "READY_FOR_POLICY_REVIEW"
     assert result["model_invocation_record"]["adk_session_id"] == "session-success"
@@ -112,7 +111,7 @@ def test_extraction_preflight_success_persists_ids_without_ledger(monkeypatch):
 
 
 def test_extraction_preflight_failure_stops_at_manual_review(monkeypatch):
-    monkeypatch.setattr(orchestrator, "verify_judge_key", lambda value: None)
+    monkeypatch.setattr(orchestrator, "_verify_internal_workload", lambda value: None)
     monkeypatch.setattr(orchestrator, "generate_trace_id", lambda: "corr-preflight-fail")
     monkeypatch.setattr(
         orchestrator,
@@ -132,7 +131,6 @@ def test_extraction_preflight_failure_stops_at_manual_review(monkeypatch):
 
     result = orchestrator.extraction_preflight(
         orchestrator.RecallArmorPreflightRequest(notice_text="invalid model response"),
-        x_api_key="test",
     )
     assert result["preflight_status"] == "MANUAL_REVIEW_REQUIRED"
     assert result["next_authorized_stage"] is None

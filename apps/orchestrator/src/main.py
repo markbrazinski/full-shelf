@@ -9,7 +9,8 @@ from functools import lru_cache
 from typing import Dict, Any, Optional, List
 from zoneinfo import ZoneInfo
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, BackgroundTasks, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field
 import httpx
 
@@ -52,10 +53,86 @@ app = FastAPI(
     title="Full Shelf Fulfillment Orchestrator API",
     version="1.1.0",
     description="Production control plane for food-bank fulfillment operations governed by AGENTS.md and Build Book v1.1.",
+    openapi_url=None,
+    docs_url=None,
+    redoc_url=None,
 )
 
 tracer = get_tracer("orchestrator")
 logger = logging.getLogger("full_shelf.orchestrator")
+
+PUBLIC_HEALTH = "PUBLIC_HEALTH"
+HUMAN_OPERATOR = "HUMAN_OPERATOR"
+MANAGED_CALLBACK = "MANAGED_CALLBACK"
+INTERNAL_WORKLOAD = "INTERNAL_WORKLOAD"
+DISABLED_OR_REMOVED = "DISABLED_OR_REMOVED"
+
+# This is the complete ingress contract. The middleware below denies any method
+# and path absent from this table, and startup refuses any newly registered
+# FastAPI route until it has been deliberately classified here.
+ROUTE_AUTHENTICATION_MATRIX = {
+    ("GET", "/"): PUBLIC_HEALTH,
+    ("GET", "/healthz"): PUBLIC_HEALTH,
+    ("POST", "/api/v1/orchestrator/approvals/approve-and-activate"): HUMAN_OPERATOR,
+    ("GET", "/api/v1/projections/demo-beats"): HUMAN_OPERATOR,
+    ("GET", "/api/v1/projections/stream"): HUMAN_OPERATOR,
+    ("POST", "/api/v1/incidents/site01-deadline"): MANAGED_CALLBACK,
+    ("POST", "/api/v1/orchestrator/pubsub/push"): MANAGED_CALLBACK,
+    ("POST", "/api/v1/orchestrator/daily-plan/generate"): INTERNAL_WORKLOAD,
+    ("POST", "/api/v1/orchestrator/coordinator/persist-waiting"): INTERNAL_WORKLOAD,
+    ("POST", "/api/v1/orchestrator/site01-escalation/schedule"): INTERNAL_WORKLOAD,
+    ("GET", "/api/v1/orchestrator/custody/graph"): INTERNAL_WORKLOAD,
+    ("POST", "/api/v1/orchestrator/recall/model-armor-preflight"): INTERNAL_WORKLOAD,
+    ("POST", "/api/v1/orchestrator/recall/extraction-preflight"): INTERNAL_WORKLOAD,
+    ("POST", "/api/v1/orchestrator/recall/trigger"): INTERNAL_WORKLOAD,
+    ("GET", "/api/v1/orchestrator/recall/incident-status"): INTERNAL_WORKLOAD,
+    ("POST", "/api/v1/orchestrator/next-day-plan/generate"): INTERNAL_WORKLOAD,
+    ("GET", "/api/v1/evidence/system"): INTERNAL_WORKLOAD,
+    ("GET", "/api/v1/demo/export-evidence"): INTERNAL_WORKLOAD,
+    ("POST", "/api/v1/orchestrator/s2s-dispatch"): DISABLED_OR_REMOVED,
+    ("POST", "/api/v1/orchestrator/recall/execute-hero-loop"): DISABLED_OR_REMOVED,
+    ("POST", "/api/v1/demo/reset"): DISABLED_OR_REMOVED,
+    ("POST", "/api/v1/demo/seed"): DISABLED_OR_REMOVED,
+    ("POST", "/api/v1/demo/replay"): DISABLED_OR_REMOVED,
+}
+
+REMOVED_FRAMEWORK_ROUTES = frozenset({
+    ("GET", "/openapi.json"),
+    ("HEAD", "/openapi.json"),
+    ("GET", "/docs"),
+    ("HEAD", "/docs"),
+    ("GET", "/docs/oauth2-redirect"),
+    ("HEAD", "/docs/oauth2-redirect"),
+    ("GET", "/redoc"),
+    ("HEAD", "/redoc"),
+})
+
+
+def registered_route_authentication_matrix() -> dict[tuple[str, str], str]:
+    """Return the classified registered surface or fail on an unclassified route."""
+    registered: dict[tuple[str, str], str] = {}
+    for route in app.routes:
+        if not isinstance(route, APIRoute):
+            continue
+        for method in route.methods:
+            key = (method, route.path)
+            policy = ROUTE_AUTHENTICATION_MATRIX.get(key)
+            if policy is None:
+                raise RuntimeError(f"UNCLASSIFIED_ORCHESTRATOR_ROUTE:{method}:{route.path}")
+            registered[key] = policy
+    return registered
+
+
+@app.middleware("http")
+async def deny_unclassified_routes(request: Request, call_next):
+    policy = ROUTE_AUTHENTICATION_MATRIX.get((request.method, request.url.path))
+    if policy is None:
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "ORCHESTRATOR_ROUTE_AUTHENTICATION_POLICY_REQUIRED"},
+        )
+    request.state.route_authentication_policy = policy
+    return await call_next(request)
 
 
 @app.middleware("http")
@@ -244,6 +321,12 @@ def _verify_operator(authorization: Optional[str]):
         raise HTTPException(403, "OPERATOR_GOOGLE_IDENTITY_NOT_ALLOWED") from exc
 
 
+def require_human_operator(
+    authorization: Optional[str] = Header(None),
+) -> VerifiedGoogleIdentity:
+    return _verify_operator(authorization)
+
+
 def _verify_managed_callback(authorization: Optional[str]):
     """Verify one Google-signed managed delivery token at the public service."""
     try:
@@ -262,6 +345,37 @@ def _verify_managed_callback(authorization: Optional[str]):
         raise HTTPException(403, "MANAGED_CALLBACK_GOOGLE_IDENTITY_NOT_ALLOWED") from exc
 
 
+def require_managed_callback(
+    authorization: Optional[str] = Header(None),
+) -> VerifiedGoogleIdentity:
+    return _verify_managed_callback(authorization)
+
+
+def _verify_internal_workload(authorization: Optional[str]):
+    """Verify an internal Google workload independently of callback identity."""
+    try:
+        return GoogleOidcVerifier(
+            audience=os.getenv("INTERNAL_WORKLOAD_AUDIENCE", "")
+                or MANAGED_CALLBACK_AUDIENCE,
+            allowed_subjects={
+                os.getenv("INTERNAL_WORKLOAD_SERVICE_ACCOUNT_SUBJECT", "")
+                or MANAGED_CALLBACK_SERVICE_ACCOUNT_SUBJECT
+            },
+            allowed_emails={
+                os.getenv("INTERNAL_WORKLOAD_SERVICE_ACCOUNT_EMAIL", "")
+                or MANAGED_CALLBACK_SERVICE_ACCOUNT_EMAIL
+            },
+        ).verify_authorization(authorization)
+    except IdentityConfigurationError as exc:
+        raise HTTPException(503, "INTERNAL_WORKLOAD_IDENTITY_NOT_CONFIGURED") from exc
+    except MissingIdentityToken as exc:
+        raise HTTPException(401, "INTERNAL_WORKLOAD_GOOGLE_ID_TOKEN_REQUIRED") from exc
+    except InvalidIdentityToken as exc:
+        raise HTTPException(401, "INTERNAL_WORKLOAD_GOOGLE_ID_TOKEN_INVALID") from exc
+    except UnauthorizedIdentity as exc:
+        raise HTTPException(403, "INTERNAL_WORKLOAD_GOOGLE_IDENTITY_NOT_ALLOWED") from exc
+
+
 def require_frontend_authority(
     authorization: Optional[str] = Header(None),
 ) -> tuple[VerifiedGoogleIdentity, Any, str]:
@@ -272,27 +386,8 @@ def require_frontend_authority(
         raise HTTPException(503, "FRONTEND_AUTHORITY_SCOPE_NOT_CONFIGURED")
     try:
         datetime.fromisoformat(operating_day)
-        identity = GoogleOidcVerifier(
-            audience=os.getenv("FRONTEND_AUTHORITY_AUDIENCE", "")
-                or os.getenv("OPERATOR_OAUTH_CLIENT_ID", ""),
-            allowed_subjects={
-                os.getenv("FRONTEND_AUTHORITY_SUBJECT", "")
-                or os.getenv("ALLOWED_OPERATOR_SUBJECT", "")
-            },
-            allowed_emails={
-                os.getenv("FRONTEND_AUTHORITY_EMAIL", "")
-                or os.getenv("ALLOWED_OPERATOR_EMAIL", "")
-            },
-        ).verify_authorization(authorization)
+        identity = _verify_operator(authorization)
         return identity, _resolve_authority_scope(tenant_id), operating_day
-    except IdentityConfigurationError as exc:
-        raise HTTPException(503, "FRONTEND_IDENTITY_BOUNDARY_NOT_CONFIGURED") from exc
-    except MissingIdentityToken as exc:
-        raise HTTPException(401, "FRONTEND_GOOGLE_ID_TOKEN_REQUIRED") from exc
-    except InvalidIdentityToken as exc:
-        raise HTTPException(401, "FRONTEND_GOOGLE_ID_TOKEN_INVALID") from exc
-    except UnauthorizedIdentity as exc:
-        raise HTTPException(403, "FRONTEND_GOOGLE_IDENTITY_NOT_ALLOWED") from exc
     except ValueError as exc:
         raise HTTPException(503, "FRONTEND_OPERATING_DAY_INVALID") from exc
 
@@ -301,9 +396,9 @@ def require_frontend_authority(
 def approve_and_activate(
     proposal: HumanApprovalProposal,
     authorization: Optional[str] = Header(None),
+    operator: VerifiedGoogleIdentity = Depends(require_human_operator),
 ):
     """Validate the human token, then preserve it for independent ledger verification."""
-    operator = _verify_operator(authorization)
     _resolve_authority_scope(proposal.tenant_id)
     if proposal.source_revision != "rev07" or proposal.proposed_revision != "rev08":
         raise HTTPException(409, "CANONICAL_REVISION_TRANSITION_REQUIRED")
@@ -534,30 +629,11 @@ def _run_managed_custody_graph(db, *, tenant_id: str, lot_id: str) -> Dict[str, 
     }
 
 
-def get_judge_api_key() -> str:
-    key = os.getenv("JUDGE_API_KEY")
-    if key:
-        return key.strip()
-    try:
-        from google.cloud import secretmanager
-        client = secretmanager.SecretManagerServiceClient()
-        name = "projects/preflight-hackathon/secrets/full-shelf-judge-api-key/versions/latest"
-        res = client.access_secret_version(request={"name": name})
-        return res.payload.data.decode("utf-8").strip()
-    except Exception as e:
-        print(f"Secret Manager fetch note: {e}")
-        return ""
-
-
-def verify_judge_key(x_api_key: Optional[str] = Header(None, alias="X-Full-Shelf-API-Key")):
-    expected_key = get_judge_api_key()
-    if not expected_key:
-        raise HTTPException(status_code=503, detail="JUDGE_AUTHENTICATION_NOT_CONFIGURED")
-    if expected_key and x_api_key != expected_key:
-        raise HTTPException(
-            status_code=401,
-            detail="Unauthorized public invocation. Invalid or missing X-Full-Shelf-API-Key header."
-        )
+def require_internal_workload(
+    authorization: Optional[str] = Header(None),
+) -> VerifiedGoogleIdentity:
+    """Require signed, audience-bound OIDC from an allowlisted workload."""
+    return _verify_internal_workload(authorization)
 
 
 @app.on_event("startup")
@@ -568,6 +644,31 @@ def startup_checks():
     if not all((MANAGED_CALLBACK_AUDIENCE, MANAGED_CALLBACK_SERVICE_ACCOUNT_EMAIL,
                 MANAGED_CALLBACK_SERVICE_ACCOUNT_SUBJECT)):
         raise RuntimeError("Managed callback OIDC configuration must be complete")
+    # Construct every boundary at startup so a public platform ingress can never
+    # become healthy with a missing application identity configuration.
+    GoogleOidcVerifier(
+        audience=os.getenv("OPERATOR_OAUTH_CLIENT_ID", ""),
+        allowed_subjects={os.getenv("ALLOWED_OPERATOR_SUBJECT", "")},
+        allowed_emails={os.getenv("ALLOWED_OPERATOR_EMAIL", "")},
+    )
+    GoogleOidcVerifier(
+        audience=MANAGED_CALLBACK_AUDIENCE,
+        allowed_subjects={MANAGED_CALLBACK_SERVICE_ACCOUNT_SUBJECT},
+        allowed_emails={MANAGED_CALLBACK_SERVICE_ACCOUNT_EMAIL},
+    )
+    GoogleOidcVerifier(
+        audience=os.getenv("INTERNAL_WORKLOAD_AUDIENCE", "")
+            or MANAGED_CALLBACK_AUDIENCE,
+        allowed_subjects={
+            os.getenv("INTERNAL_WORKLOAD_SERVICE_ACCOUNT_SUBJECT", "")
+            or MANAGED_CALLBACK_SERVICE_ACCOUNT_SUBJECT
+        },
+        allowed_emails={
+            os.getenv("INTERNAL_WORKLOAD_SERVICE_ACCOUNT_EMAIL", "")
+            or MANAGED_CALLBACK_SERVICE_ACCOUNT_EMAIL
+        },
+    )
+    registered_route_authentication_matrix()
     AuthorityScopeResolver.from_environment()
     print(f"Orchestrator container started. Model configured: {MODEL_ID}, Location: {VERTEX_LOCATION}")
     if not is_eligible_gemini_model(MODEL_ID):
@@ -670,12 +771,13 @@ def _generate_daily_morning_plan(
     }
 
 
-@app.post("/api/v1/orchestrator/daily-plan/generate")
+@app.post(
+    "/api/v1/orchestrator/daily-plan/generate",
+    dependencies=[Depends(require_internal_workload)],
+)
 def generate_daily_morning_plan(
     request: OperatingDayRequest,
-    x_api_key: Optional[str] = Header(None, alias="X-Full-Shelf-API-Key"),
 ):
-    verify_judge_key(x_api_key)
     return _generate_daily_morning_plan(request=request)
 
 
@@ -687,7 +789,6 @@ def generate_daily_morning_plan(
 def s2s_dispatch(
     idempotency_key: str = Query("ACT-S2S-EXEC-LIVE-001"),
     tamper_field: Optional[str] = Query(None),
-    x_api_key: Optional[str] = Header(None, alias="X-Full-Shelf-API-Key")
 ):
     raise HTTPException(410, "USE_AUTHENTICATED_HUMAN_APPROVAL_ROUTE")
 
@@ -696,14 +797,15 @@ def s2s_dispatch(
 # GATE D — DURABLE WAIT & PUB/SUB RESUME
 # -------------------------------------------------------------------
 
-@app.post("/api/v1/orchestrator/coordinator/persist-waiting")
+@app.post(
+    "/api/v1/orchestrator/coordinator/persist-waiting",
+    dependencies=[Depends(require_internal_workload)],
+)
 def persist_coordinator_waiting(
     proposal: PersistWaitingCoordinatorRequest,
     tenant_id: str = "east-bay-food-bank",
-    x_api_key: Optional[str] = Header(None, alias="X-Full-Shelf-API-Key"),
 ):
     """Persists day coordinator in WAITING_FOR_EVENTS state in Spanner after rev08."""
-    verify_judge_key(x_api_key)
     _resolve_authority_scope(tenant_id)
     now = datetime.now(timezone.utc)
     trace_id = generate_trace_id()
@@ -746,10 +848,9 @@ def persist_coordinator_waiting(
 def handle_site01_deadline_callback(
     req: Request,
     payload: DeadlineTaskCallbackPayload,
-    authorization: Optional[str] = Header(None)
+    caller: VerifiedGoogleIdentity = Depends(require_managed_callback),
 ):
     """Authenticated Cloud Task callback for Site 01 acknowledgment deadline hold."""
-    caller = _verify_managed_callback(authorization)
     task_name = req.headers.get("X-CloudTasks-TaskName")
     queue_name = req.headers.get("X-CloudTasks-QueueName")
     if not task_name or queue_name != "full-shelf-deadlines":
@@ -819,14 +920,15 @@ def handle_site01_deadline_callback(
     }
 
 
-@app.post("/api/v1/orchestrator/site01-escalation/schedule")
+@app.post(
+    "/api/v1/orchestrator/site01-escalation/schedule",
+    dependencies=[Depends(require_internal_workload)],
+)
 def schedule_site01_escalation(
     proposal: SiteEscalationRequest,
-    x_api_key: Optional[str] = Header(None, alias="X-Full-Shelf-API-Key"),
     tenant_id: str = Query("east-bay-food-bank"),
 ):
     """Make the deployed decision that automatically creates the durable task."""
-    verify_judge_key(x_api_key)
     scope = _resolve_authority_scope(tenant_id)
     db = get_spanner_database(scope.database_id)
     try:
@@ -894,10 +996,9 @@ def schedule_site01_escalation(
 def handle_pubsub_push(
     payload: Dict[str, Any],
     request: Request,
-    authorization: Optional[str] = Header(None),
+    caller: VerifiedGoogleIdentity = Depends(require_managed_callback),
 ):
     """Handles real Pub/Sub wake-and-resume event pushing to Cloud Run orchestrator."""
-    caller = _verify_managed_callback(authorization)
     trace_id = getattr(request.state, "full_shelf_trace_id", generate_trace_id())
 
     message = payload.get("message", {})
@@ -1420,14 +1521,15 @@ def _execute_managed_recall_event(
         "trace_id": trace_id,
     }
 
-@app.get("/api/v1/orchestrator/custody/graph")
+@app.get(
+    "/api/v1/orchestrator/custody/graph",
+    dependencies=[Depends(require_internal_workload)],
+)
 def get_custody_graph_reconstruction(
     tenant_id: str = Query("east-bay-food-bank"),
     lot_id: str = Query(..., min_length=1, max_length=64),
-    x_api_key: Optional[str] = Header(None, alias="X-Full-Shelf-API-Key"),
 ):
     """Run a parameterized, variable-depth managed Spanner Graph reconstruction."""
-    verify_judge_key(x_api_key)
     scope = _resolve_authority_scope(tenant_id)
     database_id = scope.database_id
 
@@ -1448,22 +1550,21 @@ def get_custody_graph_reconstruction(
 
 @app.post("/api/v1/orchestrator/recall/execute-hero-loop")
 def execute_hero_loop(
-    x_api_key: Optional[str] = Header(None, alias="X-Full-Shelf-API-Key"),
     tenant_id: str = "east-bay-food-bank"
 ):
     """Reject the retired direct executor; managed Pub/Sub delivery owns execution."""
-    verify_judge_key(x_api_key)
     _resolve_authority_scope(tenant_id)
     raise HTTPException(410, "USE_MANAGED_RECALL_TRIGGER")
 
 
-@app.post("/api/v1/orchestrator/recall/model-armor-preflight")
+@app.post(
+    "/api/v1/orchestrator/recall/model-armor-preflight",
+    dependencies=[Depends(require_internal_workload)],
+)
 def model_armor_preflight(
     request: RecallArmorPreflightRequest,
-    x_api_key: Optional[str] = Header(None, alias="X-Full-Shelf-API-Key"),
 ):
     """Exercise only the deployed untrusted-input boundary; never call Gemini or ledger."""
-    verify_judge_key(x_api_key)
     request_correlation_id = generate_trace_id()
     screening = inspect_recall_notice_with_model_armor(
         request.notice_text,
@@ -1527,13 +1628,14 @@ def _persist_model_invocation_evidence(
     return record
 
 
-@app.post("/api/v1/orchestrator/recall/extraction-preflight")
+@app.post(
+    "/api/v1/orchestrator/recall/extraction-preflight",
+    dependencies=[Depends(require_internal_workload)],
+)
 def extraction_preflight(
     request: RecallArmorPreflightRequest,
-    x_api_key: Optional[str] = Header(None, alias="X-Full-Shelf-API-Key"),
 ):
     """Exercise the deployed Model Armor -> ADK boundary without mutation."""
-    verify_judge_key(x_api_key)
     request_correlation_id = generate_trace_id()
     screening = inspect_recall_notice_with_model_armor(
         request.notice_text,
@@ -1574,13 +1676,14 @@ def extraction_preflight(
     }
 
 
-@app.post("/api/v1/orchestrator/recall/trigger")
+@app.post(
+    "/api/v1/orchestrator/recall/trigger",
+    dependencies=[Depends(require_internal_workload)],
+)
 def trigger_recall_hero_loop(
     request: RecallTriggerRequest,
-    x_api_key: Optional[str] = Header(None, alias="X-Full-Shelf-API-Key"),
     tenant_id: str = "east-bay-food-bank"
 ):
-    verify_judge_key(x_api_key)
     _resolve_authority_scope(tenant_id)
     event = {
         "event_type": "RECALL_NOTICE_RECEIVED",
@@ -1599,13 +1702,14 @@ def trigger_recall_hero_loop(
     }
 
 
-@app.get("/api/v1/orchestrator/recall/incident-status")
+@app.get(
+    "/api/v1/orchestrator/recall/incident-status",
+    dependencies=[Depends(require_internal_workload)],
+)
 def get_incident_status(
     incident_id: str = Query(..., min_length=1, max_length=128),
     tenant_id: str = "east-bay-food-bank",
-    x_api_key: Optional[str] = Header(None, alias="X-Full-Shelf-API-Key"),
 ):
-    verify_judge_key(x_api_key)
     scope = _resolve_authority_scope(tenant_id)
     db = get_spanner_database(scope.database_id)
     incident_data = {}
@@ -1863,13 +1967,14 @@ def _generate_next_day_plan(
     }
 
 
-@app.post("/api/v1/orchestrator/next-day-plan/generate")
+@app.post(
+    "/api/v1/orchestrator/next-day-plan/generate",
+    dependencies=[Depends(require_internal_workload)],
+)
 def generate_next_day_plan(
     tenant_id: str = Query("east-bay-food-bank"),
-    x_api_key: Optional[str] = Header(None, alias="X-Full-Shelf-API-Key"),
 ):
-    """Judge-protected manual control; managed proof must use Scheduler delivery."""
-    verify_judge_key(x_api_key)
+    """Workload-protected manual control; managed proof uses Scheduler delivery."""
     now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     return _generate_next_day_plan(
         tenant_id=tenant_id,
@@ -1883,14 +1988,15 @@ def generate_next_day_plan(
 # GATE J — SYSTEM EVIDENCE ENDPOINT
 # -------------------------------------------------------------------
 
-@app.get("/api/v1/evidence/system")
+@app.get(
+    "/api/v1/evidence/system",
+    dependencies=[Depends(require_internal_workload)],
+)
 def get_system_evidence(
     request: Request,
     tenant_id: str = "east-bay-food-bank",
-    x_api_key: Optional[str] = Header(None, alias="X-Full-Shelf-API-Key"),
 ):
     """Return independently classified evidence from this exact execution."""
-    verify_judge_key(x_api_key)
     trace_id = generate_trace_id()
     scope = _resolve_authority_scope(tenant_id)
     db = get_spanner_database(scope.database_id)
@@ -2089,11 +2195,6 @@ def get_system_evidence(
                 "trace_id": trace_id,
                 "classification": "NOT_PROVEN",
                 "limitation": "Upgrade only after managed trace readback",
-            },
-            "secret_manager": {
-                "secret_name": f"projects/{PROJECT_ID}/secrets/full-shelf-judge-api-key",
-                "classification": "DESIGNED",
-                "limitation": "Resource configuration is not an access receipt",
             },
             "build_provenance": {
                 "runtime_revision": runtime_revision,
@@ -2360,11 +2461,9 @@ async def stream_projections(
 
 @app.post("/api/v1/demo/reset")
 def reset_demo_state(
-    x_api_key: Optional[str] = Header(None, alias="X-Full-Shelf-API-Key"),
     tenant_id: str = "east-bay-food-bank"
 ):
     """Production reset is disabled; isolated audit tooling owns test teardown."""
-    verify_judge_key(x_api_key)
     raise HTTPException(
         status_code=410,
         detail="PRODUCTION_RESET_DISABLED_USE_ISOLATED_AUDIT_DATABASE",
@@ -2374,11 +2473,8 @@ def reset_demo_state(
 @app.post("/api/v1/demo/seed")
 def seed_demo_state(
     tenant_id: str = "east-bay-food-bank",
-    x_api_key: Optional[str] = Header(None, alias="X-Full-Shelf-API-Key"),
 ):
     """Production startup/demo seeding is disabled."""
-    verify_judge_key(x_api_key)
-    _resolve_authority_scope(tenant_id)
     raise HTTPException(
         status_code=410,
         detail="PRODUCTION_SEED_DISABLED_USE_ISOLATED_AUDIT_DATABASE",
@@ -2386,16 +2482,17 @@ def seed_demo_state(
 
 
 @app.post("/api/v1/demo/replay")
-def replay_hero_loop(x_api_key: Optional[str] = Header(None, alias="X-Full-Shelf-API-Key")):
+def replay_hero_loop():
     """Reject direct demo replay; publish a scoped recall through the managed trigger."""
-    verify_judge_key(x_api_key)
     raise HTTPException(410, "USE_MANAGED_RECALL_TRIGGER")
 
 
-@app.get("/api/v1/demo/export-evidence")
+@app.get(
+    "/api/v1/demo/export-evidence",
+    dependencies=[Depends(require_internal_workload)],
+)
 def export_evidence(
     request: Request,
-    x_api_key: Optional[str] = Header(None, alias="X-Full-Shelf-API-Key"),
 ):
     """Exports full system evidence payload."""
-    return get_system_evidence(request=request, x_api_key=x_api_key)
+    return get_system_evidence(request=request)

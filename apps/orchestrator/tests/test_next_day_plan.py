@@ -43,7 +43,7 @@ def test_next_day_plan_is_dynamic_authoritative_and_ledger_bound():
         "additional_mutations": 6,
     }
     with patch.object(orchestrator_main, "get_spanner_database", return_value=mock_db), patch.object(
-        orchestrator_main, "get_judge_api_key", return_value="test-key"
+        orchestrator_main, "_verify_internal_workload"
     ), patch.object(orchestrator_main, "execute_ledger_command", return_value=ledger) as execute:
         with patch.object(
             orchestrator_main,

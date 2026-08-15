@@ -7,7 +7,9 @@ import argparse
 import json
 
 import httpx
-from google.cloud import secretmanager, spanner
+from google.cloud import spanner
+
+from workload_identity import mint_orchestrator_workload_token
 
 
 CASES = {
@@ -35,15 +37,13 @@ def main():
         "fef-smoke-spanner"
     ).database("full-shelf-audit-wp6-20260813")
     before = count_receipts(database, args.tenant)
-    key = secretmanager.SecretManagerServiceClient().access_secret_version(
-        request={"name": "projects/preflight-hackathon/secrets/full-shelf-judge-api-key/versions/latest"}
-    ).payload.data.decode().strip()
     url = "https://full-shelf-orchestrator-620464070103.us-central1.run.app"
+    workload_token = mint_orchestrator_workload_token(url)
     results = {}
     for name, notice in CASES.items():
         response = httpx.post(
             f"{url}/api/v1/orchestrator/recall/extraction-preflight",
-            headers={"X-Full-Shelf-API-Key": key},
+            headers={"Authorization": f"Bearer {workload_token}"},
             json={"notice_text": notice}, timeout=60,
         )
         response.raise_for_status()

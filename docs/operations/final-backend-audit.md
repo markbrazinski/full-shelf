@@ -52,6 +52,10 @@ SPANNER_DATABASE_ID=full-shelf-audit-wp6-20260813 \
 ```
 
 Do not run the isolated WP2 mutation replay against `full-shelf-main`.
+The WP2 replay is a structural isolated executor test. Its command trace and
+`model_armor_correlation_id` are the same internally generated test value, and
+its output says `managed_model_armor_invoked=false` with classification
+`STRUCTURALLY_VERIFIED`. It is not managed Model Armor invocation evidence.
 
 ## Reservation checks
 
@@ -87,30 +91,47 @@ CLOUDSDK_PYTHON=/opt/homebrew/bin/python3.12 gcloud scheduler jobs describe \
   --format='yaml(name,state,schedule,timeZone,lastAttemptTime,pubsubTarget)'
 ```
 
-## Authenticated projection and SSE
+## One-login operator projection, SSE, and approval
 
-The projection verifier is bound to the existing Google-signed orchestrator
-workload identity and exact orchestrator audience. The token remains in shell
-memory and is neither printed nor written. This read-only reproduction requires
-no Google login and creates no authoritative state.
+Projection and SSE require the same Google-signed human GIS token as approval.
+They do not accept the orchestrator workload identity. Start the bounded helper
+with the deployment-bound OAuth client, exact allowlisted Mark subject, expected
+verified email, isolated authority tenant, and operating day:
 
 ```bash
-audit_token=$(CLOUDSDK_PYTHON=/opt/homebrew/bin/python3.12 \
-  gcloud auth print-identity-token \
-  --impersonate-service-account=full-shelf-orchestrator-sa@preflight-hackathon.iam.gserviceaccount.com \
-  --audiences=https://full-shelf-orchestrator-620464070103.us-central1.run.app \
-  --include-email)
-
-curl -sS -H "Authorization: Bearer ${audit_token}" \
-  https://full-shelf-orchestrator-620464070103.us-central1.run.app/api/v1/projections/demo-beats
-
-curl -sS -N --max-time 20 -H "Authorization: Bearer ${audit_token}" \
-  https://full-shelf-orchestrator-620464070103.us-central1.run.app/api/v1/projections/stream
-
-unset audit_token
+PYTHONPATH=packages/domain:packages/observability:apps/orchestrator/src:apps/plan-ledger/src \
+  .venv/bin/python scripts/bootstrap_wp3_operator.py \
+  --client-id="${OPERATOR_OAUTH_CLIENT_ID}" \
+  --allowed-subject="${ALLOWED_OPERATOR_SUBJECT}" \
+  --expected-email="${ALLOWED_OPERATOR_EMAIL}" \
+  --tenant-id=audit-final-canonical-20260814 \
+  --operating-day=2026-08-14
 ```
 
-The empty reserved projection must return empty authoritative arrays. The SSE
-connection must remain open and emit a server keep-alive; static beats are not
-acceptable. The auditor, not the builder, owns the subsequent managed hero loop
-and acceptance decision.
+The helper binds only `127.0.0.1`, applies GIS state and nonce checks, retains
+the token only in process memory until expiry or explicit shutdown, and exposes
+only canonical/altered approval, fixed authoritative projection, authenticated
+SSE, and shutdown. It never displays the token. The SSE operation forwards
+`Last-Event-ID` in a header and never places credentials or tenant scope in a
+query parameter. Use the page controls, or while the helper is active run:
+
+```bash
+PYTHONPATH=packages/domain:packages/observability \
+  .venv/bin/python scripts/watch_delta_sse.py \
+  --tenant=audit-final-canonical-20260814 \
+  --expect-no-event
+```
+
+The empty reserved projection must return empty authoritative arrays. SSE must
+remain open and emit a server keep-alive; static beats are not acceptable. The
+auditor must use the explicit shutdown control afterward. The builder does not
+perform this positive GIS login or own the acceptance decision.
+
+## Workload-only verifier controls
+
+`scripts/qualify_delta_hero.py`, `scripts/verify_delta_graph.py`, and
+`scripts/verify_deployed_model_armor.py` mint a memory-only Google-signed token
+by impersonating only `full-shelf-orchestrator-sa`, with the exact orchestrator
+audience. They no longer retrieve or send the retired judge API key. A human GIS
+token must fail these internal routes, and the workload token must fail every
+human route.

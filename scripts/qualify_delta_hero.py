@@ -14,9 +14,10 @@ from typing import Any
 import httpx
 import google.auth
 from google.auth.transport.requests import Request as GoogleAuthRequest
-from google.cloud import logging_v2, secretmanager, spanner
+from google.cloud import logging_v2, spanner
 
 from full_shelf_domain.recall import schedule_site01_deadline_task
+from workload_identity import mint_orchestrator_workload_token
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -66,14 +67,7 @@ def main() -> int:
     if not tenant_id.startswith("audit-") or "audit" not in DATABASE:
         raise SystemExit("isolated audit scope required")
 
-    api_key = secretmanager.SecretManagerServiceClient().access_secret_version(
-        request={
-            "name": (
-                f"projects/{PROJECT}/secrets/full-shelf-judge-api-key/"
-                "versions/latest"
-            )
-        }
-    ).payload.data.decode().strip()
+    workload_token = mint_orchestrator_workload_token(ORCHESTRATOR)
     database = spanner.Client(project=PROJECT).instance(INSTANCE).database(DATABASE)
 
     approvals = _rows(
@@ -100,7 +94,7 @@ def main() -> int:
         "child_incident_ids": [coordinator["incident_id"]],
     }
     recall = fixture["recall"]
-    headers = {"X-Full-Shelf-API-Key": api_key}
+    headers = {"Authorization": f"Bearer {workload_token}"}
     with httpx.Client(base_url=ORCHESTRATOR, headers=headers, timeout=90) as client:
         waiting = _post(
             client,

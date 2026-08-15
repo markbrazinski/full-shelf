@@ -722,7 +722,7 @@ def test_application_escalation_schedules_task_from_authoritative_isolated_state
         "coordinator_id": "COORD-ALT", "lot_id": "LOT-ALT",
         "site_id": "SITE-X", "unconfirmed_cases": 3,
     }
-    with patch.object(main, "verify_judge_key"), patch.object(
+    with patch.object(main, "_verify_internal_workload"), patch.object(
         main, "get_spanner_database", return_value=db
     ), patch.object(
         main, "schedule_site01_deadline_task", return_value=task_result

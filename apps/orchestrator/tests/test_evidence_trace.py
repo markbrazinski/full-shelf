@@ -42,7 +42,7 @@ def test_evidence_trace_id_is_actual_inbound_execution_trace_and_config_is_not_l
         "query_engine": "SPANNER_GRAPH_GQL",
     }
     with (
-        patch.object(orchestrator_main, "verify_judge_key"),
+            patch.object(orchestrator_main, "_verify_internal_workload"),
         patch.object(orchestrator_main, "get_spanner_database", return_value=_evidence_database()),
         patch.object(orchestrator_main, "_run_managed_custody_graph", return_value=graph),
     ):
@@ -71,7 +71,7 @@ def test_evidence_managed_failures_downgrade_instead_of_claiming_success():
     db.snapshot.return_value.__enter__.return_value = snapshot
 
     with (
-        patch.object(orchestrator_main, "verify_judge_key"),
+            patch.object(orchestrator_main, "_verify_internal_workload"),
         patch.object(orchestrator_main, "get_spanner_database", return_value=db),
         patch.object(
             orchestrator_main,

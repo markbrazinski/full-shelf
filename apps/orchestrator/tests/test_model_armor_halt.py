@@ -108,7 +108,7 @@ def test_approved_screening_with_substituted_correlation_halts_before_downstream
 
 
 def test_preflight_benign_continues_only_to_next_authorized_stage(monkeypatch):
-    monkeypatch.setattr(orchestrator, "verify_judge_key", lambda value: None)
+    monkeypatch.setattr(orchestrator, "_verify_internal_workload", lambda value: None)
     monkeypatch.setattr(orchestrator, "generate_trace_id", lambda: "corr-benign")
     monkeypatch.setattr(
         orchestrator,
@@ -135,7 +135,6 @@ def test_preflight_benign_continues_only_to_next_authorized_stage(monkeypatch):
 
     result = orchestrator.model_armor_preflight(
         orchestrator.RecallArmorPreflightRequest(notice_text="Altered benign notice"),
-        x_api_key="test",
     )
     assert result["preflight_status"] == "READY_FOR_GEMINI_ADK_EXTRACTION"
     assert result["next_authorized_stage"] == "GEMINI_ADK_EXTRACTION"
@@ -145,7 +144,7 @@ def test_preflight_benign_continues_only_to_next_authorized_stage(monkeypatch):
 
 
 def test_preflight_injection_rejects_without_gemini_or_ledger(monkeypatch):
-    monkeypatch.setattr(orchestrator, "verify_judge_key", lambda value: None)
+    monkeypatch.setattr(orchestrator, "_verify_internal_workload", lambda value: None)
     monkeypatch.setattr(orchestrator, "generate_trace_id", lambda: "corr-injection")
     monkeypatch.setattr(
         orchestrator,
@@ -172,7 +171,6 @@ def test_preflight_injection_rejects_without_gemini_or_ledger(monkeypatch):
 
     result = orchestrator.model_armor_preflight(
         orchestrator.RecallArmorPreflightRequest(notice_text="Altered injection"),
-        x_api_key="test",
     )
     assert result["preflight_status"] == "REJECTED_BY_MODEL_ARMOR"
     assert result["next_authorized_stage"] is None

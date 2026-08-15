@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 
 import httpx
-from google.cloud import secretmanager
+from workload_identity import mint_orchestrator_workload_token
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -15,14 +15,13 @@ ORCHESTRATOR = "https://full-shelf-orchestrator-620464070103.us-central1.run.app
 
 
 def main() -> int:
-    key = secretmanager.SecretManagerServiceClient().access_secret_version(
-        request={
-            "name": "projects/preflight-hackathon/secrets/"
-            "full-shelf-judge-api-key/versions/latest"
-        }
-    ).payload.data.decode().strip()
+    workload_token = mint_orchestrator_workload_token(ORCHESTRATOR)
     evidence = {}
-    with httpx.Client(base_url=ORCHESTRATOR, headers={"X-Full-Shelf-API-Key": key}, timeout=60) as client:
+    with httpx.Client(
+        base_url=ORCHESTRATOR,
+        headers={"Authorization": f"Bearer {workload_token}"},
+        timeout=60,
+    ) as client:
         for fixture_name in ("audit_canonical_shaped.json", "audit_altered.json"):
             fixture = json.loads((ROOT / "test-fixtures" / fixture_name).read_text())
             tenant = fixture["tenant_id"]
