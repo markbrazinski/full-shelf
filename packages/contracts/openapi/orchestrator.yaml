@@ -1,9 +1,31 @@
 openapi: 3.0.3
 info:
   title: Full Shelf ADK Orchestrator API
-  version: 1.4.0
+  version: 1.4.1
   description: Read-only orchestration, managed event ingress, and durable projections.
 paths:
+  /:
+    get:
+      summary: Sole externally reachable public health endpoint
+      description: >-
+        The public Cloud Run boundary serves this application health response
+        without authentication. This is the only externally reachable public
+        health endpoint accepted for Full Shelf.
+      security: []
+      responses:
+        '200': { description: Public orchestrator health response }
+  /healthz:
+    get:
+      summary: Application-classified health route intercepted at the public boundary
+      description: >-
+        The exhaustive application route-authentication matrix retains this
+        public-health classification. At the deployed public Cloud Run boundary,
+        however, the request is intercepted before the container and receives a
+        Google-generated HTTP 404. The 404 is an accepted platform-boundary
+        observation, not an observed-live application health capability.
+      security: []
+      responses:
+        '404': { description: Google-generated Cloud Run platform-boundary response }
   /api/v1/orchestrator/approvals/approve-and-activate:
     post:
       summary: Verify one human GIS token and forward its original assertion to the private ledger

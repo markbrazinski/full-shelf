@@ -28,6 +28,35 @@ safe schedule is `0 0 1 1 *` in `Etc/UTC`; they must be enabled and have no
 definitions requires explicit authorization because enabled Scheduler resources
 have persistent future-trigger effects. Never trigger them during preparation.
 
+## Public health boundary acceptance
+
+This is an acceptance-contract amendment, not a new runtime capability. The
+current immutable deployment is the audit target, and its public Cloud Run
+boundary has exactly one accepted externally reachable health endpoint:
+
+```bash
+curl -sS -o /dev/null -w '%{http_code}\n' \
+  "${ORCHESTRATOR_URL}/"
+# expected: 200
+
+curl -sS -o /dev/null -w '%{http_code}\n' \
+  "${ORCHESTRATOR_URL}/healthz"
+# expected: 404
+```
+
+`GET /` without authentication returning HTTP 200 is the sole public health
+success. The deployed `GET /healthz` response is a Google-generated HTTP 404 at
+the Cloud Run platform boundary, before the container. Record that 404 as
+`OBSERVED_LIVE` platform-boundary behavior; do not claim `/healthz` as an
+observed-live application health endpoint.
+
+The application's exhaustive route-authentication matrix still classifies
+every registered route, including its internal `/healthz` route, and retains
+default-deny behavior for unclassified paths. This amendment does not authorize
+a replacement path, gateway, third service, deployment, IAM change, or weaker
+authentication. All sensitive human, managed-callback, and internal-workload
+routes remain subject to their verified-identity policies.
+
 ## Clean-shell local verification
 
 Run from the repository root. No command depends on an activated virtual
@@ -126,6 +155,13 @@ The empty reserved projection must return empty authoritative arrays. SSE must
 remain open and emit a server keep-alive; static beats are not acceptable. The
 auditor must use the explicit shutdown control afterward. The builder does not
 perform this positive GIS login or own the acceptance decision.
+
+The single GIS login remains reserved for the independent auditor. With that
+login, the auditor must still prove Mark's approval and KMS path, authenticated
+projection access, authenticated SSE connection and cursor behavior, the fresh
+reserved managed hero loop, and all remaining negative identity and mutation
+controls. This runbook and its builder handoff do not declare backend
+acceptance.
 
 ## Workload-only verifier controls
 
