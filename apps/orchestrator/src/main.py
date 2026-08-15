@@ -382,7 +382,7 @@ def _log_pubsub_result(
     *, message_id: str, event_type: str, disposition: str, trace_id: str,
     age_seconds: float, receipt_id: str | None = None, reason: str | None = None,
 ) -> None:
-    log = logger.error if disposition == "RETRYABLE_FAILURE" else logger.info
+    log = logger.error if disposition == "RETRYABLE_FAILURE" else logger.warning
     log(
         "pubsub_disposition message_id=%s event_type=%s disposition=%s "
         "age_seconds=%s trace_id=%s receipt_id=%s reason=%s",
