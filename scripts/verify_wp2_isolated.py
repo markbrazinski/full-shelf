@@ -155,6 +155,7 @@ def main() -> None:
                 "lot_id": "LOT-ALT-908",
                 "source_event_id": "wp2-isolated-recall",
                 "source_publish_time": "2026-08-14T15:00:00Z",
+                "model_armor_correlation_id": "0123456789abcdef0123456789abcdef",
                 "details": {"hazard": "ALTERED_TEST_HAZARD", "cases": 13},
             },
         ),

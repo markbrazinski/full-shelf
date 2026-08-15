@@ -811,6 +811,8 @@ class SpannerLedgerCommandExecutor:
             assert isinstance(payload, OpenRecallIncidentPayload)
             if payload.incident_id != command.incident_id:
                 raise ValueError("INCIDENT_SCOPE_MISMATCH")
+            if payload.model_armor_correlation_id != command.trace_id:
+                raise ValueError("MODEL_ARMOR_CORRELATION_MISMATCH")
             if self._incident_exists(transaction, command.tenant_id, payload.incident_id):
                 raise ValueError("INCIDENT_ALREADY_EXISTS_WITH_DIFFERENT_IDEMPOTENCY_KEY")
             coordinator_rows = transaction.execute_sql(
@@ -859,7 +861,10 @@ class SpannerLedgerCommandExecutor:
                     "DETECTED",
                     payload.lot_id,
                     spanner.COMMIT_TIMESTAMP,
-                    json.dumps(payload.details, sort_keys=True, separators=(",", ":")),
+                    json.dumps({
+                        **payload.details,
+                        "model_armor_correlation_id": payload.model_armor_correlation_id,
+                    }, sort_keys=True, separators=(",", ":")),
                     "NONE",
                 ]],
             )

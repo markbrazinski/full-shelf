@@ -9,8 +9,7 @@
   },
   "affected_plan": {
     "plan_id": "PLAN-2026-08-07",
-    "previous_revision": "rev08",
-    "new_revision": "rev09",
+    "revision": "rev08",
     "new_status": "INVALIDATED_RECALL"
   },
   "custody_nodes": [

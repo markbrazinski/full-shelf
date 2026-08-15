@@ -186,6 +186,7 @@ class OpenRecallIncidentPayload(StrictPayload):
     lot_id: str = Field(min_length=1, max_length=64)
     source_event_id: str = Field(min_length=1, max_length=256)
     source_publish_time: str = Field(min_length=1, max_length=64)
+    model_armor_correlation_id: str = Field(pattern=r"^[0-9a-f]{32}$")
     details: Dict[str, Any]
 
 

@@ -59,6 +59,13 @@ def test_locked_incident_lifecycle_and_planning_events_are_contract_states():
     assert {"PLAN_DAY_REQUESTED", "PLAN_NEXT_DAY_REQUESTED", "RECALL_NOTICE_RECEIVED"} <= event_types
 
 
+def test_incident_contract_exposes_managed_model_armor_correlation():
+    details = _schema("incident.json")["properties"]["details"]
+    correlation = details["properties"]["model_armor_correlation_id"]
+
+    assert correlation == {"type": "string", "pattern": "^[0-9a-f]{32}$"}
+
+
 def test_operating_day_request_uses_product_identity_not_delivery_identity():
     schema = _schema("operating_day_request.json")
     assert set(schema["required"]) == {

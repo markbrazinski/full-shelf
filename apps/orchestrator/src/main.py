@@ -1268,7 +1268,12 @@ def _execute_managed_recall_event(
     screening = inspect_recall_notice_with_model_armor(
         notice_text, correlation_id=trace_id
     )
-    if screening.get("status") != "APPROVED" or screening.get("safety_verdict") != "PASSED":
+    screening_approved = (
+        screening.get("status") == "APPROVED"
+        and screening.get("safety_verdict") == "PASSED"
+    )
+    correlation_matches_execution = screening.get("correlation_id") == trace_id
+    if not screening_approved or not correlation_matches_execution:
         return {
             "hero_loop_status": (
                 "HALTED_BY_MODEL_ARMOR_SAFETY_MATCH"
@@ -1311,11 +1316,11 @@ def _execute_managed_recall_event(
             "incident_id": incident_id, "coordinator_id": coordinator_id,
             "lot_id": recalled_lot_id, "source_event_id": source_event_id,
             "source_publish_time": source_publish_time,
+            "model_armor_correlation_id": screening["correlation_id"],
             "details": {
                 "product": extracted.get("product_name"),
                 "hazard": extracted.get("hazard"),
                 "action_required": extracted.get("action_required"),
-                "model_armor_correlation_id": screening.get("request_correlation_id"),
             },
         },
     )
@@ -2139,7 +2144,7 @@ def get_demo_beats_projections(
             },
         ))
         incidents = list(snapshot.execute_sql(
-            "SELECT incident_id, incident_type, status, terminal_state "
+            "SELECT incident_id, incident_type, status, terminal_state, details "
             "FROM Incidents WHERE tenant_id=@tenant ORDER BY created_at",
             params={"tenant": scope.tenant_id},
             param_types={"tenant": spanner.param_types.STRING},
@@ -2163,7 +2168,10 @@ def get_demo_beats_projections(
         ],
         "incidents": [
             {"incident_id": row[0], "incident_type": row[1],
-             "status": row[2], "terminal_state": row[3]}
+             "status": row[2], "terminal_state": row[3],
+             "model_armor_correlation_id": (
+                 json.loads(row[4] or "{}").get("model_armor_correlation_id")
+             )}
             for row in incidents
         ],
     }

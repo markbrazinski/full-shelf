@@ -54,6 +54,59 @@ def test_model_armor_match_halts_before_gemini_or_mutation(monkeypatch):
     assert result["hero_loop_status"] == "HALTED_BY_MODEL_ARMOR_SAFETY_MATCH"
 
 
+def test_approved_screening_without_correlation_halts_before_downstream(monkeypatch):
+    monkeypatch.setattr(orchestrator, "get_spanner_database", lambda database_id=None: object())
+    monkeypatch.setattr(orchestrator, "inspect_recall_notice_with_model_armor", lambda text, correlation_id: {
+        "status": "APPROVED", "safety_verdict": "PASSED",
+        "managed_operation": "sanitizeUserPrompt",
+    })
+    monkeypatch.setattr(
+        orchestrator, "extract_recall_entities_with_gemini_35",
+        lambda text, correlation_id: (_ for _ in ()).throw(AssertionError("Gemini called without managed correlation")),
+    )
+    monkeypatch.setattr(
+        orchestrator, "execute_ledger_command",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("mutation called without managed correlation")),
+    )
+
+    result = orchestrator._execute_managed_recall_event(
+        tenant_id="east-bay-food-bank", coordinator_id="COORD-X",
+        incident_id="INC-X", recalled_lot_id="LOT-X", notice_text="notice",
+        source_event_id="message-x", source_publish_time="2026-08-14T00:00:00Z",
+        active_revision="rev08", trace_id="0123456789abcdef0123456789abcdef",
+    )
+
+    assert result["hero_loop_status"] == "HALTED_BY_MODEL_ARMOR_SERVICE_FAILURE"
+    assert result["ledger_mutation_attempted"] is False
+
+
+def test_approved_screening_with_substituted_correlation_halts_before_downstream(monkeypatch):
+    monkeypatch.setattr(orchestrator, "get_spanner_database", lambda database_id=None: object())
+    monkeypatch.setattr(orchestrator, "inspect_recall_notice_with_model_armor", lambda text, correlation_id: {
+        "status": "APPROVED", "safety_verdict": "PASSED",
+        "managed_operation": "sanitizeUserPrompt",
+        "correlation_id": "abcdef0123456789abcdef0123456789",
+    })
+    monkeypatch.setattr(
+        orchestrator, "extract_recall_entities_with_gemini_35",
+        lambda text, correlation_id: (_ for _ in ()).throw(AssertionError("Gemini called with substituted correlation")),
+    )
+    monkeypatch.setattr(
+        orchestrator, "execute_ledger_command",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("mutation called with substituted correlation")),
+    )
+
+    result = orchestrator._execute_managed_recall_event(
+        tenant_id="east-bay-food-bank", coordinator_id="COORD-X",
+        incident_id="INC-X", recalled_lot_id="LOT-X", notice_text="notice",
+        source_event_id="message-x", source_publish_time="2026-08-14T00:00:00Z",
+        active_revision="rev08", trace_id="0123456789abcdef0123456789abcdef",
+    )
+
+    assert result["hero_loop_status"] == "HALTED_BY_MODEL_ARMOR_SERVICE_FAILURE"
+    assert result["ledger_mutation_attempted"] is False
+
+
 def test_preflight_benign_continues_only_to_next_authorized_stage(monkeypatch):
     monkeypatch.setattr(orchestrator, "verify_judge_key", lambda value: None)
     monkeypatch.setattr(orchestrator, "generate_trace_id", lambda: "corr-benign")

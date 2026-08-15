@@ -59,7 +59,7 @@ def test_managed_signature_verifies():
 @pytest.mark.parametrize(("path", "value"), [
     ("tenant_id", "other-tenant"), ("operating_day", "2099-08-14"),
     ("authority_scope", "other-tenant@2099-08-13"),
-    ("source_revision", "rev06"), ("proposed_revision", "rev09"),
+    ("source_revision", "rev06"), ("proposed_revision", "rev10"),
     ("principal_id", "attacker"), ("incident_id", "INC-FAKE"),
     ("plan_id", "PLAN-FAKE"), ("expires_at", "2099-08-14T23:00:00Z"),
     ("plan_diff.reroute_order_id", "O201"), ("plan_diff.reroute_cases", 25),

@@ -18,7 +18,7 @@ def test_stale_plan_revision_rejection():
     expected_rev = "rev07"
     
     # State machine check
-    is_valid = PlanRevisionStateMachine.can_transition(expected_rev, active_plan.status, "rev09", PlanStatus.ACTIVE)
+    is_valid = PlanRevisionStateMachine.can_transition(expected_rev, active_plan.status, "rev08", PlanStatus.INVALIDATED_RECALL)
     assert is_valid is False
 
     receipt = Receipt(

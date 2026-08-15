@@ -283,6 +283,7 @@ def test_open_recall_preserves_existing_coordinator_child_incident():
             "lot_id": "LOT-ALT-908",
             "source_event_id": "recall-message-alt",
             "source_publish_time": "2026-08-14T15:00:00Z",
+            "model_armor_correlation_id": "0123456789abcdef0123456789abcdef",
             "details": {"hazard": "ALTERED_TEST_HAZARD"},
         },
     )
@@ -298,6 +299,36 @@ def test_open_recall_preserves_existing_coordinator_child_incident():
     assert transaction.updates[0][1]["children"] == (
         '["INC-TRUCK-ALT","INC-RECALL-ALT"]'
     )
+    persisted_details = json.loads(transaction.inserts[0]["values"][0][7])
+    assert persisted_details["model_armor_correlation_id"] == command.trace_id
+
+
+def test_open_recall_rejects_model_armor_correlation_substitution_before_mutation():
+    command = coordinator_command(
+        command_id="CMD-OPEN-CORRELATION-MISMATCH",
+        idempotency_key="alt:open-recall:correlation-mismatch",
+        incident_id="INC-RECALL-ALT",
+        command_type=LedgerCommandType.OPEN_RECALL_INCIDENT,
+        payload={
+            "incident_id": "INC-RECALL-ALT",
+            "coordinator_id": "COORD-ALT-001",
+            "lot_id": "LOT-ALT-908",
+            "source_event_id": "recall-message-alt",
+            "source_publish_time": "2026-08-14T15:00:00Z",
+            "model_armor_correlation_id": "abcdef0123456789abcdef0123456789",
+            "details": {"hazard": "ALTERED_TEST_HAZARD"},
+        },
+    )
+    transaction = FakeTransaction()
+
+    with pytest.raises(ValueError, match="MODEL_ARMOR_CORRELATION_MISMATCH"):
+        SpannerLedgerCommandExecutor(
+            FakeDatabase(transaction), allowed_tenant_ids={"audit-tenant"}
+        ).execute(command, IDENTITY)
+
+    assert transaction.inserts == []
+    assert transaction.upserts == []
+    assert transaction.updates == []
 
 
 def test_next_day_draft_atomically_persists_event_constraints_plan_and_coordinator():

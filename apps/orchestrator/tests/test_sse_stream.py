@@ -182,3 +182,32 @@ def test_endpoint_rejects_malformed_last_event_id_before_streaming():
 
     assert response.status_code == 400
     assert response.json()["detail"] == "INVALID_LAST_EVENT_ID"
+
+
+def test_authoritative_projection_exposes_persisted_model_armor_correlation():
+    correlation_id = "0123456789abcdef0123456789abcdef"
+    db = MagicMock()
+    snapshot = MagicMock()
+    snapshot.execute_sql.side_effect = [
+        [("PLAN-AUDIT-CANONICAL", "rev08", "INVALIDATED_RECALL")],
+        [],
+        [("INC-RECALL", "FOOD_SAFETY_RECALL", "PARTIALLY_CONTAINED",
+          "PARTIALLY_CONTAINED",
+          '{"model_armor_correlation_id":"' + correlation_id + '"}')],
+    ]
+    db.snapshot.return_value.__enter__.return_value = snapshot
+    client = TestClient(orchestrator_main.app)
+    orchestrator_main.app.dependency_overrides[
+        orchestrator_main.require_frontend_authority
+    ] = lambda: (
+        SimpleNamespace(subject="operator-sub"),
+        SimpleNamespace(tenant_id="audit-fresh", database_id="audit-db"),
+        "2026-08-14",
+    )
+
+    with patch.object(orchestrator_main, "get_spanner_database", return_value=db):
+        response = client.get("/api/v1/projections/demo-beats")
+    orchestrator_main.app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json()["incidents"][0]["model_armor_correlation_id"] == correlation_id

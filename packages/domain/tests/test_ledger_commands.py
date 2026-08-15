@@ -27,6 +27,7 @@ def make_command(**overrides):
             "lot_id": "LOT-ALT-908",
             "source_event_id": "recall-message-alt",
             "source_publish_time": "2026-08-14T15:00:00Z",
+            "model_armor_correlation_id": "0123456789abcdef0123456789abcdef",
             "details": {"hazard": "ALTERED_TEST_HAZARD", "cases": 13},
         },
     }
@@ -67,6 +68,7 @@ def test_command_rejects_unknown_payload_fields():
             "lot_id": "LOT-ALT-908",
             "source_event_id": "recall-message-alt",
             "source_publish_time": "2026-08-14T15:00:00Z",
+            "model_armor_correlation_id": "0123456789abcdef0123456789abcdef",
             "details": {},
             "authoritative_status_override": "CLOSED",
         }

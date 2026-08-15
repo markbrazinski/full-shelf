@@ -74,6 +74,7 @@ def test_same_managed_hero_uses_altered_ids_quantities_and_calculated_outcome():
         patch.object(main, "inspect_recall_notice_with_model_armor", return_value={
             "status": "APPROVED", "safety_verdict": "PASSED",
             "managed_operation": "sanitizeUserPrompt",
+            "correlation_id": "0123456789abcdef0123456789abcdef",
         }),
         patch.object(main, "extract_recall_entities_with_gemini_35", return_value=extraction),
         patch.object(main, "_persist_model_invocation_evidence"),
@@ -104,3 +105,7 @@ def test_same_managed_hero_uses_altered_ids_quantities_and_calculated_outcome():
     assert refusal["payload"]["affected_cases"] == 5
     assert schedule.call_args.kwargs["coordinator_id"] == "COORD-ALTERED"
     assert schedule.call_args.kwargs["site_id"] == "SITE-ALTERED-77"
+    opened = next(row for row in commands if row["command_type"] == "OPEN_RECALL_INCIDENT")
+    assert opened["payload"]["model_armor_correlation_id"] == (
+        "0123456789abcdef0123456789abcdef"
+    )

@@ -24,7 +24,15 @@
       "enum": ["NONE", "PARTIALLY_CONTAINED", "CONTAINED", "CLOSED"]
     },
     "affected_lot_id": { "type": ["string", "null"] },
-    "details": { "type": "object" },
+    "details": {
+      "type": "object",
+      "properties": {
+        "model_armor_correlation_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        }
+      }
+    },
     "created_at": { "type": "string", "format": "date-time" },
     "resolved_at": { "type": ["string", "null"], "format": "date-time" }
   },
