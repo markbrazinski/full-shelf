@@ -27,6 +27,9 @@ htmlcov/
 venv/
 ENV/
 
+# Historical remediation evidence is archived externally for auditors.
+/docs/backend-remediation/
+
 # Node / Web
 node_modules/
 npm-debug.log*

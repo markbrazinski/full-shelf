@@ -26,7 +26,7 @@ Apply authority in this order:
 7. Builder reports, which are non-authoritative testimony.
 
 The supplied authority packet is resolved in
-[the WP0 authority record](docs/backend-remediation/wp0-baseline.md). Repository
+[the resolved authority record](docs/authority/resolved-baseline.md). Repository
 contracts live under [`packages/contracts`](packages/contracts), the current
 schema is [`infra/spanner/schema.sql`](infra/spanner/schema.sql), and accepted
 architectural decisions live under [`docs/adr`](docs/adr). An older ADR or

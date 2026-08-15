@@ -211,3 +211,4 @@ def test_authoritative_projection_exposes_persisted_model_armor_correlation():
 
     assert response.status_code == 200
     assert response.json()["incidents"][0]["model_armor_correlation_id"] == correlation_id
+    db.snapshot.assert_called_once_with(multi_use=True)

@@ -2123,7 +2123,7 @@ def get_demo_beats_projections(
     """Project only committed facts from the configured verified authority."""
     identity, scope, operating_day = authority
     db = get_spanner_database(scope.database_id)
-    with db.snapshot() as snapshot:
+    with db.snapshot(multi_use=True) as snapshot:
         plans = list(snapshot.execute_sql(
             "SELECT plan_id, revision, status FROM PlanRevisions "
             "WHERE tenant_id=@tenant ORDER BY created_at",
