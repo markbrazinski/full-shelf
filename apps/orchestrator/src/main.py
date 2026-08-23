@@ -54,6 +54,7 @@ from full_shelf_domain.fleet.contracts import (
     FleetProposalError,
 )
 from full_shelf_domain.fleet.coordinator import run_fleet
+from full_shelf_domain.fleet.manifest import build_manifest
 from full_shelf_domain.fleet.tools import generate_recovery_candidates
 
 app = FastAPI(
@@ -2313,6 +2314,7 @@ def get_system_evidence(
                 "limitation": "Requires external Cloud Run and Artifact Registry comparison",
             }
         },
+        "agent_fleet_manifest": build_manifest(),
         "preview_service_seams": {
             "agent_registry": "NOT_PROVEN — managed Agent Registry unavailable; internal fleet manifest is not a managed registry or tool gateway",
             "agent_identity": "STRUCTURALLY_VERIFIED — Cloud IAM / OIDC seam; not managed Agent Identity",
