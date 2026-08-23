@@ -95,7 +95,8 @@ def validate_partner_communication(
     required = PARTNER_TEMPLATE_IDS.get(communication.template_id)
     if required is None:
         raise FleetProposalError("UNKNOWN_PARTNER_TEMPLATE")
-    if set(communication.template_parameters) != set(required):
+    supplied = communication.template_parameters.supplied()
+    if set(supplied) != set(required):
         raise FleetProposalError("PARTNER_TEMPLATE_PARAMETERS_INVALID")
 
     # Escalation is recomputed from trusted state, never accepted from the model.
@@ -111,7 +112,7 @@ def validate_partner_communication(
         "cases": str(partner_state["unconfirmed_cases"]),
         "deadline": partner_state.get("deadline") or "",
     }
-    for key, value in communication.template_parameters.items():
+    for key, value in supplied.items():
         if key not in authoritative:
             raise FleetProposalError("PARTNER_PARAMETER_HAS_NO_AUTHORITATIVE_SOURCE")
         if value != authoritative[key]:
@@ -151,7 +152,7 @@ def render_partner_message(communication: PartnerCommunication) -> str:
     template = templates.get(communication.template_id)
     if template is None:
         raise FleetProposalError("UNKNOWN_PARTNER_TEMPLATE")
-    return template.format(**communication.template_parameters)
+    return template.format(**communication.template_parameters.supplied())
 
 
 def proposal_hash(payload: Dict[str, Any]) -> str:

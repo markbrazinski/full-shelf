@@ -61,11 +61,12 @@ TOOL_CUSTODY_DEPENDENTS_READ = "full-shelf.tool.custody-dependents-read.v1"
 TOOL_RECOVERY_CANDIDATES_READ = "full-shelf.tool.recovery-candidates-read.v1"
 TOOL_PARTNER_STATE_READ = "full-shelf.tool.partner-state-read.v1"
 
+# Only tools an agent actually holds are catalogued. The recovery-candidate and
+# partner-state projections remain deterministic read functions used to build
+# prompts; they are not ADK tools, so they are not advertised as such.
 FLEET_TOOL_IDS = (
     TOOL_CUSTODY_GRAPH_READ,
     TOOL_CUSTODY_DEPENDENTS_READ,
-    TOOL_RECOVERY_CANDIDATES_READ,
-    TOOL_PARTNER_STATE_READ,
 )
 
 # The exact model-visible ADK function name for each governed tool ID. The tool
@@ -74,17 +75,20 @@ FLEET_TOOL_IDS = (
 TOOL_RUNTIME_NAMES = {
     TOOL_CUSTODY_GRAPH_READ: "custody_graph_read_tool",
     TOOL_CUSTODY_DEPENDENTS_READ: "custody_dependents_read_tool",
-    TOOL_RECOVERY_CANDIDATES_READ: "recovery_candidates_read_tool",
-    TOOL_PARTNER_STATE_READ: "partner_state_read_tool",
 }
 
 # Every agent's complete tool allowlist. An empty tuple is an explicit,
 # catalogable statement that the agent holds no tool authority at all.
+# Only the Network and Custody agent needs live tool access: custody
+# investigation is genuinely exploratory, so it reads the graph and may follow
+# up on a specific node. The planner and partner agents receive their complete
+# bounded input directly in the prompt, so they hold no tools rather than
+# carrying a catalog entry with no runtime behavior.
 AGENT_TOOL_ALLOWLIST: Dict[str, tuple] = {
     AGENT_INCIDENT_COORDINATOR: (),
     AGENT_NETWORK_CUSTODY: (TOOL_CUSTODY_GRAPH_READ, TOOL_CUSTODY_DEPENDENTS_READ),
-    AGENT_FULFILLMENT_RECOVERY: (TOOL_RECOVERY_CANDIDATES_READ,),
-    AGENT_PARTNER_OPERATIONS: (TOOL_PARTNER_STATE_READ,),
+    AGENT_FULFILLMENT_RECOVERY: (),
+    AGENT_PARTNER_OPERATIONS: (),
     AGENT_RECALL_EXTRACTION: (),
 }
 
@@ -144,6 +148,30 @@ class RecoverySelection(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
 
 
+class PartnerTemplateParameters(BaseModel):
+    """The only renderable parameters, each with an authoritative source.
+
+    Declared as explicit optional fields rather than an open string map: a
+    free-form `Dict[str, str]` gives structured decoding no declared keys, so
+    the model returns an empty object. Naming the fields also makes it
+    impossible to express a parameter that has no authoritative binding.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    partner_name: Optional[str] = None
+    lot_id: Optional[str] = None
+    cases: Optional[str] = None
+    deadline: Optional[str] = None
+
+    def supplied(self) -> Dict[str, str]:
+        """Return only the parameters the agent actually populated."""
+        return {
+            name: value for name, value in self.model_dump().items()
+            if value is not None
+        }
+
+
 class PartnerCommunication(BaseModel):
     """Advisory template selection. Rendering is deterministic and external."""
 
@@ -152,7 +180,9 @@ class PartnerCommunication(BaseModel):
     partner_id: str = Field(min_length=1, max_length=64)
     template_id: str = Field(min_length=1, max_length=64)
     escalation_level: Literal["ROUTINE", "PRIORITY", "URGENT"]
-    template_parameters: Dict[str, str] = Field(default_factory=dict)
+    template_parameters: PartnerTemplateParameters = Field(
+        default_factory=PartnerTemplateParameters
+    )
     rationale: str = Field(min_length=1, max_length=400)
     confidence: float = Field(ge=0.0, le=1.0)
 

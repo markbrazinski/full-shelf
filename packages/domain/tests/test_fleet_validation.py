@@ -299,14 +299,13 @@ def test_outbound_text_is_rendered_deterministically():
 
 def test_invented_pickup_window_cannot_be_expressed_or_rendered():
     # The parameter no longer exists in any template, so supplying it fails.
-    params = dict(communication().template_parameters, pickup_window="any time")
-    with pytest.raises(FleetProposalError) as exc:
-        validate_partner_communication(
-            communication(template_parameters=params), PARTNER_STATE
-        )
-    assert exc.value.reason_code == "PARTNER_TEMPLATE_PARAMETERS_INVALID"
-    from full_shelf_domain.fleet.contracts import PARTNER_TEMPLATE_IDS
+    from full_shelf_domain.fleet.contracts import (
+        PARTNER_TEMPLATE_IDS, PartnerTemplateParameters,
+    )
 
+    # The parameter cannot even be expressed: the typed model forbids it.
+    with pytest.raises(Exception):
+        PartnerTemplateParameters(partner_name="Site 01", pickup_window="any time")
     for required in PARTNER_TEMPLATE_IDS.values():
         assert "pickup_window" not in required
 
@@ -328,23 +327,14 @@ def test_pickup_request_renders_without_any_unbound_parameter():
 def test_parameter_with_no_authoritative_source_is_rejected():
     from full_shelf_domain.fleet.contracts import PARTNER_TEMPLATE_IDS
 
-    original = PARTNER_TEMPLATE_IDS["partner.shortfall-notice.v1"]
-    PARTNER_TEMPLATE_IDS["partner.shortfall-notice.v1"] = original + ("invented",)
-    try:
-        bad = PartnerCommunication(
-            partner_id="SITE-01", template_id="partner.shortfall-notice.v1",
-            escalation_level="URGENT",
-            template_parameters={"partner_name": "Site 01", "lot_id": "LTC-4471",
-                                 "cases": "8", "invented": "anything"},
-            rationale="r", confidence=0.9,
-        )
-        with pytest.raises(FleetProposalError) as exc:
-            validate_partner_communication(bad, PARTNER_STATE)
-        assert exc.value.reason_code == (
-            "PARTNER_PARAMETER_HAS_NO_AUTHORITATIVE_SOURCE"
-        )
-    finally:
-        PARTNER_TEMPLATE_IDS["partner.shortfall-notice.v1"] = original
+    from full_shelf_domain.fleet.contracts import PartnerTemplateParameters
+
+    # The schema itself is the first guard: only bindable parameters exist.
+    assert set(PartnerTemplateParameters.model_fields) == {
+        "partner_name", "lot_id", "cases", "deadline",
+    }
+    with pytest.raises(Exception):
+        PartnerTemplateParameters(invented="anything")
 
 
 @pytest.mark.parametrize("level", ["ROUTINE", "PRIORITY"])

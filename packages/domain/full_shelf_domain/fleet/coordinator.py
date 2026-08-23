@@ -51,8 +51,6 @@ from .contracts import (
 from .tools import (
     build_custody_dependents_tool,
     build_custody_graph_tool,
-    build_partner_state_tool,
-    build_recovery_candidates_tool,
     custody_graph_read,
     partner_state_read,
     recovery_candidates_read,
@@ -114,14 +112,8 @@ def build_incident_coordinator_agent(run_context: Optional[FleetRunContext] = No
                 build_custody_graph_tool(run_context.graph_result),
                 build_custody_dependents_tool(run_context.graph_result),
             ]),
-            build_fulfillment_recovery_agent([
-                build_recovery_candidates_tool(run_context.recovery_candidates),
-            ]),
-            build_partner_operations_agent([
-                build_partner_state_tool(
-                    partner_state_read(**run_context.partner_state)
-                ),
-            ]),
+            build_fulfillment_recovery_agent([]),
+            build_partner_operations_agent([]),
         ]
 
     class IncidentCoordinatorAgent(BaseAgent):
@@ -163,12 +155,11 @@ def build_incident_coordinator_agent(run_context: Optional[FleetRunContext] = No
 
             for index, (agent_id, prompt, validator, ok_label) in enumerate(hops):
                 specialist = self.sub_agents[index]
-                child_ctx = ctx.model_copy(update={"agent": specialist})
                 try:
                     parsed, execution = await asyncio.wait_for(
                         collect_specialist_output(
                             specialist=specialist, agent_id=agent_id,
-                            prompt=prompt, ctx=child_ctx,
+                            prompt=prompt, ctx=ctx,
                         ),
                         timeout=AGENT_TIMEOUT_SECONDS[agent_id],
                     )

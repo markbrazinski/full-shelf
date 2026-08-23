@@ -27,6 +27,8 @@ from full_shelf_domain.fleet.contracts import (  # noqa: E402
     AGENT_PARTNER_OPERATIONS,
     AGENT_RECALL_EXTRACTION,
     AGENT_TIMEOUT_SECONDS,
+    TOOL_CUSTODY_DEPENDENTS_READ,
+    TOOL_CUSTODY_GRAPH_READ,
     TOOL_RUNTIME_NAMES,
 )
 from full_shelf_domain.fleet.coordinator import (  # noqa: E402
@@ -130,25 +132,43 @@ def test_specialist_tools_are_named_typed_and_unique_at_runtime():
             declaration = tool._get_declaration()
             assert declaration is not None
             assert declaration.name == tool.name
-    assert sorted(seen) == sorted(TOOL_RUNTIME_NAMES.values())
+    # Only the custody agent holds tools; the others receive their complete
+    # bounded input in the prompt, so an unused grant would be a false claim.
+    assert sorted(seen) == sorted([
+        TOOL_RUNTIME_NAMES[TOOL_CUSTODY_GRAPH_READ],
+        TOOL_RUNTIME_NAMES[TOOL_CUSTODY_DEPENDENTS_READ],
+    ])
     assert len(seen) == len(set(seen)), "runtime tool names must be unique"
 
 
 def test_tools_are_actually_callable_and_return_authoritative_data():
     from full_shelf_domain.fleet.tools import (
         build_custody_dependents_tool, build_custody_graph_tool,
-        build_partner_state_tool, build_recovery_candidates_tool,
     )
-    from full_shelf_domain.fleet.tools import partner_state_read
 
     graph_tool = build_custody_graph_tool(CANONICAL_GRAPH)
-    assert graph_tool.func()["total_cases_in_custody"] == 96
+    facts = graph_tool.func()
+    assert facts["total_cases_in_custody"] == 96
+    assert facts["confirmed_cases"] == 88
+    assert facts["unconfirmed_cases"] == 8
     dependents = build_custody_dependents_tool(CANONICAL_GRAPH)
     assert dependents.func(node_id="WH-01")["tool_outcome"] == "OK"
-    candidates = build_recovery_candidates_tool(canonical_candidates())
-    assert candidates.func()["candidate_ids"] == ["CAND-LOT-ASC"]
-    partner = build_partner_state_tool(partner_state_read(**CANONICAL_PARTNER_STATE))
-    assert partner.func()["unconfirmed_cases"] == 8
+    assert dependents.func(node_id="NOPE")["tool_outcome"] == "NOT_FOUND"
+
+
+def test_the_custody_tool_is_actually_invoked_and_its_data_consumed():
+    """A registered tool is not evidence; this proves a real call was made."""
+    with scripted_gemini():
+        proposal = run_canonical_fleet()["proposal"]
+    custody_hop = next(
+        entry for entry in proposal.delegation_trace
+        if entry["agent_id"] == AGENT_NETWORK_CUSTODY
+    )
+    assert custody_hop["declared_tools"] == [
+        TOOL_CUSTODY_GRAPH_READ, TOOL_CUSTODY_DEPENDENTS_READ,
+    ]
+    # And the validated assessment reconciles with the deterministic graph.
+    assert proposal.custody.total_cases_in_custody == 96
 
 
 def test_runtime_tool_names_match_the_governed_catalog_ids():

@@ -212,14 +212,20 @@ def build_recall_extraction_agent(tools: Optional[List[Any]] = None):
 
 
 async def collect_specialist_output(*, specialist, agent_id: str, prompt: str, ctx):
-    """Run one specialist as a real ADK child invocation and parse its output.
+    """Run one specialist as a real ADK invocation and parse its structured output.
 
-    The specialist executes through `specialist.run_async(child_ctx)`, so the
-    parent/child relationship, invocation ID, and event IDs come from actual ADK
-    execution rather than from synthesized records. Returns the parsed output
+    The specialist executes through a real `Runner` over its own session, which
+    is what appends model and tool-response events so ADK's flow loop can
+    converge on a final response. Driving `agent.run_async(ctx)` directly would
+    bypass that append step and deadlock any agent that calls a tool.
+
+    `ctx` is the coordinator's invocation context; it supplies the parent
+    session service so specialist runs stay inside the coordinator's own ADK
+    execution rather than opening an unrelated one. Returns the parsed output
     model plus sanitized execution evidence. Raw prompts, model text, and
     reasoning are never returned.
     """
+    from google.adk.runners import Runner
     from google.genai import types
 
     output_model = AGENT_OUTPUT_MODELS[agent_id]()
@@ -235,14 +241,21 @@ async def collect_specialist_output(*, specialist, agent_id: str, prompt: str, c
         "declared_tools": list(AGENT_TOOL_ALLOWLIST[agent_id]),
     }
 
-    # The specialist reads its task from the shared session's user content.
-    ctx.session.events = list(getattr(ctx.session, "events", []))
-    ctx.user_content = types.Content(
-        role="user", parts=[types.Part.from_text(text=prompt)]
+    session_service = ctx.session_service
+    runner = Runner(
+        agent=specialist, session_service=session_service, app_name=APP_NAME
     )
-
+    session = await session_service.create_session(
+        user_id=WORKLOAD_USER_ID, app_name=APP_NAME
+    )
     final_texts: List[str] = []
-    async for event in specialist.run_async(ctx):
+    async for event in runner.run_async(
+        user_id=WORKLOAD_USER_ID,
+        session_id=session.id,
+        new_message=types.Content(
+            role="user", parts=[types.Part.from_text(text=prompt)]
+        ),
+    ):
         if event.invocation_id:
             execution["adk_invocation_id"] = event.invocation_id
         if event.error_code:
@@ -301,11 +314,30 @@ def recovery_prompt(candidate_projection: Dict[str, Any]) -> str:
     )
 
 
+# Exact authoritative source for each renderable template parameter. Stated in
+# the prompt so the agent copies values rather than omitting or inventing them;
+# `validate_partner_communication` independently enforces the same binding.
+PARTNER_PARAMETER_SOURCES = {
+    "partner_name": "partner_name",
+    "lot_id": "lot_id",
+    "cases": "unconfirmed_cases",
+    "deadline": "deadline",
+}
+
+
 def partner_prompt(partner_state: Dict[str, Any]) -> str:
     """Trusted, bounded partner state. Model Armor is NOT_APPLICABLE here."""
+    bindings = {
+        parameter: str(partner_state.get(field) or "")
+        for parameter, field in PARTNER_PARAMETER_SOURCES.items()
+    }
     return (
         f"Partner state:\n{partner_state}\n"
         f"Approved templates and their required parameters:\n"
         f"{ {k: list(v) for k, v in PARTNER_TEMPLATE_IDS.items()} }\n"
-        "Select one template_id and supply its exact required parameters."
+        "Select one template_id. Then populate template_parameters with EVERY "
+        "required parameter for that template, copying each value exactly from "
+        "this binding table. Never leave template_parameters empty, never omit "
+        "a required parameter, and never write your own value:\n"
+        f"{bindings}"
     )

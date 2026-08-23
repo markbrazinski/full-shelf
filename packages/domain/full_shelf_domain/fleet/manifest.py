@@ -26,8 +26,6 @@ from .contracts import (
     PARTNER_TEMPLATE_IDS,
     TOOL_CUSTODY_DEPENDENTS_READ,
     TOOL_CUSTODY_GRAPH_READ,
-    TOOL_PARTNER_STATE_READ,
-    TOOL_RECOVERY_CANDIDATES_READ,
     ComponentKind,
     NetworkCustodyAssessment,
     PartnerCommunication,
@@ -110,16 +108,6 @@ _TOOL_SPECS = {
         "implementation": "full_shelf_domain.fleet.tools:custody_dependents_read",
         "reads": "Downstream dependents of one custody node",
     },
-    TOOL_RECOVERY_CANDIDATES_READ: {
-        "kind": ComponentKind.DETERMINISTIC_READ_TOOL,
-        "implementation": "full_shelf_domain.fleet.tools:recovery_candidates_read",
-        "reads": "Deterministic feasible recovery candidate set",
-    },
-    TOOL_PARTNER_STATE_READ: {
-        "kind": ComponentKind.DETERMINISTIC_READ_TOOL,
-        "implementation": "full_shelf_domain.fleet.tools:partner_state_read",
-        "reads": "Bounded partner acknowledgment state",
-    },
 }
 
 _VALIDATOR_SPECS = {
@@ -189,6 +177,7 @@ def build_manifest() -> Dict[str, Any]:
             ),
         }
         for tool_id, spec in _TOOL_SPECS.items()
+        if any(tool_id in allowed for allowed in AGENT_TOOL_ALLOWLIST.values())
     ]
 
     governance = [

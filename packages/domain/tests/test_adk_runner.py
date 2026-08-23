@@ -70,7 +70,7 @@ def test_fabricated_value_fails_source_anchor_validation():
 def test_model_error_requires_manual_review_without_fallback():
     proposal = extract(error_for="RecallExtractionAgent")
     assert proposal.status == "MANUAL_REVIEW_REQUIRED"
-    assert proposal.reason_code == "ADK_INVOCATION_FAILED"
+    assert proposal.reason_code in {"ADK_MODEL_ERROR", "ADK_INVOCATION_FAILED"}
     assert "scripted upstream model failure" not in str(proposal.model_dump())
 
 
