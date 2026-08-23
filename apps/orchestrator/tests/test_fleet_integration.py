@@ -84,38 +84,38 @@ def test_fleet_failure_halts_before_any_recovery_mutation(reason_code):
     result = run_hero(commands, fleet_result={
         "status": "MANUAL_REVIEW_REQUIRED", "reason_code": reason_code,
         "proposal": None, "recovery_candidate": None,
+        "extraction_evidence": None,
     })
     assert result["hero_loop_status"] == "HALTED_FOR_MANUAL_REVIEW"
     assert result["halt_stage"] == "AGENT_FLEET_PROPOSAL"
     assert result["manual_review_reason"] == reason_code
-    issued = {row["command_type"] for row in commands}
-    # No recovery, refusal, or terminal transition may be issued on an
-    # advisory failure.
-    assert "ALLOCATE_SAFE_STOCK" not in issued
-    assert "RECORD_REFUSAL" not in issued
-    assert not any(
-        row["payload"].get("terminal_state") == "PARTIALLY_CONTAINED"
-        for row in commands if row["command_type"] == "SET_INCIDENT_STATUS"
-    )
+    # The fleet gate precedes every ledger command, so nothing is attempted.
+    assert commands == []
+    assert result["ledger_commands_attempted"] == 0
+    assert result["mutations_committed"] == 0
 
 
 def test_fleet_candidate_that_contradicts_policy_totals_is_rejected():
     # A candidate whose totals do not reconcile with the accepted deterministic
-    # policy must never reach the ledger.
+    # policy must never reach the ledger. The check now runs inside the
+    # pre-mutation gate, so it halts with zero ledger commands attempted.
     commands = []
-    with pytest.raises(main.HTTPException) as exc:
-        run_hero(commands, fleet_result={
-            "status": "ACCEPTED", "reason_code": None,
-            "proposal": {"status": "PROPOSED", "proposal_hash": "h",
-                         "delegation_trace": [], "partner": {"template_id": "x"}},
-            "recovery_candidate": {
-                "candidate_id": "CAND-BOGUS",
-                "allocations": [{"agency_id": "AG-1", "lot_id": "SAFE-1", "cases": 999}],
-                "shortfalls": [{"agency_id": "AG-2", "cases": 0}],
-            },
-        })
-    assert exc.value.detail == "FLEET_RECOVERY_DOES_NOT_RECONCILE"
-    assert "ALLOCATE_SAFE_STOCK" not in {row["command_type"] for row in commands}
+    result = run_hero(commands, fleet_result={
+        "status": "ACCEPTED", "reason_code": None,
+        "proposal": {"status": "PROPOSED", "proposal_hash": "h",
+                     "delegation_trace": [], "partner": {"template_id": "x"},
+                     "coordinator_session_id": "s",
+                     "coordinator_invocation_id": "i"},
+        "recovery_candidate": {
+            "candidate_id": "CAND-BOGUS",
+            "allocations": [{"agency_id": "AG-1", "lot_id": "SAFE-1", "cases": 999}],
+            "shortfalls": [{"agency_id": "AG-2", "cases": 0}],
+        },
+        "extraction_evidence": {"lot_id": "LOT-FLEET-1"},
+    })
+    assert result["manual_review_reason"] == "FLEET_RECOVERY_DOES_NOT_RECONCILE"
+    assert commands == []
+    assert result["ledger_commands_attempted"] == 0
 
 
 def test_ledger_submission_lives_outside_the_adk_fleet():
@@ -132,5 +132,6 @@ def test_ledger_submission_lives_outside_the_adk_fleet():
 def test_orchestrator_submits_only_after_deterministic_reconciliation():
     source = inspect.getsource(main._execute_managed_recall_event)
     reconcile = source.index("FLEET_RECOVERY_DOES_NOT_RECONCILE")
+    first_command = source.index("open_result = _record(")
     allocate = source.index('"safe-recovery", "ALLOCATE_SAFE_STOCK"')
-    assert reconcile < allocate
+    assert reconcile < first_command < allocate

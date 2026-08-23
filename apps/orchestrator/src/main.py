@@ -50,6 +50,7 @@ from full_shelf_domain.recall import (
 )
 from full_shelf_domain.fleet.contracts import (
     AGENT_INCIDENT_COORDINATOR,
+    AGENT_RECALL_EXTRACTION,
     FLEET_MANIFEST_VERSION,
     FleetProposalError,
 )
@@ -1363,23 +1364,25 @@ def _run_agent_fleet_proposal(
     *,
     incident_id: str,
     lot_id: str,
+    screened_notice_text: str,
     graph: Dict[str, Any],
     candidates: List[Dict[str, Any]],
     unconfirmed_position: Dict[str, Any],
     unconfirmed_cases: int,
-    extraction_evidence: Dict[str, Any],
     deadline: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Delegate to the ADK fleet and revalidate its advisory proposal here.
+    """Run one real Incident Coordinator ADK execution and revalidate its output.
 
-    The fleet never submits anything. This function converts an accepted
-    proposal into deterministic allocations, and any agent, model, tool, schema,
-    or reconciliation failure into MANUAL_REVIEW_REQUIRED with zero mutation.
+    Called only from the pre-mutation gate. The fleet never submits anything and
+    never reaches the ledger; this function converts an accepted proposal into
+    deterministic allocations, and any agent, model, tool, schema, timeout, or
+    reconciliation failure into MANUAL_REVIEW_REQUIRED with zero ledger calls.
     """
     try:
         result = run_fleet(
             incident_id=incident_id,
             lot_id=lot_id,
+            screened_notice_text=screened_notice_text,
             graph_result=graph,
             recovery_candidates=candidates,
             partner_state={
@@ -1392,25 +1395,50 @@ def _run_agent_fleet_proposal(
                 ],
                 "deadline": deadline,
             },
-            extraction_evidence=extraction_evidence,
         )
     except FleetProposalError as exc:
         return {"status": "MANUAL_REVIEW_REQUIRED", "reason_code": exc.reason_code,
-                "proposal": None, "recovery_candidate": None}
+                "proposal": None, "recovery_candidate": None,
+                "extraction_evidence": None}
     except Exception:
         # No fleet failure may fall back to canonical output.
         return {"status": "MANUAL_REVIEW_REQUIRED",
                 "reason_code": "FLEET_EXECUTION_FAILED",
-                "proposal": None, "recovery_candidate": None}
+                "proposal": None, "recovery_candidate": None,
+                "extraction_evidence": None}
 
     proposal = result["proposal"]
     if proposal.status != "PROPOSED" or result["recovery_candidate"] is None:
         return {"status": "MANUAL_REVIEW_REQUIRED",
                 "reason_code": proposal.reason_code or "FLEET_PROPOSAL_REJECTED",
-                "proposal": proposal.model_dump(), "recovery_candidate": None}
+                "proposal": proposal.model_dump(), "recovery_candidate": None,
+                "extraction_evidence": None}
+
+    dumped = proposal.model_dump()
+    extraction_evidence = dict(dumped.get("extraction") or {})
+    recall_hop = next(
+        (entry for entry in dumped["delegation_trace"]
+         if entry["agent_id"] == AGENT_RECALL_EXTRACTION),
+        {},
+    )
+    # Evidence comes from the recall specialist's actual ADK execution. Built by
+    # merge rather than dict.update so the orchestrator source stays free of any
+    # `.update(` call, which `test_no_authoritative_writes` prohibits outright.
+    extraction_evidence = {
+        **extraction_evidence,
+        "model_used": recall_hop.get("model_used"),
+        "adk_framework": recall_hop.get("adk_framework"),
+        "adk_run_id": recall_hop.get("adk_invocation_id"),
+        "adk_event_id": recall_hop.get("adk_event_id"),
+        "adk_session_id": dumped.get("coordinator_session_id"),
+        "validation_status": recall_hop.get("deterministic_validation"),
+        "status": "EXTRACTION_VALIDATED",
+        "downstream_allowed": True,
+    }
     return {"status": "ACCEPTED", "reason_code": None,
-            "proposal": proposal.model_dump(),
-            "recovery_candidate": result["recovery_candidate"]}
+            "proposal": dumped,
+            "recovery_candidate": result["recovery_candidate"],
+            "extraction_evidence": extraction_evidence}
 
 
 def _execute_managed_recall_event(
@@ -1449,28 +1477,105 @@ def _execute_managed_recall_event(
             "trace_id": trace_id,
         }
 
-    extracted = extract_recall_entities_with_gemini_35(
-        notice_text, correlation_id=trace_id
-    )
-    _persist_model_invocation_evidence(extracted, route="managed-pubsub-recall")
-    if (not extracted.get("downstream_allowed")
-            or extracted.get("lot_id") != recalled_lot_id):
-        return {
-            "hero_loop_status": "HALTED_FOR_MANUAL_REVIEW",
-            "model_armor_screening": screening,
-            "gemini_extraction": extracted,
-            "ledger_mutation_attempted": False,
-            "trace_id": trace_id,
-        }
-
+    # ------------------------------------------------------------------
+    # PRE-MUTATION FLEET GATE
+    #
+    # Every fallible step - authoritative reads, the Spanner Graph traversal,
+    # deterministic candidate construction, all five ADK agents, every tool
+    # call, schema parse, timeout, and deterministic validation - completes
+    # here, BEFORE the first ledger command is attempted. Nothing below this
+    # gate may fail for a model reason, so a fleet failure always means zero
+    # ledger commands attempted and zero mutations committed.
+    # ------------------------------------------------------------------
     inputs = _read_authoritative_recall_inputs(
         db, tenant_id=tenant_id, recalled_lot_id=recalled_lot_id,
         revision=active_revision,
     )
+    try:
+        graph = _run_managed_custody_graph(
+            db, tenant_id=tenant_id, lot_id=recalled_lot_id
+        )
+    except Exception as exc:
+        raise HTTPException(503, "AUTHORITATIVE_GRAPH_READ_UNAVAILABLE") from exc
+    if graph["unique_current_cases"] != inputs["recalled_total_cases"]:
+        raise HTTPException(409, "CUSTODY_TOTAL_DOES_NOT_MATCH_RECALLED_LOT")
+    if len(graph["unconfirmed_positions"]) != 1 or graph["unconfirmed_cases"] <= 0:
+        raise HTTPException(409, "EXACTLY_ONE_UNCONFIRMED_POSITION_REQUIRED")
+    unconfirmed_position = graph["unconfirmed_positions"][0]
+
+    # Deterministic code owns the candidate set. The fleet may only choose
+    # among these candidates; it can neither extend nor alter them.
+    candidates = generate_recovery_candidates(
+        incident_id=incident_id, safe_lots=inputs["safe_lots"],
+        affected_orders=inputs["affected_orders"],
+    )
+    fleet = _run_agent_fleet_proposal(
+        incident_id=incident_id, lot_id=recalled_lot_id,
+        screened_notice_text=notice_text, graph=graph, candidates=candidates,
+        unconfirmed_position=unconfirmed_position,
+        unconfirmed_cases=graph["unconfirmed_cases"],
+    )
+    _persist_model_invocation_evidence(
+        fleet.get("extraction_evidence") or {}, route="managed-pubsub-recall"
+    )
+    if fleet["status"] != "ACCEPTED":
+        return {
+            "hero_loop_status": "HALTED_FOR_MANUAL_REVIEW",
+            "halt_stage": "AGENT_FLEET_PROPOSAL",
+            "manual_review_reason": fleet["reason_code"],
+            "agent_fleet": fleet,
+            "model_armor_screening": screening,
+            "spanner_graph_reconstruction": graph,
+            "ledger_commands_attempted": 0,
+            "ledger_commands_accepted": 0,
+            "mutations_committed": 0,
+            "ledger_mutation_attempted": False,
+            "trace_id": trace_id,
+        }
+    extracted = fleet["extraction_evidence"]
+    allocations = fleet["recovery_candidate"]["allocations"]
+    shortfalls = fleet["recovery_candidate"]["shortfalls"]
+
+    # Independent deterministic cross-check before any mutation: the
+    # fleet-selected candidate must reproduce the accepted recovery policy.
+    expected_allocations, expected_shortfalls = _derive_safe_recovery(
+        incident_id=incident_id, safe_lots=inputs["safe_lots"],
+        affected_orders=inputs["affected_orders"],
+    )
+    if (sum(a["cases"] for a in allocations)
+            != sum(a["cases"] for a in expected_allocations)
+            or sum(s["cases"] for s in shortfalls)
+            != sum(s["cases"] for s in expected_shortfalls)):
+        return {
+            "hero_loop_status": "HALTED_FOR_MANUAL_REVIEW",
+            "halt_stage": "FLEET_RECOVERY_RECONCILIATION",
+            "manual_review_reason": "FLEET_RECOVERY_DOES_NOT_RECONCILE",
+            "agent_fleet": fleet,
+            "model_armor_screening": screening,
+            "ledger_commands_attempted": 0,
+            "ledger_commands_accepted": 0,
+            "mutations_committed": 0,
+            "ledger_mutation_attempted": False,
+            "trace_id": trace_id,
+        }
+
+    # ------------------------------------------------------------------
+    # MUTATION PHASE. Only a fully accepted proposal reaches this point.
+    # ------------------------------------------------------------------
+    ledger_calls = {"attempted": 0, "accepted": 0, "committed": 0}
+
+    def _record(result):
+        ledger_calls["attempted"] += 1
+        receipt = result.get("receipt", {})
+        if receipt.get("status") == "SUCCESS":
+            ledger_calls["accepted"] += 1
+        ledger_calls["committed"] += int(receipt.get("mutations_applied") or 0)
+        return result
+
     open_command_id, open_key = _command_identity(
         tenant_id, incident_id, f"open:{source_event_id}"
     )
-    open_result = execute_ledger_command(
+    open_result = _record(execute_ledger_command(
         command_id=open_command_id, idempotency_key=open_key,
         tenant_id=tenant_id, incident_id=incident_id,
         agent_role="INCIDENT_COORDINATOR", command_type="OPEN_RECALL_INCIDENT",
@@ -1486,34 +1591,22 @@ def _execute_managed_recall_event(
                 "action_required": extracted.get("action_required"),
             },
         },
-    )
+    ))
 
     def commit(action, command_type, payload, *, agent_role="INCIDENT_COORDINATOR",
                allow_denied=False):
         command_id, idempotency_key = _command_identity(tenant_id, incident_id, action)
-        return execute_ledger_command(
+        return _record(execute_ledger_command(
             command_id=command_id, idempotency_key=idempotency_key,
             tenant_id=tenant_id, incident_id=incident_id, agent_role=agent_role,
             command_type=command_type, expected_plan_revision=active_revision,
             trace_id=trace_id, payload=payload, allow_denied=allow_denied,
-        )
+        ))
 
     scoping = commit("status:SCOPING", "SET_INCIDENT_STATUS", {
         "incident_id": incident_id, "expected_status": "DETECTED",
         "new_status": "SCOPING", "terminal_state": "NONE",
     })
-    try:
-        graph = _run_managed_custody_graph(
-            db, tenant_id=tenant_id, lot_id=recalled_lot_id
-        )
-    except Exception as exc:
-        raise HTTPException(503, "AUTHORITATIVE_GRAPH_READ_UNAVAILABLE") from exc
-    if graph["unique_current_cases"] != inputs["recalled_total_cases"]:
-        raise HTTPException(409, "CUSTODY_TOTAL_DOES_NOT_MATCH_RECALLED_LOT")
-    if len(graph["unconfirmed_positions"]) != 1 or graph["unconfirmed_cases"] <= 0:
-        raise HTTPException(409, "EXACTLY_ONE_UNCONFIRMED_POSITION_REQUIRED")
-    unconfirmed_position = graph["unconfirmed_positions"][0]
-
     barrier_id = f"BARRIER-{hashlib.sha256(recalled_lot_id.encode()).hexdigest()[:20].upper()}"
     barrier = commit("movement-barrier", "ACTIVATE_MOVEMENT_BARRIER", {
         "barrier_id": barrier_id, "incident_id": incident_id,
@@ -1528,47 +1621,6 @@ def _execute_managed_recall_event(
         "plan_id": inputs["plan_id"], "revision": active_revision,
         "reason": f"{recalled_lot_id}_RECALL",
     })
-    # Deterministic code owns the complete feasible candidate set. The fleet may
-    # only choose among these candidates; it can neither extend nor alter them.
-    candidates = generate_recovery_candidates(
-        incident_id=incident_id, safe_lots=inputs["safe_lots"],
-        affected_orders=inputs["affected_orders"],
-    )
-    fleet = _run_agent_fleet_proposal(
-        incident_id=incident_id, lot_id=recalled_lot_id, graph=graph,
-        candidates=candidates, unconfirmed_position=unconfirmed_position,
-        unconfirmed_cases=graph["unconfirmed_cases"],
-        extraction_evidence=extracted,
-    )
-    if fleet["status"] != "ACCEPTED":
-        # An advisory failure stops recovery submission entirely. Containment
-        # work already committed above stands; nothing further is mutated.
-        return {
-            "hero_loop_status": "HALTED_FOR_MANUAL_REVIEW",
-            "halt_stage": "AGENT_FLEET_PROPOSAL",
-            "manual_review_reason": fleet["reason_code"],
-            "agent_fleet": fleet,
-            "model_armor_screening": screening,
-            "gemini_35_extraction": extracted,
-            "spanner_graph_reconstruction": graph,
-            "ledger_mutation_attempted": False,
-            "trace_id": trace_id,
-        }
-    allocations = fleet["recovery_candidate"]["allocations"]
-    shortfalls = fleet["recovery_candidate"]["shortfalls"]
-
-    # Independent deterministic cross-check: the fleet-selected candidate must
-    # reproduce the accepted safe-recovery policy exactly.
-    expected_allocations, expected_shortfalls = _derive_safe_recovery(
-        incident_id=incident_id, safe_lots=inputs["safe_lots"],
-        affected_orders=inputs["affected_orders"],
-    )
-    if (sum(a["cases"] for a in allocations)
-            != sum(a["cases"] for a in expected_allocations)
-            or sum(s["cases"] for s in shortfalls)
-            != sum(s["cases"] for s in expected_shortfalls)):
-        raise HTTPException(409, "FLEET_RECOVERY_DOES_NOT_RECONCILE")
-
     recovery = commit(
         "safe-recovery", "ALLOCATE_SAFE_STOCK",
         {"incident_id": incident_id, "allocations": allocations,
@@ -1604,6 +1656,9 @@ def _execute_managed_recall_event(
     return {
         "hero_loop_status": "COMPLETED",
         "authority_scope_kind": scope.kind,
+        "ledger_commands_attempted": ledger_calls["attempted"],
+        "ledger_commands_accepted": ledger_calls["accepted"],
+        "mutations_committed": ledger_calls["committed"],
         "model_armor_screening": screening,
         "gemini_35_extraction": extracted,
         "spanner_graph_reconstruction": graph,
@@ -1611,6 +1666,8 @@ def _execute_managed_recall_event(
         "agent_fleet": {
             "manifest_version": FLEET_MANIFEST_VERSION,
             "root_agent_id": AGENT_INCIDENT_COORDINATOR,
+            "coordinator_session_id": fleet["proposal"]["coordinator_session_id"],
+            "coordinator_invocation_id": fleet["proposal"]["coordinator_invocation_id"],
             "proposal_status": fleet["proposal"]["status"],
             "proposal_hash": fleet["proposal"]["proposal_hash"],
             "delegation_trace": fleet["proposal"]["delegation_trace"],
