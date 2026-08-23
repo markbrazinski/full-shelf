@@ -42,7 +42,8 @@ APPROVED_SCREENING = {
 
 
 def run(*, fleet_result=None, graph=GRAPH, inputs=INPUTS,
-        screening=APPROVED_SCREENING, inputs_error=None):
+        screening=APPROVED_SCREENING, inputs_error=None,
+        candidates_error=None, derive_error=None):
     """graph=None simulates an authoritative graph read failure.
 
     inputs_error raises that exception from the authoritative read instead.
@@ -83,6 +84,16 @@ def run(*, fleet_result=None, graph=GRAPH, inputs=INPUTS,
         patch.object(main, "execute_ledger_command", side_effect=execute),
         patch.object(main, "schedule_site01_deadline_task",
                      return_value={"task_name": "t"}),
+        patch.object(
+            main, "generate_recovery_candidates",
+            side_effect=(candidates_error if candidates_error
+                         else main.generate_recovery_candidates),
+        ),
+        patch.object(
+            main, "_derive_safe_recovery",
+            side_effect=(derive_error if derive_error
+                         else main._derive_safe_recovery),
+        ),
         fleet_patch,
     ):
         try:
@@ -253,3 +264,61 @@ def test_classified_read_failure_keeps_its_business_status():
     assert result["http_status_classification"] == 409
     assert attempts == []
     assert result["ledger_commands_attempted"] == 0
+
+
+# --- Item 2: candidate generation and cross-check are inside the gate --------
+
+
+@pytest.mark.parametrize("error,reason,status", [
+    (RuntimeError("unexpected planner defect"),
+     "RECOVERY_CANDIDATE_GENERATION_FAILED", 500),
+    (main.HTTPException(409, "PARTIAL_RECOVERY_POLICY_INPUTS_REQUIRED"),
+     "PARTIAL_RECOVERY_POLICY_INPUTS_REQUIRED", 409),
+])
+def test_candidate_generation_failure_returns_zero_mutation_evidence(
+    error, reason, status
+):
+    result, attempts = run(candidates_error=error)
+    assert result["hero_loop_status"] == "HALTED_FOR_MANUAL_REVIEW"
+    assert result["halt_stage"] == "RECOVERY_CANDIDATE_GENERATION"
+    assert result["manual_review_reason"] == reason
+    assert result["http_status_classification"] == status
+    assert attempts == []
+    assert result["ledger_commands_attempted"] == 0
+    assert result["ledger_commands_accepted"] == 0
+    assert result["mutations_committed"] == 0
+    assert result["ledger_mutation_attempted"] is False
+    assert "unexpected planner defect" not in str(result)
+
+
+@pytest.mark.parametrize("error,reason,status", [
+    (RuntimeError("cross-check exploded"), "RECOVERY_CROSS_CHECK_FAILED", 500),
+    (main.HTTPException(409, "PARTIAL_RECOVERY_POLICY_INPUTS_REQUIRED"),
+     "PARTIAL_RECOVERY_POLICY_INPUTS_REQUIRED", 409),
+])
+def test_recovery_cross_check_failure_returns_zero_mutation_evidence(
+    error, reason, status
+):
+    result, attempts = run(fleet_result=ACCEPTED, derive_error=error)
+    assert result["hero_loop_status"] == "HALTED_FOR_MANUAL_REVIEW"
+    assert result["halt_stage"] == "FLEET_RECOVERY_RECONCILIATION"
+    assert result["manual_review_reason"] == reason
+    assert result["http_status_classification"] == status
+    assert attempts == []
+    assert result["ledger_commands_attempted"] == 0
+    assert result["mutations_committed"] == 0
+    assert "cross-check exploded" not in str(result)
+
+
+@pytest.mark.parametrize("control", [KeyboardInterrupt, SystemExit])
+def test_process_control_exceptions_are_not_swallowed(control):
+    """Cancellation and process control must propagate, never become a halt."""
+    with pytest.raises(control):
+        run(candidates_error=control())
+
+
+def test_cancellation_is_not_swallowed():
+    import asyncio
+
+    with pytest.raises(asyncio.CancelledError):
+        run(candidates_error=asyncio.CancelledError())

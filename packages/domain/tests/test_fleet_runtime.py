@@ -52,13 +52,14 @@ def test_adk_version_is_the_pinned_deployable_version():
 # --- Finding 1 & 2: genuine coordinator ownership ---------------------------
 
 
-def test_coordinator_owns_one_adk_execution_invoking_all_four_specialists():
+def test_coordinator_governs_four_correlated_specialist_executions():
     calls = []
     with scripted_gemini(calls=calls):
         result = run_canonical_fleet()
     proposal = result["proposal"]
     assert proposal.status == "PROPOSED", proposal.reason_code
-    # Four real model invocations, in the governed order, from one entry point.
+    # Four real model invocations, in the governed order, each its own
+    # Runner/session execution correlated by coordination_run_id.
     assert calls == [
         "RecallExtractionAgent", "NetworkAndCustodyAgent",
         "FulfillmentAndRecoveryPlannerAgent", "PartnerOperationsAgent",
@@ -464,3 +465,52 @@ def test_failed_specialist_on_model_error_retains_identifiers():
     assert failed_hop["specialist_run_id"]
     assert failed_hop["specialist_session_id"]
     assert failed_hop["specialist_session_id"] != proposal.coordinator_session_id
+
+
+# --- Topology-language regression -------------------------------------------
+
+# Assembled at runtime so this guard's own source cannot trip the audit's
+# forbidden-string search while still rejecting the claims verbatim.
+REJECTED_TOPOLOGY_CLAIMS = (
+    " ".join(["inside", "its", "own", "ADK", "invocation"]),
+    " ".join(["real", "ADK", "child", "invocations"]),
+    " ".join(["ADK", "child", "invocation"]),
+    " ".join(["Enter", "ADK", "exactly", "once"]),
+    " ".join(["inside", "the", "coordinator", "invocation"]),
+    " ".join(["runs", "inside", "the", "coordinator"]),
+    " ".join(["single", "nested", "ADK", "invocation"]),
+    "_".join(["parent", "agent", "id"]),
+    # Affirmative forms only. The truthful sentence contains the phrase
+    # "no native ADK parent-child lineage is claimed", which must not trip this.
+    " ".join(["claims", "ADK", "parent-child", "lineage"]),
+    " ".join(["native", "parent-child", "lineage", "is", "claimed"]),
+    " ".join(["one", "shared", "Runner"]),
+)
+
+
+def test_no_module_reasserts_a_rejected_topology_claim():
+    """Item 1: native-parentage and single-execution language must not return.
+
+    Scans every fleet module and the orchestrator source, so a future edit that
+    reintroduces one of these claims fails here rather than shipping a false
+    description of how the fleet actually executes.
+    """
+    root = pathlib.Path(__file__).resolve().parents[3]
+    targets = list(
+        (root / "packages/domain/full_shelf_domain/fleet").glob("*.py")
+    ) + [root / "apps/orchestrator/src/main.py"]
+    assert len(targets) >= 6
+    for path in targets:
+        text = path.read_text()
+        for claim in REJECTED_TOPOLOGY_CLAIMS:
+            assert claim not in text, f"{path.name} reasserts: {claim!r}"
+
+
+def test_truthful_topology_statement_is_present_where_it_matters():
+    """The corrected description must actually be stated, not merely absent."""
+    from full_shelf_domain.fleet import coordinator
+
+    text = pathlib.Path(coordinator.__file__).read_text()
+    assert text.count("coordination_run_id") >= 3
+    assert "no native ADK parent-child lineage is" in text
+    assert "separately correlated" in text

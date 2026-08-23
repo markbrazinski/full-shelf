@@ -1496,6 +1496,10 @@ def _execute_managed_recall_event(
 
         `http_status` preserves the classification the caller would have raised,
         so transport retry/ack behavior is unchanged by counting the failure.
+
+        Callers guard with `except Exception`, which deliberately excludes
+        BaseException: KeyboardInterrupt, SystemExit, and asyncio.CancelledError
+        continue to propagate rather than being converted into a halt.
         """
         return {
             "hero_loop_status": "HALTED_FOR_MANUAL_REVIEW",
@@ -1554,10 +1558,21 @@ def _execute_managed_recall_event(
 
     # Deterministic code owns the candidate set. The fleet may only choose
     # among these candidates; it can neither extend nor alter them.
-    candidates = generate_recovery_candidates(
-        incident_id=incident_id, safe_lots=inputs["safe_lots"],
-        affected_orders=inputs["affected_orders"],
-    )
+    try:
+        candidates = generate_recovery_candidates(
+            incident_id=incident_id, safe_lots=inputs["safe_lots"],
+            affected_orders=inputs["affected_orders"],
+        )
+    except HTTPException as exc:
+        return _pre_ledger_halt(
+            "RECOVERY_CANDIDATE_GENERATION", str(exc.detail),
+            http_status=exc.status_code,
+        )
+    except Exception:
+        return _pre_ledger_halt(
+            "RECOVERY_CANDIDATE_GENERATION",
+            "RECOVERY_CANDIDATE_GENERATION_FAILED", http_status=500,
+        )
     fleet = _run_agent_fleet_proposal(
         incident_id=incident_id, lot_id=recalled_lot_id,
         screened_notice_text=notice_text, graph=graph, candidates=candidates,
@@ -1587,10 +1602,21 @@ def _execute_managed_recall_event(
 
     # Independent deterministic cross-check before any mutation: the
     # fleet-selected candidate must reproduce the accepted recovery policy.
-    expected_allocations, expected_shortfalls = _derive_safe_recovery(
-        incident_id=incident_id, safe_lots=inputs["safe_lots"],
-        affected_orders=inputs["affected_orders"],
-    )
+    try:
+        expected_allocations, expected_shortfalls = _derive_safe_recovery(
+            incident_id=incident_id, safe_lots=inputs["safe_lots"],
+            affected_orders=inputs["affected_orders"],
+        )
+    except HTTPException as exc:
+        return _pre_ledger_halt(
+            "FLEET_RECOVERY_RECONCILIATION", str(exc.detail),
+            http_status=exc.status_code, agent_fleet=fleet,
+        )
+    except Exception:
+        return _pre_ledger_halt(
+            "FLEET_RECOVERY_RECONCILIATION",
+            "RECOVERY_CROSS_CHECK_FAILED", http_status=500, agent_fleet=fleet,
+        )
     if (sum(a["cases"] for a in allocations)
             != sum(a["cases"] for a in expected_allocations)
             or sum(s["cases"] for s in shortfalls)

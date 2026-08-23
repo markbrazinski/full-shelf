@@ -5,6 +5,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
+import pytest
 from fastapi.testclient import TestClient
 from google.api_core.exceptions import AlreadyExists
 
@@ -15,6 +16,28 @@ main_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src",
 spec = importlib.util.spec_from_file_location("orchestrator_callback_main", main_path)
 main = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(main)
+
+
+# Every managed-event fixture in this file publishes on the 2026-08-14 operating
+# day. Production correctly rejects Pub/Sub events older than
+# PUBSUB_MAX_EVENT_AGE_SECONDS (24h by default), so once wall-clock time moved
+# past 2026-08-15 these fixtures began failing staleness screening before
+# reaching the behavior under test.
+#
+# Freezing the application's existing `_utc_now` clock seam to a reference
+# instant shortly after those fixtures makes the suite deterministic on any
+# future date. This is a TEST-ONLY change: the staleness rule, its threshold,
+# and every production code path are untouched, and the dedicated staleness
+# tests below still exercise rejection by deriving their timestamps from this
+# same reference clock.
+REFERENCE_NOW = datetime(2026, 8, 14, 13, 0, 0, tzinfo=timezone.utc)
+
+
+@pytest.fixture(autouse=True)
+def frozen_managed_event_clock(monkeypatch):
+    """Pin the managed-event clock to the fixtures' operating day."""
+    monkeypatch.setattr(main, "_utc_now", lambda: REFERENCE_NOW)
+    return REFERENCE_NOW
 
 CALLER = VerifiedGoogleIdentity(
     subject="105774551577568412756",
@@ -359,7 +382,7 @@ def test_authenticated_stale_pubsub_message_is_acked_without_interpretation():
         "historical-backlog-1",
     )
     envelope["message"]["publishTime"] = (
-        datetime.now(timezone.utc) - timedelta(days=2)
+        REFERENCE_NOW - timedelta(days=2)
     ).isoformat().replace("+00:00", "Z")
     with patch.object(main, "_verify_managed_callback", return_value=CALLER), patch.object(
         main, "_resolve_authority_scope"

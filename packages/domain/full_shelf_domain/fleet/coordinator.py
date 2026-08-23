@@ -104,8 +104,13 @@ def build_incident_coordinator_agent(run_context: Optional[FleetRunContext] = No
 
     Built lazily so importing this module never requires ADK at collection time.
     When `run_context` is supplied the coordinator is fully armed: it constructs
-    its four specialist sub-agents and drives them inside its own ADK
-    invocation. Without one it is still a valid, inspectable ADK agent.
+    its four specialists and governs their separate executions. Without one it is
+    still a valid, inspectable ADK agent.
+
+    One coordinator Runner/session governs four separately correlated
+    specialist Runner/session executions. Correlation is application-managed
+    through `coordination_run_id`; no native ADK parent-child lineage is
+    claimed.
     """
     from google.adk.agents import BaseAgent
     from google.adk.events import Event
@@ -126,10 +131,17 @@ def build_incident_coordinator_agent(run_context: Optional[FleetRunContext] = No
     class IncidentCoordinatorAgent(BaseAgent):
         """ADK custom agent that sequences the Full Shelf specialist fleet.
 
-        Delegation happens here, in `_run_async_impl`, using real ADK child
-        invocations. Deterministic validation runs between hops, so a specialist
-        that contradicts authoritative evidence stops the sequence before the
-        next specialist is asked anything.
+        Sequencing happens here, in `_run_async_impl`. Each specialist is
+        executed through its own Runner and session; this agent orders those
+        executions and correlates them, it does not host them. Deterministic
+        validation runs between hops, so a specialist that contradicts
+        authoritative evidence stops the sequence before the next specialist is
+        asked anything.
+
+        One coordinator Runner/session governs four separately correlated
+        specialist Runner/session executions. Correlation is application-managed
+        through `coordination_run_id`; no native ADK parent-child lineage is
+        claimed.
         """
 
         async def _run_async_impl(self, ctx) -> AsyncGenerator["Event", None]:
@@ -362,9 +374,13 @@ def run_fleet(
 ) -> Dict[str, Any]:
     """Run one real Incident Coordinator ADK execution and return its proposal.
 
-    Every specialist runs inside the coordinator's own ADK invocation, and every
-    accepted specialist output is consumed by the assembled proposal. Any agent,
-    model, tool, schema, timeout, or reconciliation failure returns a
+    One coordinator Runner/session governs four separately correlated
+    specialist Runner/session executions. Correlation is application-managed
+    through `coordination_run_id`; no native ADK parent-child lineage is
+    claimed.
+
+    Every accepted specialist output is consumed by the assembled proposal. Any
+    agent, model, tool, schema, timeout, or reconciliation failure returns a
     MANUAL_REVIEW_REQUIRED proposal; the caller performs zero ledger mutation.
 
     `coordinator_runner` is injected only by tests that must drive the sequence
