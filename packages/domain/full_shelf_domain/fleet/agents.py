@@ -20,6 +20,7 @@ from pydantic import ValidationError
 
 from .contracts import (
     AGENT_FULFILLMENT_RECOVERY,
+    AGENT_RECALL_EXTRACTION,
     AGENT_NETWORK_CUSTODY,
     AGENT_PARTNER_OPERATIONS,
     AGENT_TIMEOUT_SECONDS,
@@ -166,112 +167,120 @@ def build_partner_operations_agent(tools: List[Callable]):
     )
 
 
+def _recall_schema():
+    from full_shelf_domain.recall import RecallExtractionSchema
+
+    return RecallExtractionSchema
+
+
+AGENT_OUTPUT_MODELS = {
+    AGENT_RECALL_EXTRACTION: _recall_schema,
+    AGENT_NETWORK_CUSTODY: lambda: NetworkCustodyAssessment,
+    AGENT_FULFILLMENT_RECOVERY: lambda: RecoverySelection,
+    AGENT_PARTNER_OPERATIONS: lambda: PartnerCommunication,
+}
+
+
 class AgentRunFailure(FleetProposalError):
     """One specialist run failed. Carries only a stable reason code."""
 
 
-def run_specialist_agent(
-    *,
-    agent,
-    agent_id: str,
-    prompt: str,
-    output_model,
-    timeout_seconds: Optional[float] = None,
-) -> Dict[str, Any]:
-    """Execute one ADK specialist through a real Runner and validate its schema.
+RECALL_EXTRACTION_INSTRUCTION = """
+Extract the requested fields only from the supplied recall notice.
+Every value must be explicitly supported by text in that notice.
+Do not infer missing values, use remembered examples, or invent a
+canonical scenario. Return the configured structured response only.
+"""
 
-    Returns the parsed model plus sanitized execution evidence: ADK session, run
-    and event identifiers, model ID, and tool outcomes. Raw prompts, model text,
-    and reasoning are never returned.
+
+def build_recall_extraction_agent(tools: Optional[List[Any]] = None):
+    """Concrete ADK LlmAgent for `full-shelf.recall-extraction.v1`.
+
+    Preserves the accepted extraction behavior: strict schema, zero tools, no
+    transfer, deterministic decoding. Source anchoring is enforced by
+    `validation.validate_recall_extraction` after parsing.
     """
-    from google.adk.runners import Runner
-    from google.adk.sessions import InMemorySessionService
+    from full_shelf_domain.recall import RecallExtractionSchema
+
+    return _build_llm_agent(
+        name="RecallExtractionAgent",
+        instruction=RECALL_EXTRACTION_INSTRUCTION,
+        output_schema=RecallExtractionSchema,
+        tools=tools or [],
+        max_output_tokens=512,
+    )
+
+
+async def collect_specialist_output(*, specialist, agent_id: str, prompt: str, ctx):
+    """Run one specialist as a real ADK child invocation and parse its output.
+
+    The specialist executes through `specialist.run_async(child_ctx)`, so the
+    parent/child relationship, invocation ID, and event IDs come from actual ADK
+    execution rather than from synthesized records. Returns the parsed output
+    model plus sanitized execution evidence. Raw prompts, model text, and
+    reasoning are never returned.
+    """
     from google.genai import types
 
-    timeout_seconds = timeout_seconds or AGENT_TIMEOUT_SECONDS[agent_id]
+    output_model = AGENT_OUTPUT_MODELS[agent_id]()
     execution: Dict[str, Any] = {
         "agent_id": agent_id,
-        "agent_name": agent.name,
+        "agent_name": specialist.name,
         "model_used": MODEL_ID,
         "vertex_location": VERTEX_LOCATION,
         "adk_framework": adk_framework(),
-        "adk_session_backend": "InMemorySessionService",
-        "adk_session_id": None,
-        "adk_run_id": None,
+        "adk_invocation_id": None,
         "adk_event_id": None,
         "tool_invocations": [],
         "declared_tools": list(AGENT_TOOL_ALLOWLIST[agent_id]),
     }
 
-    async def _run():
-        session_service = InMemorySessionService()
-        runner = Runner(
-            agent=agent, session_service=session_service, app_name=APP_NAME
-        )
-        session = await session_service.create_session(
-            user_id=WORKLOAD_USER_ID, app_name=APP_NAME
-        )
-        execution["adk_session_id"] = session.id
-        message = types.Content(
-            role="user", parts=[types.Part.from_text(text=prompt)]
-        )
-        final_texts: List[str] = []
-        async for event in runner.run_async(
-            user_id=WORKLOAD_USER_ID,
-            session_id=session.id,
-            new_message=message,
-        ):
-            if event.invocation_id:
-                if execution["adk_run_id"] not in {None, event.invocation_id}:
-                    raise AgentRunFailure("MULTIPLE_ADK_RUN_IDENTIFIERS", agent_id)
-                execution["adk_run_id"] = event.invocation_id
-            if event.error_code:
-                raise AgentRunFailure("ADK_MODEL_ERROR", agent_id)
-            for call in (event.get_function_calls() or []):
-                execution["tool_invocations"].append(
-                    {"tool_name": call.name, "outcome": "REQUESTED"}
-                )
-            for response in (event.get_function_responses() or []):
-                execution["tool_invocations"].append(
-                    {"tool_name": response.name, "outcome": "COMPLETED"}
-                )
-            if event.author != agent.name or not event.is_final_response():
-                continue
-            finish_reason = getattr(event.finish_reason, "name", event.finish_reason)
-            if finish_reason not in {None, "STOP"}:
-                raise AgentRunFailure("ADK_RESPONSE_INCOMPLETE", agent_id)
-            text = "".join(
-                part.text or ""
-                for part in (event.content.parts if event.content else [])
-            ).strip()
-            if text:
-                final_texts.append(text)
-                execution["adk_event_id"] = event.id
-        if not execution["adk_run_id"]:
-            raise AgentRunFailure("ADK_RUN_IDENTIFIER_MISSING", agent_id)
-        if len(final_texts) != 1:
-            raise AgentRunFailure("ADK_FINAL_RESPONSE_COUNT_INVALID", agent_id)
-        return final_texts[0]
+    # The specialist reads its task from the shared session's user content.
+    ctx.session.events = list(getattr(ctx.session, "events", []))
+    ctx.user_content = types.Content(
+        role="user", parts=[types.Part.from_text(text=prompt)]
+    )
 
-    async def _run_bounded():
-        return await asyncio.wait_for(_run(), timeout=timeout_seconds)
+    final_texts: List[str] = []
+    async for event in specialist.run_async(ctx):
+        if event.invocation_id:
+            execution["adk_invocation_id"] = event.invocation_id
+        if event.error_code:
+            raise AgentRunFailure("ADK_MODEL_ERROR", agent_id)
+        for call in (event.get_function_calls() or []):
+            execution["tool_invocations"].append(
+                {"tool_name": call.name, "outcome": "REQUESTED"}
+            )
+        for response in (event.get_function_responses() or []):
+            execution["tool_invocations"].append(
+                {"tool_name": response.name, "outcome": "COMPLETED"}
+            )
+        if event.author != specialist.name or not event.is_final_response():
+            continue
+        finish_reason = getattr(event.finish_reason, "name", event.finish_reason)
+        if finish_reason not in {None, "STOP", "FINISH_REASON_UNSPECIFIED"}:
+            raise AgentRunFailure("ADK_RESPONSE_INCOMPLETE", agent_id)
+        text = "".join(
+            part.text or "" for part in (event.content.parts if event.content else [])
+        ).strip()
+        if text:
+            final_texts.append(text)
+            execution["adk_event_id"] = event.id
 
+    if not execution["adk_invocation_id"]:
+        raise AgentRunFailure("ADK_RUN_IDENTIFIER_MISSING", agent_id)
+    if len(final_texts) != 1:
+        raise AgentRunFailure("ADK_FINAL_RESPONSE_COUNT_INVALID", agent_id)
     try:
-        raw = asyncio.run(_run_bounded())
-    except AgentRunFailure:
-        raise
-    except asyncio.TimeoutError:
-        raise AgentRunFailure("ADK_TIMEOUT", agent_id)
-    except Exception:
-        # Deliberately drops upstream exception text so no prompt, document
-        # content, or credential can reach evidence.
-        raise AgentRunFailure("ADK_INVOCATION_FAILED", agent_id)
-
-    try:
-        parsed = output_model.model_validate_json(raw)
+        parsed = output_model.model_validate_json(final_texts[0])
     except ValidationError:
         raise AgentRunFailure("INVALID_STRUCTURED_OUTPUT", agent_id)
-    return {"output": parsed, "execution": execution}
+    return parsed, execution
+
+
+def recall_prompt(screened_notice_text: str) -> str:
+    """Model-Armor-APPROVED notice text. Screening happens before the fleet."""
+    return screened_notice_text
 
 
 def network_custody_prompt(custody_facts: Dict[str, Any]) -> str:
@@ -286,7 +295,7 @@ def network_custody_prompt(custody_facts: Dict[str, Any]) -> str:
 def recovery_prompt(candidate_projection: Dict[str, Any]) -> str:
     """Trusted, deterministic candidate set. Model Armor is NOT_APPLICABLE here."""
     return (
-        "Select exactly one candidate_id from this deterministic feasible set:\n"
+        "Select exactly one candidate_id from this deterministic candidate set:\n"
         f"{candidate_projection}\n"
         "You may not modify any value inside a candidate."
     )

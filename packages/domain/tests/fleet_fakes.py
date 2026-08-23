@@ -1,0 +1,152 @@
+"""Unmocked-ADK test harness.
+
+The ADK `Runner`, session service, agent classes, tool dispatch, event loop, and
+schema handling are all REAL. Only the network call to Gemini is replaced, by
+patching `Gemini.generate_content_async` to yield a scripted `LlmResponse`.
+
+This is the distinction the independent audit required: prior tests mocked the
+Runner itself and therefore proved nothing about ADK execution. These tests
+exercise the true runtime path and are classified STRUCTURALLY_VERIFIED. They
+are NOT live-model evidence.
+"""
+
+import json
+from contextlib import contextmanager
+from unittest.mock import patch
+
+from google.adk.models.llm_response import LlmResponse
+from google.genai import types
+
+
+CANONICAL_GRAPH = {
+    "lot_id": "LTC-4471", "query_engine": "SPANNER_GRAPH_GQL", "max_path_depth": 3,
+    "unique_current_cases": 96, "confirmed_cases": 88, "unconfirmed_cases": 8,
+    "node_count": 6, "intermediate_subtotals_readded": False,
+    "current_positions": [
+        {"node_id": "WH-01", "node_type": "WAREHOUSE", "name": "Main Warehouse",
+         "on_hand_cases": 24, "acknowledgment_status": "CONFIRMED", "path_depth": 0},
+        {"node_id": "SITE-01", "node_type": "SUBSITE", "name": "Site 01",
+         "on_hand_cases": 8, "acknowledgment_status": "UNCONFIRMED", "path_depth": 3},
+    ],
+    "unconfirmed_positions": [
+        {"node_id": "SITE-01", "node_type": "SUBSITE", "name": "Site 01",
+         "on_hand_cases": 8, "acknowledgment_status": "UNCONFIRMED", "path_depth": 3},
+    ],
+    "paths": [
+        {"root_node_id": "WH-01", "destination_node_id": "AG-01", "path_depth": 2},
+        {"root_node_id": "WH-01", "destination_node_id": "SITE-01", "path_depth": 3},
+    ],
+}
+
+CANONICAL_NOTICE = (
+    "Supplier Safety Bulletin: recall Lot LTC-4471 for Romaine Lettuce "
+    "because of E. coli O157:H7. Action: PAUSE_DISTRIBUTION."
+)
+
+CANONICAL_PARTNER_STATE = {
+    "partner_id": "SITE-01", "partner_name": "Site 01", "lot_id": "LTC-4471",
+    "unconfirmed_cases": 8, "acknowledgment_status": "UNCONFIRMED",
+    "deadline": "2026-08-08T17:00:00Z",
+}
+
+RECALL_OK = {
+    "lot_id": "LTC-4471", "product_name": "Romaine Lettuce",
+    "hazard": "E. coli O157:H7", "action_required": "PAUSE_DISTRIBUTION",
+    "source_anchor": "Supplier Safety Bulletin",
+}
+CUSTODY_OK = {
+    "lot_id": "LTC-4471", "total_cases_in_custody": 96, "confirmed_cases": 88,
+    "unconfirmed_cases": 8, "unconfirmed_node_ids": ["SITE-01"], "max_path_depth": 3,
+    "containment_assessment": "UNCONFIRMED_DOWNSTREAM",
+    "narrative": "Eight cases at Site 01 remain unconfirmed.",
+}
+RECOVERY_OK = {
+    "selected_candidate_id": "CAND-LOT-ASC",
+    "rationale": "Only feasible allocation of the available safe stock.",
+    "cited_constraints": ["40 safe cases available"],
+    "tradeoffs": "A truthful shortfall remains for the third agency.",
+    "confidence": 0.9,
+}
+PARTNER_OK = {
+    "partner_id": "SITE-01", "template_id": "partner.acknowledgment-request.v1",
+    "escalation_level": "URGENT",
+    "template_parameters": {
+        "partner_name": "Site 01", "lot_id": "LTC-4471", "cases": "8",
+        "deadline": "2026-08-08T17:00:00Z",
+    },
+    "rationale": "Custody is unconfirmed and a deadline exists.", "confidence": 0.9,
+}
+
+AGENT_DEFAULTS = {
+    "RecallExtractionAgent": RECALL_OK,
+    "NetworkAndCustodyAgent": CUSTODY_OK,
+    "FulfillmentAndRecoveryPlannerAgent": RECOVERY_OK,
+    "PartnerOperationsAgent": PARTNER_OK,
+}
+
+
+@contextmanager
+def scripted_gemini(overrides=None, *, error_for=None, hang_for=None,
+                    raw_for=None, calls=None):
+    """Patch only the Gemini network call. All ADK machinery stays real.
+
+    overrides: {agent_name: dict}  replace one agent's structured reply
+    raw_for:   {agent_name: str}   emit raw (possibly invalid) text
+    error_for: agent_name          raise inside the model call
+    hang_for:  agent_name          sleep long enough to trip the timeout
+    calls:     list                receives each invoked agent name, in order
+    """
+    from google.adk.models.google_llm import Gemini
+
+    replies = dict(AGENT_DEFAULTS)
+    replies.update(overrides or {})
+
+    async def fake_generate(self, llm_request, stream=False):
+        instruction = llm_request.config.system_instruction or ""
+        agent_name = next(
+            (name for name in AGENT_DEFAULTS if name in instruction), None
+        )
+        if agent_name is None:
+            raise AssertionError(f"UNIDENTIFIED_AGENT_PROMPT: {instruction[:80]}")
+        if calls is not None:
+            calls.append(agent_name)
+        if error_for == agent_name:
+            raise RuntimeError("scripted upstream model failure")
+        if hang_for == agent_name:
+            import asyncio
+
+            await asyncio.sleep(30)
+        if raw_for and agent_name in raw_for:
+            text = raw_for[agent_name]
+        else:
+            text = json.dumps(replies[agent_name])
+        yield LlmResponse(
+            content=types.Content(role="model", parts=[types.Part.from_text(text=text)])
+        )
+
+    with patch.object(Gemini, "generate_content_async", fake_generate):
+        yield
+
+
+def canonical_candidates():
+    from full_shelf_domain.fleet.tools import generate_recovery_candidates
+
+    return generate_recovery_candidates(
+        incident_id="INC-CANON", safe_lots=[("LTC-5090", 40)],
+        affected_orders=[("O201", "AG-01", 18), ("O202", "AG-02", 22),
+                         ("O203", "AG-03", 20)],
+    )
+
+
+def run_canonical_fleet(**kwargs):
+    from full_shelf_domain.fleet.coordinator import run_fleet
+
+    params = {
+        "incident_id": "INC-CANON", "lot_id": "LTC-4471",
+        "screened_notice_text": CANONICAL_NOTICE,
+        "graph_result": CANONICAL_GRAPH,
+        "recovery_candidates": canonical_candidates(),
+        "partner_state": CANONICAL_PARTNER_STATE,
+    }
+    params.update(kwargs)
+    return run_fleet(**params)

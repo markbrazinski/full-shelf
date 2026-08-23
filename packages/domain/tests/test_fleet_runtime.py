@@ -1,0 +1,317 @@
+"""Unmocked-ADK runtime qualification for the five-agent fleet.
+
+Every test here runs the REAL ADK Runner, session service, agent classes, tool
+dispatch, and event loop under google-adk 2.6.3. Only the Gemini network call is
+scripted. These directly answer independent-audit findings 1, 2, 3, 6, 7, and 8.
+"""
+
+import pathlib
+import sys
+
+import pytest
+
+sys.path.insert(0, str(pathlib.Path(__file__).parent))
+from fleet_fakes import (  # noqa: E402
+    CANONICAL_GRAPH,
+    CANONICAL_NOTICE,
+    CANONICAL_PARTNER_STATE,
+    canonical_candidates,
+    run_canonical_fleet,
+    scripted_gemini,
+)
+
+from full_shelf_domain.fleet.contracts import (  # noqa: E402
+    AGENT_FULFILLMENT_RECOVERY,
+    AGENT_INCIDENT_COORDINATOR,
+    AGENT_NETWORK_CUSTODY,
+    AGENT_PARTNER_OPERATIONS,
+    AGENT_RECALL_EXTRACTION,
+    AGENT_TIMEOUT_SECONDS,
+    TOOL_RUNTIME_NAMES,
+)
+from full_shelf_domain.fleet.coordinator import (  # noqa: E402
+    GOVERNED_SEQUENCE,
+    build_incident_coordinator_agent,
+)
+
+
+def test_adk_version_is_the_pinned_deployable_version():
+    """Finding 7: acceptance must run under exactly the pinned ADK."""
+    from importlib.metadata import version
+
+    assert version("google-adk") == "2.6.3"
+
+
+# --- Finding 1 & 2: genuine coordinator ownership ---------------------------
+
+
+def test_coordinator_owns_one_adk_execution_invoking_all_four_specialists():
+    calls = []
+    with scripted_gemini(calls=calls):
+        result = run_canonical_fleet()
+    proposal = result["proposal"]
+    assert proposal.status == "PROPOSED", proposal.reason_code
+    # Four real model invocations, in the governed order, from one entry point.
+    assert calls == [
+        "RecallExtractionAgent", "NetworkAndCustodyAgent",
+        "FulfillmentAndRecoveryPlannerAgent", "PartnerOperationsAgent",
+    ]
+
+
+def test_delegation_trace_order_equals_the_declared_governed_sequence():
+    with scripted_gemini():
+        proposal = run_canonical_fleet()["proposal"]
+    assert [entry["agent_id"] for entry in proposal.delegation_trace] == list(
+        GOVERNED_SEQUENCE
+    )
+
+
+def test_parentage_comes_from_real_execution_not_synthesis():
+    """Finding 2: recall is a genuine child of the coordinator, not relabeled."""
+    with scripted_gemini():
+        proposal = run_canonical_fleet()["proposal"]
+    recall = proposal.delegation_trace[0]
+    assert recall["agent_id"] == AGENT_RECALL_EXTRACTION
+    assert recall["parent_agent_id"] == "IncidentCoordinatorAgent"
+    # Identifiers are produced by ADK, not by the caller.
+    for entry in proposal.delegation_trace:
+        assert entry["adk_invocation_id"], entry["agent_id"]
+        assert entry["adk_event_id"], entry["agent_id"]
+    assert proposal.coordinator_invocation_id
+    assert proposal.coordinator_session_id
+
+
+def test_all_four_specialist_outputs_are_consumed_by_the_proposal():
+    with scripted_gemini():
+        proposal = run_canonical_fleet()["proposal"]
+    assert proposal.extraction and proposal.extraction["lot_id"] == "LTC-4471"
+    assert proposal.custody.total_cases_in_custody == 96
+    assert proposal.recovery.selected_candidate_id == "CAND-LOT-ASC"
+    assert proposal.partner.template_id == "partner.acknowledgment-request.v1"
+
+
+def test_coordinator_is_a_real_adk_base_agent_with_four_sub_agents():
+    from full_shelf_domain.fleet.coordinator import FleetRunContext
+    from google.adk.agents import BaseAgent
+
+    context = FleetRunContext(
+        incident_id="INC-1", lot_id="LTC-4471",
+        screened_notice_text=CANONICAL_NOTICE, graph_result=CANONICAL_GRAPH,
+        recovery_candidates=canonical_candidates(),
+        partner_state=CANONICAL_PARTNER_STATE,
+    )
+    coordinator = build_incident_coordinator_agent(context)
+    assert isinstance(coordinator, BaseAgent)
+    assert [agent.name for agent in coordinator.sub_agents] == [
+        "RecallExtractionAgent", "NetworkAndCustodyAgent",
+        "FulfillmentAndRecoveryPlannerAgent", "PartnerOperationsAgent",
+    ]
+
+
+# --- Finding 3: real named tools --------------------------------------------
+
+
+def test_specialist_tools_are_named_typed_and_unique_at_runtime():
+    from full_shelf_domain.fleet.coordinator import FleetRunContext
+
+    context = FleetRunContext(
+        incident_id="INC-1", lot_id="LTC-4471",
+        screened_notice_text=CANONICAL_NOTICE, graph_result=CANONICAL_GRAPH,
+        recovery_candidates=canonical_candidates(),
+        partner_state=CANONICAL_PARTNER_STATE,
+    )
+    coordinator = build_incident_coordinator_agent(context)
+    seen = []
+    for specialist in coordinator.sub_agents:
+        for tool in specialist.tools:
+            seen.append(tool.name)
+            assert tool.name != "<lambda>"
+            assert tool.description and len(tool.description) > 20
+            declaration = tool._get_declaration()
+            assert declaration is not None
+            assert declaration.name == tool.name
+    assert sorted(seen) == sorted(TOOL_RUNTIME_NAMES.values())
+    assert len(seen) == len(set(seen)), "runtime tool names must be unique"
+
+
+def test_tools_are_actually_callable_and_return_authoritative_data():
+    from full_shelf_domain.fleet.tools import (
+        build_custody_dependents_tool, build_custody_graph_tool,
+        build_partner_state_tool, build_recovery_candidates_tool,
+    )
+    from full_shelf_domain.fleet.tools import partner_state_read
+
+    graph_tool = build_custody_graph_tool(CANONICAL_GRAPH)
+    assert graph_tool.func()["total_cases_in_custody"] == 96
+    dependents = build_custody_dependents_tool(CANONICAL_GRAPH)
+    assert dependents.func(node_id="WH-01")["tool_outcome"] == "OK"
+    candidates = build_recovery_candidates_tool(canonical_candidates())
+    assert candidates.func()["candidate_ids"] == ["CAND-LOT-ASC"]
+    partner = build_partner_state_tool(partner_state_read(**CANONICAL_PARTNER_STATE))
+    assert partner.func()["unconfirmed_cases"] == 8
+
+
+def test_runtime_tool_names_match_the_governed_catalog_ids():
+    from full_shelf_domain.fleet.manifest import build_manifest
+
+    manifest = {tool["tool_id"]: tool for tool in build_manifest()["tools"]}
+    for tool_id, runtime_name in TOOL_RUNTIME_NAMES.items():
+        assert manifest[tool_id]["runtime_tool_name"] == runtime_name
+
+
+# --- Finding 8: executable timeouts -----------------------------------------
+
+
+@pytest.mark.parametrize("agent_name,agent_id", [
+    ("RecallExtractionAgent", AGENT_RECALL_EXTRACTION),
+    ("NetworkAndCustodyAgent", AGENT_NETWORK_CUSTODY),
+])
+def test_specialist_timeout_is_executable_and_fails_closed(
+    agent_name, agent_id, monkeypatch
+):
+    from full_shelf_domain.fleet import contracts, coordinator
+
+    monkeypatch.setitem(contracts.AGENT_TIMEOUT_SECONDS, agent_id, 0.05)
+    monkeypatch.setitem(coordinator.AGENT_TIMEOUT_SECONDS, agent_id, 0.05)
+    with scripted_gemini(hang_for=agent_name):
+        result = run_canonical_fleet()
+    proposal = result["proposal"]
+    assert proposal.status == "MANUAL_REVIEW_REQUIRED"
+    assert proposal.reason_code == "ADK_TIMEOUT"
+    assert result["recovery_candidate"] is None
+
+
+def test_coordinator_timeout_is_executable():
+    from full_shelf_domain.fleet import coordinator
+
+    original = coordinator.AGENT_TIMEOUT_SECONDS[AGENT_INCIDENT_COORDINATOR]
+    coordinator.AGENT_TIMEOUT_SECONDS[AGENT_INCIDENT_COORDINATOR] = 0.05
+    try:
+        with scripted_gemini(hang_for="RecallExtractionAgent"):
+            proposal = run_canonical_fleet()["proposal"]
+    finally:
+        coordinator.AGENT_TIMEOUT_SECONDS[AGENT_INCIDENT_COORDINATOR] = original
+    assert proposal.status == "MANUAL_REVIEW_REQUIRED"
+    assert proposal.reason_code in {"COORDINATOR_TIMEOUT", "ADK_TIMEOUT"}
+
+
+def test_runtime_timeouts_equal_catalog_timeouts():
+    from full_shelf_domain.fleet.manifest import build_manifest
+
+    for entry in build_manifest()["agents"]:
+        assert entry["timeout_seconds"] == AGENT_TIMEOUT_SECONDS[entry["agent_id"]]
+
+
+# --- Failure paths, all under real ADK --------------------------------------
+
+
+def test_model_failure_yields_manual_review_and_no_candidate():
+    with scripted_gemini(error_for="NetworkAndCustodyAgent"):
+        result = run_canonical_fleet()
+    assert result["proposal"].status == "MANUAL_REVIEW_REQUIRED"
+    assert result["recovery_candidate"] is None
+
+
+def test_invalid_structured_output_is_refused():
+    with scripted_gemini(raw_for={"NetworkAndCustodyAgent": "not json at all"}):
+        proposal = run_canonical_fleet()["proposal"]
+    assert proposal.status == "MANUAL_REVIEW_REQUIRED"
+    assert proposal.reason_code == "INVALID_STRUCTURED_OUTPUT"
+
+
+def test_fabricated_custody_total_halts_before_the_planner_runs():
+    calls = []
+    bad = dict(CANONICAL_GRAPH)  # noqa: F841 - clarity only
+    with scripted_gemini(
+        overrides={"NetworkAndCustodyAgent": {
+            "lot_id": "LTC-4471", "total_cases_in_custody": 114,
+            "confirmed_cases": 88, "unconfirmed_cases": 8,
+            "unconfirmed_node_ids": ["SITE-01"], "max_path_depth": 3,
+            "containment_assessment": "UNCONFIRMED_DOWNSTREAM",
+            "narrative": "Re-added an intermediate subtotal.",
+        }}, calls=calls,
+    ):
+        proposal = run_canonical_fleet()["proposal"]
+    assert proposal.reason_code == "CUSTODY_TOTAL_MISMATCH"
+    assert "FulfillmentAndRecoveryPlannerAgent" not in calls
+
+
+def test_false_containment_claim_is_refused():
+    with scripted_gemini(overrides={"NetworkAndCustodyAgent": {
+        "lot_id": "LTC-4471", "total_cases_in_custody": 96, "confirmed_cases": 88,
+        "unconfirmed_cases": 8, "unconfirmed_node_ids": ["SITE-01"],
+        "max_path_depth": 3, "containment_assessment": "FULLY_TRACED",
+        "narrative": "Claims containment despite unconfirmed cases.",
+    }}):
+        proposal = run_canonical_fleet()["proposal"]
+    assert proposal.reason_code == "CUSTODY_CONTAINMENT_MISMATCH"
+
+
+def test_invented_candidate_is_refused_before_partner_operations():
+    calls = []
+    with scripted_gemini(overrides={"FulfillmentAndRecoveryPlannerAgent": {
+        "selected_candidate_id": "CAND-INVENTED-BY-MODEL", "rationale": "r",
+        "cited_constraints": ["c"], "tradeoffs": "t", "confidence": 0.9,
+    }}, calls=calls):
+        proposal = run_canonical_fleet()["proposal"]
+    assert proposal.reason_code == "UNKNOWN_RECOVERY_CANDIDATE"
+    assert "PartnerOperationsAgent" not in calls
+
+
+def test_extracted_lot_must_match_the_authenticated_event():
+    with scripted_gemini(overrides={"RecallExtractionAgent": {
+        "lot_id": "LTC-9999", "product_name": "Romaine Lettuce",
+        "hazard": "E. coli O157:H7", "action_required": "PAUSE_DISTRIBUTION",
+        "source_anchor": "Supplier Safety Bulletin",
+    }}):
+        proposal = run_canonical_fleet()["proposal"]
+    assert proposal.reason_code in {
+        "SOURCE_ANCHOR_VALIDATION_FAILED", "LOT_ANCHOR_VALIDATION_FAILED",
+        "EXTRACTED_LOT_DOES_NOT_MATCH_EVENT",
+    }
+
+
+def test_canonical_quantities_are_unchanged_through_real_execution():
+    with scripted_gemini():
+        result = run_canonical_fleet()
+    candidate = result["recovery_candidate"]
+    assert [(a["agency_id"], a["cases"]) for a in candidate["allocations"]] == [
+        ("AG-01", 18), ("AG-02", 22)
+    ]
+    assert [(s["agency_id"], s["cases"]) for s in candidate["shortfalls"]] == [
+        ("AG-03", 20)
+    ]
+    custody = result["proposal"].custody
+    assert (custody.total_cases_in_custody, custody.confirmed_cases,
+            custody.unconfirmed_cases) == (96, 88, 8)
+
+
+def test_noncanonical_selection_changes_the_proposal_under_real_execution():
+    from full_shelf_domain.fleet.tools import generate_recovery_candidates
+
+    candidates = generate_recovery_candidates(
+        incident_id="INC-ALT", safe_lots=[("LTS-100", 15), ("LTS-200", 30)],
+        affected_orders=[("OA", "AG-A", 20), ("OB", "AG-B", 30)],
+    )
+    assert len(candidates) == 2
+
+    def run(candidate_id):
+        with scripted_gemini(overrides={
+            "FulfillmentAndRecoveryPlannerAgent": {
+                "selected_candidate_id": candidate_id,
+                "rationale": "Chosen under the bounded lot-ordering policy.",
+                "cited_constraints": ["45 allocatable cases"],
+                "tradeoffs": "Five cases remain short either way.",
+                "confidence": 0.85,
+            }
+        }):
+            return run_canonical_fleet(recovery_candidates=candidates)
+
+    ascending = run("CAND-LOT-ASC")
+    largest = run("CAND-LOT-DEEPEST-FIRST")
+    assert ascending["proposal"].status == "PROPOSED"
+    assert largest["proposal"].status == "PROPOSED"
+    assert (ascending["recovery_candidate"]["allocations"]
+            != largest["recovery_candidate"]["allocations"])
+    assert (ascending["proposal"].proposal_hash
+            != largest["proposal"].proposal_hash)
