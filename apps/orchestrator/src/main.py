@@ -1428,9 +1428,10 @@ def _run_agent_fleet_proposal(
         **extraction_evidence,
         "model_used": recall_hop.get("model_used"),
         "adk_framework": recall_hop.get("adk_framework"),
-        "adk_run_id": recall_hop.get("adk_invocation_id"),
+        "adk_run_id": recall_hop.get("specialist_run_id"),
         "adk_event_id": recall_hop.get("adk_event_id"),
-        "adk_session_id": dumped.get("coordinator_session_id"),
+        # The recall specialist's OWN session, never the coordinator's.
+        "adk_session_id": recall_hop.get("specialist_session_id"),
         "validation_status": recall_hop.get("deterministic_validation"),
         "status": "EXTRACTION_VALIDATED",
         "downstream_allowed": True,
@@ -1473,6 +1474,9 @@ def _execute_managed_recall_event(
             ),
             "model_armor_screening": screening,
             "gemini_adk_invoked": False,
+            "ledger_commands_attempted": 0,
+            "ledger_commands_accepted": 0,
+            "mutations_committed": 0,
             "ledger_mutation_attempted": False,
             "trace_id": trace_id,
         }
@@ -1487,20 +1491,48 @@ def _execute_managed_recall_event(
     # gate may fail for a model reason, so a fleet failure always means zero
     # ledger commands attempted and zero mutations committed.
     # ------------------------------------------------------------------
-    inputs = _read_authoritative_recall_inputs(
-        db, tenant_id=tenant_id, recalled_lot_id=recalled_lot_id,
-        revision=active_revision,
-    )
+    def _pre_ledger_halt(stage: str, reason_code: str, **extra):
+        """Every pre-ledger exit reports the same truthful zero counters."""
+        return {
+            "hero_loop_status": "HALTED_FOR_MANUAL_REVIEW",
+            "halt_stage": stage,
+            "manual_review_reason": reason_code,
+            "model_armor_screening": screening,
+            "ledger_commands_attempted": 0,
+            "ledger_commands_accepted": 0,
+            "mutations_committed": 0,
+            "ledger_mutation_attempted": False,
+            "trace_id": trace_id,
+            **extra,
+        }
+
+    try:
+        inputs = _read_authoritative_recall_inputs(
+            db, tenant_id=tenant_id, recalled_lot_id=recalled_lot_id,
+            revision=active_revision,
+        )
+    except HTTPException as exc:
+        return _pre_ledger_halt("AUTHORITATIVE_READ", str(exc.detail))
     try:
         graph = _run_managed_custody_graph(
             db, tenant_id=tenant_id, lot_id=recalled_lot_id
         )
-    except Exception as exc:
-        raise HTTPException(503, "AUTHORITATIVE_GRAPH_READ_UNAVAILABLE") from exc
+    except Exception:
+        return _pre_ledger_halt(
+            "AUTHORITATIVE_GRAPH_READ", "AUTHORITATIVE_GRAPH_READ_UNAVAILABLE"
+        )
     if graph["unique_current_cases"] != inputs["recalled_total_cases"]:
-        raise HTTPException(409, "CUSTODY_TOTAL_DOES_NOT_MATCH_RECALLED_LOT")
+        return _pre_ledger_halt(
+            "CUSTODY_RECONCILIATION",
+            "CUSTODY_TOTAL_DOES_NOT_MATCH_RECALLED_LOT",
+            spanner_graph_reconstruction=graph,
+        )
     if len(graph["unconfirmed_positions"]) != 1 or graph["unconfirmed_cases"] <= 0:
-        raise HTTPException(409, "EXACTLY_ONE_UNCONFIRMED_POSITION_REQUIRED")
+        return _pre_ledger_halt(
+            "CUSTODY_RECONCILIATION",
+            "EXACTLY_ONE_UNCONFIRMED_POSITION_REQUIRED",
+            spanner_graph_reconstruction=graph,
+        )
     unconfirmed_position = graph["unconfirmed_positions"][0]
 
     # Deterministic code owns the candidate set. The fleet may only choose
@@ -1667,7 +1699,7 @@ def _execute_managed_recall_event(
             "manifest_version": FLEET_MANIFEST_VERSION,
             "root_agent_id": AGENT_INCIDENT_COORDINATOR,
             "coordinator_session_id": fleet["proposal"]["coordinator_session_id"],
-            "coordinator_invocation_id": fleet["proposal"]["coordinator_invocation_id"],
+            "coordination_run_id": fleet["proposal"]["coordination_run_id"],
             "proposal_status": fleet["proposal"]["status"],
             "proposal_hash": fleet["proposal"]["proposal_hash"],
             "delegation_trace": fleet["proposal"]["delegation_trace"],

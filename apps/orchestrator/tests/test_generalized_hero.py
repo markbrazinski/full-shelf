@@ -158,8 +158,14 @@ def test_same_managed_hero_uses_altered_ids_quantities_and_calculated_outcome():
     # with the deterministic recovery policy rather than any canonical memory.
     fleet = result["agent_fleet"]
     assert fleet["root_agent_id"] == "full-shelf.incident-coordinator.v1"
-    assert fleet["coordinator_invocation_id"]
+    assert fleet["coordination_run_id"]
     assert fleet["coordinator_session_id"]
+    # Each specialist reports its own distinct ADK session, never the
+    # coordinator's, and no entry claims ADK parentage.
+    sessions = {e["specialist_session_id"] for e in fleet["delegation_trace"]}
+    assert len(sessions) == 4
+    assert fleet["coordinator_session_id"] not in sessions
+    assert all("parent_agent_id" not in e for e in fleet["delegation_trace"])
     assert fleet["proposal_status"] == "PROPOSED"
     assert [entry["agent_id"] for entry in fleet["delegation_trace"]] == [
         "full-shelf.recall-extraction.v1",

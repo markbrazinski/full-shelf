@@ -87,7 +87,7 @@ AGENT_DEFAULTS = {
 
 @contextmanager
 def scripted_gemini(overrides=None, *, error_for=None, hang_for=None,
-                    raw_for=None, calls=None):
+                    raw_for=None, calls=None, tool_call_for=None):
     """Patch only the Gemini network call. All ADK machinery stays real.
 
     overrides: {agent_name: dict}  replace one agent's structured reply
@@ -95,11 +95,16 @@ def scripted_gemini(overrides=None, *, error_for=None, hang_for=None,
     error_for: agent_name          raise inside the model call
     hang_for:  agent_name          sleep long enough to trip the timeout
     calls:     list                receives each invoked agent name, in order
+    tool_call_for: {agent_name: tool_name}  emit a real function call on that
+                   agent's FIRST turn, so ADK executes the tool and feeds the
+                   response back before the agent answers on its second turn
     """
     from google.adk.models.google_llm import Gemini
 
     replies = dict(AGENT_DEFAULTS)
     replies.update(overrides or {})
+    tool_call_for = tool_call_for or {}
+    tool_turns_taken = set()
 
     async def fake_generate(self, llm_request, stream=False):
         instruction = llm_request.config.system_instruction or ""
@@ -116,6 +121,16 @@ def scripted_gemini(overrides=None, *, error_for=None, hang_for=None,
             import asyncio
 
             await asyncio.sleep(30)
+        # First turn for a tool-scripted agent: request the tool. ADK runs it
+        # and calls back with the response, which is the round-trip under test.
+        if agent_name in tool_call_for and agent_name not in tool_turns_taken:
+            tool_turns_taken.add(agent_name)
+            yield LlmResponse(content=types.Content(
+                role="model",
+                parts=[types.Part.from_function_call(
+                    name=tool_call_for[agent_name], args={})],
+            ))
+            return
         if raw_for and agent_name in raw_for:
             text = raw_for[agent_name]
         else:

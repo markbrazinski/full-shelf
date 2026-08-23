@@ -43,6 +43,7 @@ APPROVED_SCREENING = {
 
 def run(*, fleet_result=None, graph=GRAPH, inputs=INPUTS,
         screening=APPROVED_SCREENING):
+    """graph=None simulates an authoritative graph read failure."""
     """Run the managed recall path, recording every ledger command attempt."""
     attempts = []
 
@@ -67,7 +68,11 @@ def run(*, fleet_result=None, graph=GRAPH, inputs=INPUTS,
                      return_value=screening),
         patch.object(main, "_persist_model_invocation_evidence"),
         patch.object(main, "_read_authoritative_recall_inputs", return_value=inputs),
-        patch.object(main, "_run_managed_custody_graph", return_value=graph),
+        patch.object(
+            main, "_run_managed_custody_graph",
+            side_effect=(RuntimeError("graph unavailable") if graph is None
+                         else lambda db, **kw: graph),
+        ),
         patch.object(main, "execute_ledger_command", side_effect=execute),
         patch.object(main, "schedule_site01_deadline_task",
                      return_value={"task_name": "t"}),
@@ -90,7 +95,7 @@ ACCEPTED = {
     "status": "ACCEPTED", "reason_code": None,
     "proposal": {"status": "PROPOSED", "proposal_hash": "h",
                  "delegation_trace": [], "partner": {"template_id": "x"},
-                 "coordinator_session_id": "s", "coordinator_invocation_id": "i"},
+                 "coordinator_session_id": "s", "coordination_run_id": "i"},
     "recovery_candidate": {
         "candidate_id": "CAND-LOT-ASC",
         "allocations": [{"allocation_id": "A", "agency_id": "AG-1",
@@ -139,8 +144,36 @@ def test_model_armor_block_attempts_zero_ledger_commands():
 def test_graph_mismatch_attempts_zero_ledger_commands():
     bad_graph = dict(GRAPH, unique_current_cases=999)
     result, attempts = run(graph=bad_graph)
-    assert result["http_error"] == "CUSTODY_TOTAL_DOES_NOT_MATCH_RECALLED_LOT"
+    assert result["manual_review_reason"] == (
+        "CUSTODY_TOTAL_DOES_NOT_MATCH_RECALLED_LOT"
+    )
+    assert result["halt_stage"] == "CUSTODY_RECONCILIATION"
     assert attempts == []
+    assert result["ledger_commands_attempted"] == 0
+    assert result["mutations_committed"] == 0
+
+
+def test_every_pre_ledger_halt_reports_zero_counters():
+    """Item 4: armor, read, graph, agent, tool, validation, timeout."""
+    scenarios = [
+        ("MODEL_ARMOR", dict(screening={
+            "status": "BLOCKED", "safety_verdict": "FAILED_SAFETY_SCREENING",
+            "correlation_id": "t" * 32})),
+        ("AUTHORITATIVE_GRAPH_READ", dict(graph=None)),
+        ("CUSTODY_RECONCILIATION",
+         dict(graph=dict(GRAPH, unconfirmed_positions=[]))),
+        ("AGENT_FLEET_PROPOSAL", dict(fleet_result={
+            "status": "MANUAL_REVIEW_REQUIRED", "reason_code": "ADK_TIMEOUT",
+            "proposal": None, "recovery_candidate": None,
+            "extraction_evidence": None})),
+    ]
+    for label, kwargs in scenarios:
+        result, attempts = run(**kwargs)
+        assert attempts == [], label
+        assert result["ledger_commands_attempted"] == 0, label
+        assert result["ledger_commands_accepted"] == 0, label
+        assert result["mutations_committed"] == 0, label
+        assert result["ledger_mutation_attempted"] is False, label
 
 
 def test_nonreconciling_candidate_attempts_zero_ledger_commands():

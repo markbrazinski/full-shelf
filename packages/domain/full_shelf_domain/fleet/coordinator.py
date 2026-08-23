@@ -1,15 +1,22 @@
 """Incident Coordinator: the ADK root agent for `full-shelf.incident-coordinator.v1`.
 
 The coordinator is a concrete ADK custom agent (a `BaseAgent` subclass) that
-genuinely owns the governed specialist sequence. `run_fleet` enters ADK exactly
-once, through a real `Runner`, and every specialist invocation happens inside
-that single coordinator invocation: each specialist is a declared sub-agent, run
-via `ctx`-derived child invocation contexts, so parent/child relationships and
-run identifiers come from actual ADK execution rather than from synthesized
-records.
+owns the governed specialist sequence: it decides the order, runs each
+specialist, and stops the sequence the moment deterministic validation rejects a
+result.
 
-Recall Extraction runs first, inside the coordinator, on Model-Armor-approved
-notice text supplied by the caller. It is not retro-labeled.
+Topology, stated exactly: the coordinator executes under its own `Runner`, and
+it drives each specialist through that specialist's OWN `Runner` and OWN ADK
+session. This is a separate-Runner topology. It is NOT one nested ADK
+invocation, and the four specialists are NOT ADK children of the coordinator
+invocation, so no evidence field claims parentage. Each hop records the
+coordinator execution that ordered it (`coordinator_agent_id`,
+`coordination_run_id`) alongside the specialist's real, distinct
+`specialist_run_id` and `specialist_session_id`.
+
+Recall Extraction is ordered first by the coordinator, on Model-Armor-approved
+notice text supplied by the caller. Its evidence is its own; it never reuses the
+coordinator's session.
 
 The coordinator holds no tools and no model of its own: sequencing an incident
 response is a governed procedure, not a generative one. It contains no ledger
@@ -166,7 +173,9 @@ def build_incident_coordinator_agent(run_context: Optional[FleetRunContext] = No
                 except asyncio.TimeoutError:
                     failure = "ADK_TIMEOUT"
                     trace.append(_trace_entry(
-                        agent_id=agent_id, parent_agent_id=self.name,
+                        agent_id=agent_id,
+                        coordinator_agent_id=AGENT_INCIDENT_COORDINATOR,
+                        coordination_run_id=ctx.invocation_id,
                         execution={"agent_id": agent_id, "agent_name": specialist.name},
                         validation=failure,
                     ))
@@ -174,7 +183,9 @@ def build_incident_coordinator_agent(run_context: Optional[FleetRunContext] = No
                 except FleetProposalError as exc:
                     failure = exc.reason_code
                     trace.append(_trace_entry(
-                        agent_id=agent_id, parent_agent_id=self.name,
+                        agent_id=agent_id,
+                        coordinator_agent_id=AGENT_INCIDENT_COORDINATOR,
+                        coordination_run_id=ctx.invocation_id,
                         execution={"agent_id": agent_id, "agent_name": specialist.name},
                         validation=failure,
                     ))
@@ -184,7 +195,9 @@ def build_incident_coordinator_agent(run_context: Optional[FleetRunContext] = No
                     # document content, or credential can reach evidence.
                     failure = "ADK_INVOCATION_FAILED"
                     trace.append(_trace_entry(
-                        agent_id=agent_id, parent_agent_id=self.name,
+                        agent_id=agent_id,
+                        coordinator_agent_id=AGENT_INCIDENT_COORDINATOR,
+                        coordination_run_id=ctx.invocation_id,
                         execution={"agent_id": agent_id, "agent_name": specialist.name},
                         validation=failure,
                     ))
@@ -195,12 +208,16 @@ def build_incident_coordinator_agent(run_context: Optional[FleetRunContext] = No
                 except FleetProposalError as exc:
                     failure = exc.reason_code
                     trace.append(_trace_entry(
-                        agent_id=agent_id, parent_agent_id=self.name,
+                        agent_id=agent_id,
+                        coordinator_agent_id=AGENT_INCIDENT_COORDINATOR,
+                        coordination_run_id=ctx.invocation_id,
                         execution=execution, validation=failure,
                     ))
                     break
                 trace.append(_trace_entry(
-                    agent_id=agent_id, parent_agent_id=self.name,
+                    agent_id=agent_id,
+                    coordinator_agent_id=AGENT_INCIDENT_COORDINATOR,
+                    coordination_run_id=ctx.invocation_id,
                     execution=execution, validation=ok_label,
                 ))
 
@@ -238,17 +255,26 @@ def build_incident_coordinator_agent(run_context: Optional[FleetRunContext] = No
 
 
 def _trace_entry(
-    *, agent_id: str, parent_agent_id: Optional[str], execution: Dict[str, Any],
-    validation: str,
+    *, agent_id: str, coordinator_agent_id: str, coordination_run_id: Optional[str],
+    execution: Dict[str, Any], validation: str,
 ) -> Dict[str, Any]:
-    """Build one sanitized delegation-evidence record from real execution."""
+    """Build one sanitized coordination-evidence record from real execution.
+
+    Field names describe exactly what the runtime does. `coordinator_agent_id`
+    and `coordination_run_id` identify the coordinator execution that ordered
+    this hop; `specialist_run_id` and `specialist_session_id` are the
+    specialist's own ADK identifiers from its own Runner. Nothing here asserts
+    an ADK parent/child relationship, because the topology does not create one.
+    """
     return {
         "agent_id": agent_id,
-        "parent_agent_id": parent_agent_id,
+        "coordinator_agent_id": coordinator_agent_id,
+        "coordination_run_id": coordination_run_id,
         "agent_name": execution.get("agent_name"),
         "model_used": execution.get("model_used"),
         "adk_framework": execution.get("adk_framework"),
-        "adk_invocation_id": execution.get("adk_invocation_id"),
+        "specialist_run_id": execution.get("specialist_run_id"),
+        "specialist_session_id": execution.get("specialist_session_id"),
         "adk_event_id": execution.get("adk_event_id"),
         "declared_tools": execution.get("declared_tools", []),
         "tool_invocations": execution.get("tool_invocations", []),
@@ -291,8 +317,8 @@ async def _run_coordinator_async(context: FleetRunContext) -> Dict[str, Any]:
     return {
         "payload": stored["payload"],
         "accepted": stored["accepted"],
-        "adk_session_id": session.id,
-        "adk_invocation_id": root_invocation_id,
+        "coordinator_session_id": session.id,
+        "coordination_run_id": root_invocation_id,
         "coordinator_name": coordinator.name,
     }
 
@@ -366,8 +392,8 @@ def run_fleet(
         status="PROPOSED", incident_id=incident_id, lot_id=lot_id,
         extraction=extraction.model_dump(), custody=custody, recovery=recovery,
         partner=partner, delegation_trace=trace,
-        coordinator_session_id=outcome.get("adk_session_id"),
-        coordinator_invocation_id=outcome.get("adk_invocation_id"),
+        coordinator_session_id=outcome.get("coordinator_session_id"),
+        coordination_run_id=outcome.get("coordination_run_id"),
     )
     proposal.proposal_hash = proposal_hash({
         "incident_id": incident_id, "lot_id": lot_id,

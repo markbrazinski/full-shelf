@@ -167,8 +167,8 @@ def test_untrusted_content_reaches_only_the_screened_extraction_agent():
 
 def test_candidate_scope_is_stated_as_a_bounded_policy_not_completeness():
     scope = MANIFEST["recovery_candidate_scope"]
-    assert scope["scope"] == "BOUNDED_LOT_ORDERING_POLICY"
-    assert "not an exhaustive enumeration" in scope["limitation"]
+    assert scope["scope"] == "BOUNDED_ADMISSIBLE_CANDIDATE_SET"
+    assert "not an exhaustive" in scope["limitation"]
     # And the executable policy matches exactly what the catalog advertises.
     from full_shelf_domain.fleet.tools import (
         CANDIDATE_POLICY_ID, CANDIDATE_POLICY_ORDERINGS,
@@ -204,3 +204,78 @@ def test_partner_template_parameters_all_have_authoritative_sources():
     bindable = {"partner_name", "lot_id", "cases", "deadline"}
     for required in contracts.PARTNER_TEMPLATE_IDS.values():
         assert set(required) <= bindable
+
+
+# --- Item 3: coordinator and Recall schema parity, topology, model IDs -------
+
+
+def test_coordinator_output_contract_matches_what_it_actually_emits():
+    """The coordinator emits a coordination payload; run_fleet builds the proposal."""
+    entry = BY_ID[contracts.AGENT_INCIDENT_COORDINATOR]
+    assert entry["output_schema"] == "CoordinationPayload"
+    assert "FleetProposal is assembled" in entry["output_contract"]
+    # And the emitted payload really carries those keys.
+    import inspect
+
+    from full_shelf_domain.fleet import coordinator
+
+    source = inspect.getsource(coordinator)
+    for key in ("status", "reason_code", "delegation_trace", "accepted_agent_ids"):
+        assert f'"{key}"' in source
+
+
+def test_recall_catalog_schema_matches_the_runtime_agent_schema():
+    from full_shelf_domain.fleet.agents import build_recall_extraction_agent
+
+    agent = build_recall_extraction_agent()
+    entry = BY_ID[contracts.AGENT_RECALL_EXTRACTION]
+    assert entry["output_schema"] == agent.output_schema.__name__
+    assert entry["runtime_name"] == agent.name
+
+
+def test_catalog_model_ids_match_the_runtime_model():
+    from full_shelf_domain.fleet.agents import MODEL_ID
+
+    for agent_id, entry in BY_ID.items():
+        if entry["uses_gemini"]:
+            assert entry["model_id"] == MODEL_ID, agent_id
+        else:
+            assert entry["model_id"] is None, agent_id
+
+
+def test_catalog_declares_the_separate_runner_topology_truthfully():
+    topology = MANIFEST["topology"]
+    assert topology["kind"] == "SEPARATE_RUNNER_COORDINATION"
+    assert topology[
+        "specialists_are_adk_children_of_coordinator_invocation"
+    ] is False
+    assert set(topology["evidence_fields"]) == {
+        "coordinator_agent_id", "coordination_run_id",
+        "specialist_run_id", "specialist_session_id",
+    }
+    # No evidence field claiming parentage may exist anywhere in the fleet.
+    import inspect
+
+    from full_shelf_domain.fleet import agents, coordinator, manifest
+
+    for module in (agents, coordinator, manifest):
+        assert "parent_agent_id" not in inspect.getsource(module), module.__name__
+
+
+def test_manifest_version_was_bumped_for_this_contract_change():
+    assert MANIFEST["manifest_version"] == "1.1.0"
+    assert contracts.FLEET_MANIFEST_VERSION == "1.1.0"
+
+
+def test_no_catalogued_tool_lacks_a_working_factory():
+    """Item 6: a catalogued tool must be constructible, not dead code."""
+    from full_shelf_domain.fleet import tools
+
+    factories = {
+        contracts.TOOL_CUSTODY_GRAPH_READ: tools.build_custody_graph_tool,
+        contracts.TOOL_CUSTODY_DEPENDENTS_READ: tools.build_custody_dependents_tool,
+    }
+    assert set(factories) == set(contracts.FLEET_TOOL_IDS)
+    # And no orphaned factory remains for an uncatalogued tool.
+    assert not hasattr(tools, "build_recovery_candidates_tool")
+    assert not hasattr(tools, "build_partner_state_tool")

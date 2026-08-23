@@ -13,6 +13,7 @@ independent auditor observes a managed deployment.
 
 from typing import Any, Dict, List
 
+from .agents import MODEL_ID
 from .contracts import (
     AGENT_FULFILLMENT_RECOVERY,
     TOOL_RUNTIME_NAMES,
@@ -51,7 +52,13 @@ _AGENT_SPECS = {
         "kind": ComponentKind.ADK_WORKFLOW_AGENT,
         "uses_gemini": False,
         "input_trust": [TrustClass.TRUSTED_DERIVED],
-        "output_schema": "FleetProposal",
+        "output_schema": "CoordinationPayload",
+        "output_contract": (
+            "Emits a JSON coordination payload (status, reason_code, "
+            "delegation_trace, accepted_agent_ids). FleetProposal is assembled "
+            "deterministically by run_fleet from the accepted specialist "
+            "outputs; the coordinator agent does not emit it."
+        ),
         "instruction_source": "full_shelf_domain.fleet.coordinator:IncidentCoordinatorAgent",
         "failure_behavior": "MANUAL_REVIEW_REQUIRED",
     },
@@ -152,8 +159,10 @@ def build_manifest() -> Dict[str, Any]:
             "component_kind": spec["kind"].value,
             "framework": "google-adk",
             "uses_gemini": spec["uses_gemini"],
+            "model_id": MODEL_ID if spec["uses_gemini"] else None,
             "input_trust_classes": [t.value for t in spec["input_trust"]],
             "output_schema": spec["output_schema"],
+            "output_contract": spec.get("output_contract"),
             "instruction_source": spec["instruction_source"],
             "tool_allowlist": list(AGENT_TOOL_ALLOWLIST[agent_id]),
             "timeout_seconds": AGENT_TIMEOUT_SECONDS[agent_id],
@@ -194,6 +203,21 @@ def build_manifest() -> Dict[str, Any]:
         "manifest_version": FLEET_MANIFEST_VERSION,
         "classification": "STRUCTURALLY_VERIFIED",
         "scope": "Internal local catalog derived from executable definitions",
+        "topology": {
+            "kind": "SEPARATE_RUNNER_COORDINATION",
+            "description": (
+                "The coordinator runs under its own ADK Runner and drives each "
+                "specialist through that specialist's own Runner and own ADK "
+                "session. Specialists are declared sub_agents of the "
+                "coordinator, but each specialist invocation is a distinct ADK "
+                "invocation with its own run and session identifiers."
+            ),
+            "specialists_are_adk_children_of_coordinator_invocation": False,
+            "evidence_fields": [
+                "coordinator_agent_id", "coordination_run_id",
+                "specialist_run_id", "specialist_session_id",
+            ],
+        },
         "not_claimed": [
             "Managed Agent Registry",
             "Managed Agent Identity",
@@ -211,11 +235,12 @@ def build_manifest() -> Dict[str, Any]:
         "governed_sequence": list(GOVERNED_SEQUENCE),
         "recovery_candidate_scope": {
             "policy_id": CANDIDATE_POLICY_ID,
-            "scope": "BOUNDED_LOT_ORDERING_POLICY",
+            "scope": "BOUNDED_ADMISSIBLE_CANDIDATE_SET",
             "orderings": list(CANDIDATE_POLICY_ORDERINGS),
             "limitation": (
-                "This is the bounded deterministic candidate policy, not an "
-                "exhaustive enumeration of every feasible allocation."
+                "This is the bounded admissible candidate set produced by the "
+                "deterministic lot-ordering policy, not an exhaustive "
+                "enumeration of every feasible allocation."
             ),
         },
         "mutation_authority_summary": (

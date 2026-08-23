@@ -219,9 +219,11 @@ async def collect_specialist_output(*, specialist, agent_id: str, prompt: str, c
     converge on a final response. Driving `agent.run_async(ctx)` directly would
     bypass that append step and deadlock any agent that calls a tool.
 
-    `ctx` is the coordinator's invocation context; it supplies the parent
-    session service so specialist runs stay inside the coordinator's own ADK
-    execution rather than opening an unrelated one. Returns the parsed output
+    `ctx` is the coordinator's invocation context; it supplies the shared
+    session service so every specialist session is created in the same store the
+    coordinator uses. Each specialist nonetheless gets its OWN Runner, session,
+    and invocation ID: this is a separate-Runner topology, not a single nested
+    ADK invocation, and the recorded evidence says so. Returns the parsed output
     model plus sanitized execution evidence. Raw prompts, model text, and
     reasoning are never returned.
     """
@@ -235,12 +237,16 @@ async def collect_specialist_output(*, specialist, agent_id: str, prompt: str, c
         "model_used": MODEL_ID,
         "vertex_location": VERTEX_LOCATION,
         "adk_framework": adk_framework(),
-        "adk_invocation_id": None,
+        "specialist_run_id": None,
+        "specialist_session_id": None,
         "adk_event_id": None,
         "tool_invocations": [],
         "declared_tools": list(AGENT_TOOL_ALLOWLIST[agent_id]),
     }
 
+    # Each specialist runs on its own ADK session via its own Runner. The
+    # session ID recorded here is that specialist's real session, never the
+    # coordinator's, so evidence cannot imply a shared or nested invocation.
     session_service = ctx.session_service
     runner = Runner(
         agent=specialist, session_service=session_service, app_name=APP_NAME
@@ -248,6 +254,7 @@ async def collect_specialist_output(*, specialist, agent_id: str, prompt: str, c
     session = await session_service.create_session(
         user_id=WORKLOAD_USER_ID, app_name=APP_NAME
     )
+    execution["specialist_session_id"] = session.id
     final_texts: List[str] = []
     async for event in runner.run_async(
         user_id=WORKLOAD_USER_ID,
@@ -257,7 +264,7 @@ async def collect_specialist_output(*, specialist, agent_id: str, prompt: str, c
         ),
     ):
         if event.invocation_id:
-            execution["adk_invocation_id"] = event.invocation_id
+            execution["specialist_run_id"] = event.invocation_id
         if event.error_code:
             raise AgentRunFailure("ADK_MODEL_ERROR", agent_id)
         for call in (event.get_function_calls() or []):
@@ -280,7 +287,7 @@ async def collect_specialist_output(*, specialist, agent_id: str, prompt: str, c
             final_texts.append(text)
             execution["adk_event_id"] = event.id
 
-    if not execution["adk_invocation_id"]:
+    if not execution["specialist_run_id"]:
         raise AgentRunFailure("ADK_RUN_IDENTIFIER_MISSING", agent_id)
     if len(final_texts) != 1:
         raise AgentRunFailure("ADK_FINAL_RESPONSE_COUNT_INVALID", agent_id)

@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 
-FLEET_MANIFEST_VERSION = "1.0.0"
+FLEET_MANIFEST_VERSION = "1.1.0"
 
 
 class ComponentKind(str, Enum):
@@ -202,7 +202,7 @@ class FleetProposal(BaseModel):
     partner: Optional[PartnerCommunication] = None
     delegation_trace: List[Dict[str, Any]] = Field(default_factory=list)
     coordinator_session_id: Optional[str] = None
-    coordinator_invocation_id: Optional[str] = None
+    coordination_run_id: Optional[str] = None
     proposal_hash: Optional[str] = None
 
 

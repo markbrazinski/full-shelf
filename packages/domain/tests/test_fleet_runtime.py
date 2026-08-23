@@ -1,10 +1,11 @@
 """Unmocked-ADK runtime qualification for the five-agent fleet.
 
 Every test here runs the REAL ADK Runner, session service, agent classes, tool
-dispatch, and event loop under google-adk 2.6.3. Only the Gemini network call is
+dispatch, and event loop under google-adk 1.14.1. Only the Gemini network call is
 scripted. These directly answer independent-audit findings 1, 2, 3, 6, 7, and 8.
 """
 
+import inspect
 import pathlib
 import sys
 
@@ -41,7 +42,7 @@ def test_adk_version_is_the_pinned_deployable_version():
     """Finding 7: acceptance must run under exactly the pinned ADK."""
     from importlib.metadata import version
 
-    assert version("google-adk") == "2.6.3"
+    assert version("google-adk") == "1.14.1"
 
 
 # --- Finding 1 & 2: genuine coordinator ownership ---------------------------
@@ -68,19 +69,50 @@ def test_delegation_trace_order_equals_the_declared_governed_sequence():
     )
 
 
-def test_parentage_comes_from_real_execution_not_synthesis():
-    """Finding 2: recall is a genuine child of the coordinator, not relabeled."""
+def test_evidence_identifiers_come_from_real_execution_and_are_distinct():
+    """Each hop reports its OWN ADK session and run, never the coordinator's."""
+    with scripted_gemini():
+        proposal = run_canonical_fleet()["proposal"]
+    assert proposal.coordination_run_id
+    assert proposal.coordinator_session_id
+
+    sessions, runs = set(), set()
+    for entry in proposal.delegation_trace:
+        assert entry["specialist_run_id"], entry["agent_id"]
+        assert entry["specialist_session_id"], entry["agent_id"]
+        assert entry["adk_event_id"], entry["agent_id"]
+        # The coordinator's identifiers are recorded as context, not reused as
+        # the specialist's own.
+        assert entry["coordinator_agent_id"] == AGENT_INCIDENT_COORDINATOR
+        assert entry["coordination_run_id"] == proposal.coordination_run_id
+        assert entry["specialist_session_id"] != proposal.coordinator_session_id
+        assert entry["specialist_run_id"] != proposal.coordination_run_id
+        sessions.add(entry["specialist_session_id"])
+        runs.add(entry["specialist_run_id"])
+    # Every specialist ran in its own session and its own invocation.
+    assert len(sessions) == 4
+    assert len(runs) == 4
+
+
+def test_no_evidence_field_claims_adk_parentage():
+    """Finding 2: synthesized parent/child relationships must not return."""
+    with scripted_gemini():
+        proposal = run_canonical_fleet()["proposal"]
+    for entry in proposal.delegation_trace:
+        assert "parent_agent_id" not in entry
+    from full_shelf_domain.fleet import coordinator
+
+    source = inspect.getsource(coordinator)
+    assert "parent_agent_id" not in source
+
+
+def test_recall_evidence_uses_its_own_session_not_the_coordinators():
+    """Finding 1: recall evidence must not reuse the coordinator session."""
     with scripted_gemini():
         proposal = run_canonical_fleet()["proposal"]
     recall = proposal.delegation_trace[0]
     assert recall["agent_id"] == AGENT_RECALL_EXTRACTION
-    assert recall["parent_agent_id"] == "IncidentCoordinatorAgent"
-    # Identifiers are produced by ADK, not by the caller.
-    for entry in proposal.delegation_trace:
-        assert entry["adk_invocation_id"], entry["agent_id"]
-        assert entry["adk_event_id"], entry["agent_id"]
-    assert proposal.coordinator_invocation_id
-    assert proposal.coordinator_session_id
+    assert recall["specialist_session_id"] != proposal.coordinator_session_id
 
 
 def test_all_four_specialist_outputs_are_consumed_by_the_proposal():
@@ -157,8 +189,16 @@ def test_tools_are_actually_callable_and_return_authoritative_data():
 
 
 def test_the_custody_tool_is_actually_invoked_and_its_data_consumed():
-    """A registered tool is not evidence; this proves a real call was made."""
-    with scripted_gemini():
+    """A registered tool is not evidence; this proves a real call round-trip.
+
+    The model is scripted to call `custody_graph_read_tool` before answering, so
+    ADK must emit a function-call event and a matching function-response event.
+    Asserting the REQUESTED -> COMPLETED pair proves the tool actually executed
+    and its result returned through ADK, not merely that it was declared.
+    """
+    with scripted_gemini(tool_call_for={
+        "NetworkAndCustodyAgent": "custody_graph_read_tool"
+    }):
         proposal = run_canonical_fleet()["proposal"]
     custody_hop = next(
         entry for entry in proposal.delegation_trace
@@ -167,6 +207,18 @@ def test_the_custody_tool_is_actually_invoked_and_its_data_consumed():
     assert custody_hop["declared_tools"] == [
         TOOL_CUSTODY_GRAPH_READ, TOOL_CUSTODY_DEPENDENTS_READ,
     ]
+    invocations = custody_hop["tool_invocations"]
+    assert {"tool_name": "custody_graph_read_tool", "outcome": "REQUESTED"} in (
+        invocations
+    ), invocations
+    assert {"tool_name": "custody_graph_read_tool", "outcome": "COMPLETED"} in (
+        invocations
+    ), invocations
+    # The request must precede its completion.
+    assert (invocations.index({"tool_name": "custody_graph_read_tool",
+                               "outcome": "REQUESTED"})
+            < invocations.index({"tool_name": "custody_graph_read_tool",
+                                 "outcome": "COMPLETED"}))
     # And the validated assessment reconciles with the deterministic graph.
     assert proposal.custody.total_cases_in_custody == 96
 

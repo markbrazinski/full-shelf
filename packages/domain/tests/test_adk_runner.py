@@ -31,17 +31,19 @@ def test_locked_model_floor_parser():
     assert not is_eligible_gemini_model("flash")
 
 
-def test_recall_extraction_runs_as_a_real_adk_agent_under_the_coordinator():
+def test_recall_extraction_runs_as_a_real_adk_agent_ordered_by_the_coordinator():
     proposal = extract()
     assert proposal.status == "PROPOSED"
     assert proposal.extraction["lot_id"] == "LTC-4471"
     assert proposal.extraction["product_name"] == "Romaine Lettuce"
     recall_hop = proposal.delegation_trace[0]
     assert recall_hop["agent_name"] == "RecallExtractionAgent"
-    assert recall_hop["parent_agent_id"] == "IncidentCoordinatorAgent"
-    assert recall_hop["adk_invocation_id"]
+    assert recall_hop["coordinator_agent_id"] == "full-shelf.incident-coordinator.v1"
+    assert recall_hop["coordination_run_id"]
+    assert recall_hop["specialist_run_id"]
+    assert recall_hop["specialist_session_id"]
     assert recall_hop["model_used"] == "gemini-3.5-flash"
-    assert recall_hop["adk_framework"] == "google-adk/2.6.3"
+    assert recall_hop["adk_framework"] == "google-adk/1.14.1"
 
 
 @pytest.mark.parametrize("text", [

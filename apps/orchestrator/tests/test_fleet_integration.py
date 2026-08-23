@@ -105,7 +105,7 @@ def test_fleet_candidate_that_contradicts_policy_totals_is_rejected():
         "proposal": {"status": "PROPOSED", "proposal_hash": "h",
                      "delegation_trace": [], "partner": {"template_id": "x"},
                      "coordinator_session_id": "s",
-                     "coordinator_invocation_id": "i"},
+                     "coordination_run_id": "i"},
         "recovery_candidate": {
             "candidate_id": "CAND-BOGUS",
             "allocations": [{"agency_id": "AG-1", "lot_id": "SAFE-1", "cases": 999}],

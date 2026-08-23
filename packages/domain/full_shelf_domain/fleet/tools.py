@@ -23,6 +23,11 @@ from .contracts import (
     TOOL_RUNTIME_NAMES,
 )
 
+# `recovery_candidates_read` and `partner_state_read` are deterministic read
+# projections used to build prompts. They are deliberately NOT exposed as ADK
+# tools and have no tool factory: the planner and partner agents receive their
+# complete bounded input directly, so a tool would be an unused capability.
+
 
 def custody_graph_read(graph_result: Dict[str, Any]) -> Dict[str, Any]:
     """Project an already-executed Spanner Graph result into agent-safe facts.
@@ -172,8 +177,8 @@ def _candidate_hash(candidate: Dict[str, Any]) -> str:
 
 
 # The deterministic candidate policy is exactly these two safe-lot consumption
-# orderings. This is a BOUNDED policy, not an exhaustive search of all feasible
-# allocations, and the catalog states it as such.
+# orderings. This yields a BOUNDED ADMISSIBLE candidate set, not an exhaustive
+# search of all feasible allocations, and the catalog states it as such.
 CANDIDATE_POLICY_ID = "full-shelf.policy.bounded-lot-ordering.v1"
 CANDIDATE_POLICY_ORDERINGS = ("CAND-LOT-ASC", "CAND-LOT-DEEPEST-FIRST")
 
@@ -184,7 +189,7 @@ def generate_recovery_candidates(
     safe_lots: Sequence[Sequence],
     affected_orders: Sequence[Sequence],
 ) -> List[Dict[str, Any]]:
-    """Build the candidate set defined by the bounded lot-ordering policy.
+    """Build the bounded admissible candidate set for this recovery.
 
     This is NOT a complete enumeration of every feasible allocation. The policy
     admits exactly two safe-lot consumption orderings:
@@ -236,7 +241,7 @@ def generate_recovery_candidates(
 
 
 def recovery_candidates_read(candidates: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
-    """Project candidates for the planner agent without exposing mutable state."""
+    """Project the bounded admissible candidates for the planner agent."""
     return {
         "tool_id": TOOL_RECOVERY_CANDIDATES_READ,
         "tool_outcome": "OK" if candidates else "EMPTY",
@@ -337,39 +342,4 @@ def build_custody_dependents_tool(graph_result: Dict[str, Any]):
     return _as_function_tool(
         custody_dependents_read_tool,
         TOOL_RUNTIME_NAMES[TOOL_CUSTODY_DEPENDENTS_READ],
-    )
-
-
-def build_recovery_candidates_tool(candidates: Sequence[Dict[str, Any]]):
-    """Build the ADK tool exposing `TOOL_RECOVERY_CANDIDATES_READ`."""
-
-    def recovery_candidates_read_tool() -> Dict[str, Any]:
-        """Read the deterministic recovery candidates you may choose among.
-
-        Returns each candidate's ID, strategy, allocated and shortfall case
-        totals, agencies served, and exact allocations. You may select only a
-        candidate_id from this set; you may not modify any value inside it.
-        """
-        return recovery_candidates_read(candidates)
-
-    return _as_function_tool(
-        recovery_candidates_read_tool,
-        TOOL_RUNTIME_NAMES[TOOL_RECOVERY_CANDIDATES_READ],
-    )
-
-
-def build_partner_state_tool(partner_state: Dict[str, Any]):
-    """Build the ADK tool exposing `TOOL_PARTNER_STATE_READ`."""
-
-    def partner_state_read_tool() -> Dict[str, Any]:
-        """Read the bounded operational state of the partner to contact.
-
-        Returns the partner ID and name, the recalled lot, the unconfirmed case
-        count, the acknowledgment status, and the deadline when one exists.
-        Every outbound template parameter must be copied from these values.
-        """
-        return dict(partner_state)
-
-    return _as_function_tool(
-        partner_state_read_tool, TOOL_RUNTIME_NAMES[TOOL_PARTNER_STATE_READ]
     )
