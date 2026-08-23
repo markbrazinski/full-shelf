@@ -1491,12 +1491,17 @@ def _execute_managed_recall_event(
     # gate may fail for a model reason, so a fleet failure always means zero
     # ledger commands attempted and zero mutations committed.
     # ------------------------------------------------------------------
-    def _pre_ledger_halt(stage: str, reason_code: str, **extra):
-        """Every pre-ledger exit reports the same truthful zero counters."""
+    def _pre_ledger_halt(stage: str, reason_code: str, *, http_status=None, **extra):
+        """Every pre-ledger exit reports the same truthful zero counters.
+
+        `http_status` preserves the classification the caller would have raised,
+        so transport retry/ack behavior is unchanged by counting the failure.
+        """
         return {
             "hero_loop_status": "HALTED_FOR_MANUAL_REVIEW",
             "halt_stage": stage,
             "manual_review_reason": reason_code,
+            "http_status_classification": http_status,
             "model_armor_screening": screening,
             "ledger_commands_attempted": 0,
             "ledger_commands_accepted": 0,
@@ -1512,14 +1517,26 @@ def _execute_managed_recall_event(
             revision=active_revision,
         )
     except HTTPException as exc:
-        return _pre_ledger_halt("AUTHORITATIVE_READ", str(exc.detail))
+        # Preserve the deterministic business classification (409/404/...).
+        return _pre_ledger_halt(
+            "AUTHORITATIVE_READ", str(exc.detail), http_status=exc.status_code,
+        )
+    except Exception:
+        # A generic infrastructure failure (for example a raw Spanner error)
+        # must fail closed exactly like a classified one: zero ledger activity,
+        # and a retryable 503 so managed delivery can redeliver.
+        return _pre_ledger_halt(
+            "AUTHORITATIVE_READ", "AUTHORITATIVE_READ_UNAVAILABLE",
+            http_status=503,
+        )
     try:
         graph = _run_managed_custody_graph(
             db, tenant_id=tenant_id, lot_id=recalled_lot_id
         )
     except Exception:
         return _pre_ledger_halt(
-            "AUTHORITATIVE_GRAPH_READ", "AUTHORITATIVE_GRAPH_READ_UNAVAILABLE"
+            "AUTHORITATIVE_GRAPH_READ", "AUTHORITATIVE_GRAPH_READ_UNAVAILABLE",
+            http_status=503,
         )
     if graph["unique_current_cases"] != inputs["recalled_total_cases"]:
         return _pre_ledger_halt(

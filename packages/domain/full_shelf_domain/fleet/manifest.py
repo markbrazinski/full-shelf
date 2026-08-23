@@ -52,10 +52,15 @@ _AGENT_SPECS = {
         "kind": ComponentKind.ADK_WORKFLOW_AGENT,
         "uses_gemini": False,
         "input_trust": [TrustClass.TRUSTED_DERIVED],
-        "output_schema": "CoordinationPayload",
-        "output_contract": (
-            "Emits a JSON coordination payload (status, reason_code, "
-            "delegation_trace, accepted_agent_ids). FleetProposal is assembled "
+        # The executable coordinator is a BaseAgent with NO ADK output_schema.
+        # It emits an internal coordination event, which is not an ADK
+        # structured-output contract and is not catalogued as one.
+        "output_schema": None,
+        "adk_output_schema": None,
+        "coordination_event_contract": (
+            "Emits one internal coordination event whose text payload carries "
+            "status, reason_code, delegation_trace, and accepted_agent_ids. "
+            "This is not an ADK output_schema. FleetProposal is assembled "
             "deterministically by run_fleet from the accepted specialist "
             "outputs; the coordinator agent does not emit it."
         ),
@@ -162,7 +167,8 @@ def build_manifest() -> Dict[str, Any]:
             "model_id": MODEL_ID if spec["uses_gemini"] else None,
             "input_trust_classes": [t.value for t in spec["input_trust"]],
             "output_schema": spec["output_schema"],
-            "output_contract": spec.get("output_contract"),
+            "adk_output_schema": spec.get("adk_output_schema", spec["output_schema"]),
+            "coordination_event_contract": spec.get("coordination_event_contract"),
             "instruction_source": spec["instruction_source"],
             "tool_allowlist": list(AGENT_TOOL_ALLOWLIST[agent_id]),
             "timeout_seconds": AGENT_TIMEOUT_SECONDS[agent_id],

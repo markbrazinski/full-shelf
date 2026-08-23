@@ -42,8 +42,11 @@ APPROVED_SCREENING = {
 
 
 def run(*, fleet_result=None, graph=GRAPH, inputs=INPUTS,
-        screening=APPROVED_SCREENING):
-    """graph=None simulates an authoritative graph read failure."""
+        screening=APPROVED_SCREENING, inputs_error=None):
+    """graph=None simulates an authoritative graph read failure.
+
+    inputs_error raises that exception from the authoritative read instead.
+    """
     """Run the managed recall path, recording every ledger command attempt."""
     attempts = []
 
@@ -67,7 +70,11 @@ def run(*, fleet_result=None, graph=GRAPH, inputs=INPUTS,
         patch.object(main, "inspect_recall_notice_with_model_armor",
                      return_value=screening),
         patch.object(main, "_persist_model_invocation_evidence"),
-        patch.object(main, "_read_authoritative_recall_inputs", return_value=inputs),
+        patch.object(
+            main, "_read_authoritative_recall_inputs",
+            side_effect=(inputs_error if inputs_error
+                         else lambda db, **kw: inputs),
+        ),
         patch.object(
             main, "_run_managed_custody_graph",
             side_effect=(RuntimeError("graph unavailable") if graph is None
@@ -214,3 +221,35 @@ def test_no_ledger_command_helper_exists_before_the_mutation_phase():
     source = inspect.getsource(main._execute_managed_recall_event)
     mutation = source.index("MUTATION PHASE")
     assert "execute_ledger_command" not in source[:mutation]
+
+
+def test_generic_authoritative_read_exception_fails_closed_with_zero_counters():
+    """Item 4: a raw infrastructure error must not escape uncounted.
+
+    A generic RuntimeError from the authoritative read previously propagated
+    past the counter block entirely. It must now fail closed with zero ledger
+    activity while keeping a retryable 503 classification.
+    """
+    result, attempts = run(inputs_error=RuntimeError("spanner unavailable"))
+    assert result["hero_loop_status"] == "HALTED_FOR_MANUAL_REVIEW"
+    assert result["halt_stage"] == "AUTHORITATIVE_READ"
+    assert result["manual_review_reason"] == "AUTHORITATIVE_READ_UNAVAILABLE"
+    assert result["http_status_classification"] == 503
+    assert attempts == []
+    assert result["ledger_commands_attempted"] == 0
+    assert result["ledger_commands_accepted"] == 0
+    assert result["mutations_committed"] == 0
+    assert result["ledger_mutation_attempted"] is False
+    # The raw error text must never reach evidence.
+    assert "spanner unavailable" not in str(result)
+
+
+def test_classified_read_failure_keeps_its_business_status():
+    """A deterministic 409 stays a 409 while still reporting zero counters."""
+    result, attempts = run(
+        inputs_error=main.HTTPException(409, "RECOVERY_INPUTS_NOT_FOUND")
+    )
+    assert result["manual_review_reason"] == "RECOVERY_INPUTS_NOT_FOUND"
+    assert result["http_status_classification"] == 409
+    assert attempts == []
+    assert result["ledger_commands_attempted"] == 0

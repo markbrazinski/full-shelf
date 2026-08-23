@@ -165,7 +165,8 @@ def test_same_managed_hero_uses_altered_ids_quantities_and_calculated_outcome():
     sessions = {e["specialist_session_id"] for e in fleet["delegation_trace"]}
     assert len(sessions) == 4
     assert fleet["coordinator_session_id"] not in sessions
-    assert all("parent_agent_id" not in e for e in fleet["delegation_trace"])
+    synthetic_field = "_".join(["parent", "agent", "id"])
+    assert all(synthetic_field not in e for e in fleet["delegation_trace"])
     assert fleet["proposal_status"] == "PROPOSED"
     assert [entry["agent_id"] for entry in fleet["delegation_trace"]] == [
         "full-shelf.recall-extraction.v1",

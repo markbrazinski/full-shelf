@@ -163,10 +163,11 @@ def build_incident_coordinator_agent(run_context: Optional[FleetRunContext] = No
             for index, (agent_id, prompt, validator, ok_label) in enumerate(hops):
                 specialist = self.sub_agents[index]
                 try:
+                    started: Dict[str, Any] = {}
                     parsed, execution = await asyncio.wait_for(
                         collect_specialist_output(
                             specialist=specialist, agent_id=agent_id,
-                            prompt=prompt, ctx=ctx,
+                            prompt=prompt, ctx=ctx, started=started,
                         ),
                         timeout=AGENT_TIMEOUT_SECONDS[agent_id],
                     )
@@ -176,7 +177,9 @@ def build_incident_coordinator_agent(run_context: Optional[FleetRunContext] = No
                         agent_id=agent_id,
                         coordinator_agent_id=AGENT_INCIDENT_COORDINATOR,
                         coordination_run_id=ctx.invocation_id,
-                        execution={"agent_id": agent_id, "agent_name": specialist.name},
+                        execution=_partial_execution(
+                            agent_id, specialist, started
+                        ),
                         validation=failure,
                     ))
                     break
@@ -186,7 +189,11 @@ def build_incident_coordinator_agent(run_context: Optional[FleetRunContext] = No
                         agent_id=agent_id,
                         coordinator_agent_id=AGENT_INCIDENT_COORDINATOR,
                         coordination_run_id=ctx.invocation_id,
-                        execution={"agent_id": agent_id, "agent_name": specialist.name},
+                        # A failed specialist still reports the real session and
+                        # run it reached before failing.
+                        execution=_partial_execution(
+                            agent_id, specialist, getattr(exc, "execution", None)
+                        ),
                         validation=failure,
                     ))
                     break
@@ -198,7 +205,9 @@ def build_incident_coordinator_agent(run_context: Optional[FleetRunContext] = No
                         agent_id=agent_id,
                         coordinator_agent_id=AGENT_INCIDENT_COORDINATOR,
                         coordination_run_id=ctx.invocation_id,
-                        execution={"agent_id": agent_id, "agent_name": specialist.name},
+                        execution=_partial_execution(
+                            agent_id, specialist, started
+                        ),
                         validation=failure,
                     ))
                     break
@@ -254,6 +263,18 @@ def build_incident_coordinator_agent(run_context: Optional[FleetRunContext] = No
     return coordinator
 
 
+def _partial_execution(agent_id, specialist, captured=None):
+    """Evidence for a hop that started but did not produce a valid result.
+
+    Prefers the identifiers the specialist actually captured before failing, so
+    a failed run is still traceable to its real ADK session and invocation.
+    """
+    base = {"agent_id": agent_id, "agent_name": specialist.name}
+    if captured:
+        return {**base, **captured}
+    return base
+
+
 def _trace_entry(
     *, agent_id: str, coordinator_agent_id: str, coordination_run_id: Optional[str],
     execution: Dict[str, Any], validation: str,
@@ -283,7 +304,13 @@ def _trace_entry(
 
 
 async def _run_coordinator_async(context: FleetRunContext) -> Dict[str, Any]:
-    """Enter ADK exactly once and let the coordinator own the whole sequence."""
+    """Run the coordinator execution that governs the specialist executions.
+
+    One coordinator Runner/session execution governs four correlated specialist
+    Runner/session executions. Each specialist execution is distinct and carries
+    its own session and invocation identifiers, correlated to this coordinator
+    run by `coordination_run_id`.
+    """
     from google.adk.runners import Runner
     from google.adk.sessions import InMemorySessionService
     from google.genai import types

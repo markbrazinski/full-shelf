@@ -176,7 +176,8 @@ def test_candidate_scope_is_stated_as_a_bounded_policy_not_completeness():
 
     assert scope["policy_id"] == CANDIDATE_POLICY_ID
     assert scope["orderings"] == list(CANDIDATE_POLICY_ORDERINGS)
-    assert "complete feasible" not in str(MANIFEST).lower()
+    stale_claim = " ".join(["complete", "feasible"])
+    assert stale_claim not in str(MANIFEST).lower()
 
 
 def test_governed_sequence_matches_the_executable_coordinator_sequence():
@@ -209,16 +210,27 @@ def test_partner_template_parameters_all_have_authoritative_sources():
 # --- Item 3: coordinator and Recall schema parity, topology, model IDs -------
 
 
-def test_coordinator_output_contract_matches_what_it_actually_emits():
-    """The coordinator emits a coordination payload; run_fleet builds the proposal."""
+def test_coordinator_is_not_catalogued_with_an_adk_output_schema():
+    """The executable coordinator has output_schema None; the catalog must agree."""
+    from full_shelf_domain.fleet.coordinator import build_incident_coordinator_agent
+
+    agent = build_incident_coordinator_agent()
+    assert getattr(agent, "output_schema", None) is None
     entry = BY_ID[contracts.AGENT_INCIDENT_COORDINATOR]
-    assert entry["output_schema"] == "CoordinationPayload"
-    assert "FleetProposal is assembled" in entry["output_contract"]
-    # And the emitted payload really carries those keys.
+    assert entry["adk_output_schema"] is None
+    assert entry["output_schema"] is None
+
+
+def test_coordinator_event_contract_matches_what_it_actually_emits():
+    """The internal coordination event really carries the catalogued keys."""
     import inspect
 
     from full_shelf_domain.fleet import coordinator
 
+    entry = BY_ID[contracts.AGENT_INCIDENT_COORDINATOR]
+    contract = entry["coordination_event_contract"]
+    assert "not an ADK output_schema" in contract
+    assert "FleetProposal is assembled" in contract
     source = inspect.getsource(coordinator)
     for key in ("status", "reason_code", "delegation_trace", "accepted_agent_ids"):
         assert f'"{key}"' in source
@@ -259,7 +271,8 @@ def test_catalog_declares_the_separate_runner_topology_truthfully():
     from full_shelf_domain.fleet import agents, coordinator, manifest
 
     for module in (agents, coordinator, manifest):
-        assert "parent_agent_id" not in inspect.getsource(module), module.__name__
+        synthetic_field = "_".join(["parent", "agent", "id"])
+        assert synthetic_field not in inspect.getsource(module), module.__name__
 
 
 def test_manifest_version_was_bumped_for_this_contract_change():

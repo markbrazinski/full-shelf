@@ -13,6 +13,7 @@ application code may submit anything to the private ledger.
 
 import asyncio
 import os
+import uuid
 from importlib.metadata import version
 from typing import Any, Callable, Dict, List, Optional
 
@@ -60,8 +61,8 @@ configured structured response and nothing else.
 FULFILLMENT_RECOVERY_INSTRUCTION = """
 You select one recovery plan for a food bank control plane.
 
-Deterministic planning code has already produced the complete set of feasible
-candidates. You may only choose one existing candidate_id from that set. You
+Deterministic planning code has already produced the bounded admissible
+candidate set. You may only choose one existing candidate_id from that set. You
 may not invent a candidate, alter any quantity, destination, lot, vehicle,
 deadline, or plan revision, and you may not restate those values.
 
@@ -182,7 +183,16 @@ AGENT_OUTPUT_MODELS = {
 
 
 class AgentRunFailure(FleetProposalError):
-    """One specialist run failed. Carries only a stable reason code."""
+    """One specialist run failed.
+
+    Carries a stable reason code plus whatever execution evidence was already
+    captured, so a failed hop still reports the real ADK session and run
+    identifiers it had reached rather than nulls.
+    """
+
+    def __init__(self, reason_code: str, agent_id=None, execution=None):
+        super().__init__(reason_code, agent_id)
+        self.execution = execution or {}
 
 
 RECALL_EXTRACTION_INSTRUCTION = """
@@ -211,7 +221,9 @@ def build_recall_extraction_agent(tools: Optional[List[Any]] = None):
     )
 
 
-async def collect_specialist_output(*, specialist, agent_id: str, prompt: str, ctx):
+async def collect_specialist_output(
+    *, specialist, agent_id: str, prompt: str, ctx, started=None
+):
     """Run one specialist as a real ADK invocation and parse its structured output.
 
     The specialist executes through a real `Runner` over its own session, which
@@ -219,13 +231,17 @@ async def collect_specialist_output(*, specialist, agent_id: str, prompt: str, c
     converge on a final response. Driving `agent.run_async(ctx)` directly would
     bypass that append step and deadlock any agent that calls a tool.
 
+    `started`, when supplied, receives the specialist's session and run IDs as
+    soon as they exist, so a caller that cancels this coroutine on timeout can
+    still report which execution it interrupted.
+
     `ctx` is the coordinator's invocation context; it supplies the shared
     session service so every specialist session is created in the same store the
-    coordinator uses. Each specialist nonetheless gets its OWN Runner, session,
-    and invocation ID: this is a separate-Runner topology, not a single nested
-    ADK invocation, and the recorded evidence says so. Returns the parsed output
-    model plus sanitized execution evidence. Raw prompts, model text, and
-    reasoning are never returned.
+    coordinator uses. Each specialist gets its OWN Runner, session, and
+    invocation ID, and its execution is correlated to the governing coordinator
+    execution by `coordination_run_id` rather than by any ADK parent/child
+    relationship. Returns the parsed output model plus sanitized execution
+    evidence. Raw prompts, model text, and reasoning are never returned.
     """
     from google.adk.runners import Runner
     from google.genai import types
@@ -247,6 +263,12 @@ async def collect_specialist_output(*, specialist, agent_id: str, prompt: str, c
     # Each specialist runs on its own ADK session via its own Runner. The
     # session ID recorded here is that specialist's real session, never the
     # coordinator's, so evidence cannot imply a shared or nested invocation.
+    # Both identifiers exist BEFORE the model is contacted. The session is
+    # created here; the run ID is chosen here and handed to ADK 2.6.1 via
+    # `run_async(invocation_id=...)`, which is authoritative for every event the
+    # run emits. A failure at any later point - including on the very first turn
+    # - therefore reports the real, non-null identifiers of the execution that
+    # was actually attempted, not a placeholder.
     session_service = ctx.session_service
     runner = Runner(
         agent=specialist, session_service=session_service, app_name=APP_NAME
@@ -255,18 +277,35 @@ async def collect_specialist_output(*, specialist, agent_id: str, prompt: str, c
         user_id=WORKLOAD_USER_ID, app_name=APP_NAME
     )
     execution["specialist_session_id"] = session.id
+    execution["specialist_run_id"] = f"e-{uuid.uuid4()}"
+    if started is not None:
+        # Mirror the identifiers out immediately so a caller that cancels this
+        # coroutine (a timeout) can still report the run it interrupted.
+        started["specialist_session_id"] = execution["specialist_session_id"]
+        started["specialist_run_id"] = execution["specialist_run_id"]
+        started["agent_name"] = specialist.name
+        started["model_used"] = MODEL_ID
+        started["adk_framework"] = adk_framework()
+        started["declared_tools"] = list(AGENT_TOOL_ALLOWLIST[agent_id])
+
+    def failed(reason_code: str) -> AgentRunFailure:
+        return AgentRunFailure(reason_code, agent_id, dict(execution))
+
     final_texts: List[str] = []
     async for event in runner.run_async(
         user_id=WORKLOAD_USER_ID,
         session_id=session.id,
+        invocation_id=execution["specialist_run_id"],
         new_message=types.Content(
             role="user", parts=[types.Part.from_text(text=prompt)]
         ),
     ):
         if event.invocation_id:
             execution["specialist_run_id"] = event.invocation_id
+            if started is not None:
+                started["specialist_run_id"] = event.invocation_id
         if event.error_code:
-            raise AgentRunFailure("ADK_MODEL_ERROR", agent_id)
+            raise failed("ADK_MODEL_ERROR")
         for call in (event.get_function_calls() or []):
             execution["tool_invocations"].append(
                 {"tool_name": call.name, "outcome": "REQUESTED"}
@@ -279,7 +318,7 @@ async def collect_specialist_output(*, specialist, agent_id: str, prompt: str, c
             continue
         finish_reason = getattr(event.finish_reason, "name", event.finish_reason)
         if finish_reason not in {None, "STOP", "FINISH_REASON_UNSPECIFIED"}:
-            raise AgentRunFailure("ADK_RESPONSE_INCOMPLETE", agent_id)
+            raise failed("ADK_RESPONSE_INCOMPLETE")
         text = "".join(
             part.text or "" for part in (event.content.parts if event.content else [])
         ).strip()
@@ -288,13 +327,13 @@ async def collect_specialist_output(*, specialist, agent_id: str, prompt: str, c
             execution["adk_event_id"] = event.id
 
     if not execution["specialist_run_id"]:
-        raise AgentRunFailure("ADK_RUN_IDENTIFIER_MISSING", agent_id)
+        raise failed("ADK_RUN_IDENTIFIER_MISSING")
     if len(final_texts) != 1:
-        raise AgentRunFailure("ADK_FINAL_RESPONSE_COUNT_INVALID", agent_id)
+        raise failed("ADK_FINAL_RESPONSE_COUNT_INVALID")
     try:
         parsed = output_model.model_validate_json(final_texts[0])
     except ValidationError:
-        raise AgentRunFailure("INVALID_STRUCTURED_OUTPUT", agent_id)
+        raise failed("INVALID_STRUCTURED_OUTPUT")
     return parsed, execution
 
 

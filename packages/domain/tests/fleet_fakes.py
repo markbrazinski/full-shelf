@@ -103,8 +103,13 @@ def scripted_gemini(overrides=None, *, error_for=None, hang_for=None,
 
     replies = dict(AGENT_DEFAULTS)
     replies.update(overrides or {})
-    tool_call_for = tool_call_for or {}
-    tool_turns_taken = set()
+    # Values may be a single tool name or a list of names to call in order,
+    # one per turn, before the agent finally answers.
+    tool_call_for = {
+        agent: ([names] if isinstance(names, str) else list(names))
+        for agent, names in (tool_call_for or {}).items()
+    }
+    tool_turns_taken = {}
 
     async def fake_generate(self, llm_request, stream=False):
         instruction = llm_request.config.system_instruction or ""
@@ -121,16 +126,22 @@ def scripted_gemini(overrides=None, *, error_for=None, hang_for=None,
             import asyncio
 
             await asyncio.sleep(30)
-        # First turn for a tool-scripted agent: request the tool. ADK runs it
-        # and calls back with the response, which is the round-trip under test.
-        if agent_name in tool_call_for and agent_name not in tool_turns_taken:
-            tool_turns_taken.add(agent_name)
-            yield LlmResponse(content=types.Content(
-                role="model",
-                parts=[types.Part.from_function_call(
-                    name=tool_call_for[agent_name], args={})],
-            ))
-            return
+        # Early turns for a tool-scripted agent request each tool in turn. ADK
+        # executes it and calls back with the response, which is the round-trip
+        # under test. The agent answers only after the script is exhausted.
+        pending = tool_call_for.get(agent_name)
+        if pending:
+            taken = tool_turns_taken.get(agent_name, 0)
+            if taken < len(pending):
+                tool_turns_taken[agent_name] = taken + 1
+                tool_name = pending[taken]
+                args = {"node_id": "WH-01"} if "dependents" in tool_name else {}
+                yield LlmResponse(content=types.Content(
+                    role="model",
+                    parts=[types.Part.from_function_call(
+                        name=tool_name, args=args)],
+                ))
+                return
         if raw_for and agent_name in raw_for:
             text = raw_for[agent_name]
         else:
