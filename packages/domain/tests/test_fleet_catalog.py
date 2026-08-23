@@ -160,3 +160,47 @@ def test_untrusted_content_reaches_only_the_screened_extraction_agent():
     assert BY_ID[contracts.AGENT_RECALL_EXTRACTION]["input_trust_classes"] == [
         "MODEL_ARMOR_APPROVED"
     ]
+
+
+# --- Finding 9 & 10: catalog cannot overstate or drift ----------------------
+
+
+def test_candidate_scope_is_stated_as_a_bounded_policy_not_completeness():
+    scope = MANIFEST["recovery_candidate_scope"]
+    assert scope["scope"] == "BOUNDED_LOT_ORDERING_POLICY"
+    assert "not an exhaustive enumeration" in scope["limitation"]
+    # And the executable policy matches exactly what the catalog advertises.
+    from full_shelf_domain.fleet.tools import (
+        CANDIDATE_POLICY_ID, CANDIDATE_POLICY_ORDERINGS,
+    )
+
+    assert scope["policy_id"] == CANDIDATE_POLICY_ID
+    assert scope["orderings"] == list(CANDIDATE_POLICY_ORDERINGS)
+    assert "complete feasible" not in str(MANIFEST).lower()
+
+
+def test_governed_sequence_matches_the_executable_coordinator_sequence():
+    from full_shelf_domain.fleet.coordinator import GOVERNED_SEQUENCE
+
+    assert MANIFEST["governed_sequence"] == list(GOVERNED_SEQUENCE)
+    # The root is not in its own sequence; the four specialists are.
+    assert contracts.AGENT_INCIDENT_COORDINATOR not in MANIFEST["governed_sequence"]
+    assert len(MANIFEST["governed_sequence"]) == 4
+
+
+def test_runtime_tool_names_are_unique_and_catalogued():
+    names = [tool["runtime_tool_name"] for tool in MANIFEST["tools"]]
+    assert len(names) == len(set(names))
+    assert set(names) == set(contracts.TOOL_RUNTIME_NAMES.values())
+
+
+def test_catalog_does_not_claim_model_armor_for_partner_inputs():
+    partner = BY_ID[contracts.AGENT_PARTNER_OPERATIONS]
+    assert partner["input_trust_classes"] == ["TRUSTED_AUTHORITATIVE"]
+
+
+def test_partner_template_parameters_all_have_authoritative_sources():
+    # Every template parameter must be bindable by the validator.
+    bindable = {"partner_name", "lot_id", "cases", "deadline"}
+    for required in contracts.PARTNER_TEMPLATE_IDS.values():
+        assert set(required) <= bindable

@@ -15,6 +15,7 @@ from typing import Any, Dict, List
 
 from .contracts import (
     AGENT_FULFILLMENT_RECOVERY,
+    TOOL_RUNTIME_NAMES,
     AGENT_INCIDENT_COORDINATOR,
     AGENT_NETWORK_CUSTODY,
     AGENT_PARTNER_OPERATIONS,
@@ -33,6 +34,7 @@ from .contracts import (
     RecoverySelection,
     TrustClass,
 )
+from .tools import CANDIDATE_POLICY_ID, CANDIDATE_POLICY_ORDERINGS
 
 # The ledger role each agent's advice may inform. The agent never holds the
 # role; the orchestrator submits under it after deterministic revalidation.
@@ -52,7 +54,7 @@ _AGENT_SPECS = {
         "uses_gemini": False,
         "input_trust": [TrustClass.TRUSTED_DERIVED],
         "output_schema": "FleetProposal",
-        "instruction_source": "full_shelf_domain.fleet.coordinator",
+        "instruction_source": "full_shelf_domain.fleet.coordinator:IncidentCoordinatorAgent",
         "failure_behavior": "MANUAL_REVIEW_REQUIRED",
     },
     AGENT_NETWORK_CUSTODY: {
@@ -80,8 +82,7 @@ _AGENT_SPECS = {
         "runtime_name": "PartnerOperationsAgent",
         "kind": ComponentKind.ADK_LLM_AGENT,
         "uses_gemini": True,
-        "input_trust": [TrustClass.TRUSTED_AUTHORITATIVE,
-                        TrustClass.MODEL_ARMOR_APPROVED],
+        "input_trust": [TrustClass.TRUSTED_AUTHORITATIVE],
         "output_schema": PartnerCommunication.__name__,
         "instruction_source": "full_shelf_domain.fleet.agents:PARTNER_OPERATIONS_INSTRUCTION",
         "failure_behavior": "MANUAL_REVIEW_REQUIRED",
@@ -93,7 +94,7 @@ _AGENT_SPECS = {
         "uses_gemini": True,
         "input_trust": [TrustClass.MODEL_ARMOR_APPROVED],
         "output_schema": "RecallExtractionSchema",
-        "instruction_source": "full_shelf_domain.recall:extract_recall_entities_with_gemini_35",
+        "instruction_source": "full_shelf_domain.fleet.agents:RECALL_EXTRACTION_INSTRUCTION",
         "failure_behavior": "MANUAL_REVIEW_REQUIRED",
     },
 }
@@ -150,6 +151,8 @@ _VALIDATOR_SPECS = {
 
 def build_manifest() -> Dict[str, Any]:
     """Derive the complete fleet manifest from executable definitions."""
+    from .coordinator import GOVERNED_SEQUENCE
+
     agents: List[Dict[str, Any]] = []
     for agent_id in _AGENT_SPECS:
         spec = _AGENT_SPECS[agent_id]
@@ -174,6 +177,7 @@ def build_manifest() -> Dict[str, Any]:
     tools = [
         {
             "tool_id": tool_id,
+            "runtime_tool_name": TOOL_RUNTIME_NAMES[tool_id],
             "component_kind": spec["kind"].value,
             "implementation": spec["implementation"],
             "reads": spec["reads"],
@@ -215,6 +219,16 @@ def build_manifest() -> Dict[str, Any]:
         "tools": tools,
         "governance": governance,
         "partner_templates": sorted(PARTNER_TEMPLATE_IDS),
+        "governed_sequence": list(GOVERNED_SEQUENCE),
+        "recovery_candidate_scope": {
+            "policy_id": CANDIDATE_POLICY_ID,
+            "scope": "BOUNDED_LOT_ORDERING_POLICY",
+            "orderings": list(CANDIDATE_POLICY_ORDERINGS),
+            "limitation": (
+                "This is the bounded deterministic candidate policy, not an "
+                "exhaustive enumeration of every feasible allocation."
+            ),
+        },
         "mutation_authority_summary": (
             "No agent and no agent tool holds mutation authority. The private "
             "plan-ledger service remains the exclusive authoritative writer."
