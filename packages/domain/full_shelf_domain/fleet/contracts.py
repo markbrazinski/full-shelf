@@ -68,6 +68,16 @@ FLEET_TOOL_IDS = (
     TOOL_PARTNER_STATE_READ,
 )
 
+# The exact model-visible ADK function name for each governed tool ID. The tool
+# factories assert against this map, so a runtime name can never drift from the
+# catalog. Names are unique by construction (checked in test_fleet_catalog).
+TOOL_RUNTIME_NAMES = {
+    TOOL_CUSTODY_GRAPH_READ: "custody_graph_read_tool",
+    TOOL_CUSTODY_DEPENDENTS_READ: "custody_dependents_read_tool",
+    TOOL_RECOVERY_CANDIDATES_READ: "recovery_candidates_read_tool",
+    TOOL_PARTNER_STATE_READ: "partner_state_read_tool",
+}
+
 # Every agent's complete tool allowlist. An empty tuple is an explicit,
 # catalogable statement that the agent holds no tool authority at all.
 AGENT_TOOL_ALLOWLIST: Dict[str, tuple] = {
@@ -156,10 +166,13 @@ class FleetProposal(BaseModel):
     incident_id: str
     lot_id: str
     reason_code: Optional[str] = None
+    extraction: Optional[Dict[str, Any]] = None
     custody: Optional[NetworkCustodyAssessment] = None
     recovery: Optional[RecoverySelection] = None
     partner: Optional[PartnerCommunication] = None
     delegation_trace: List[Dict[str, Any]] = Field(default_factory=list)
+    coordinator_session_id: Optional[str] = None
+    coordinator_invocation_id: Optional[str] = None
     proposal_hash: Optional[str] = None
 
 
@@ -167,11 +180,23 @@ class FleetProposal(BaseModel):
 # Rendering happens outside the fleet. The agent may only name a template ID
 # and supply parameters that the renderer will validate.
 
+# Every parameter of every template must have an authoritative source in
+# `partner_state_read` output. `pickup_window` was removed because no
+# authoritative source for it exists; a model may not invent a delivery window.
 PARTNER_TEMPLATE_IDS = {
-    "partner.pickup-request.v1": ("partner_name", "lot_id", "cases", "pickup_window"),
+    "partner.pickup-request.v1": ("partner_name", "lot_id", "cases"),
     "partner.acknowledgment-request.v1": ("partner_name", "lot_id", "cases", "deadline"),
     "partner.shortfall-notice.v1": ("partner_name", "lot_id", "cases"),
 }
+
+# Deterministic escalation policy. The agent reports an escalation level, but
+# the validator recomputes it from trusted partner state and rejects any
+# disagreement, so escalation is never model-authored.
+def deterministic_escalation_level(partner_state: dict) -> str:
+    """Derive the only admissible escalation level from trusted partner state."""
+    if partner_state.get("acknowledgment_status") != "UNCONFIRMED":
+        return "ROUTINE"
+    return "URGENT" if partner_state.get("deadline") else "PRIORITY"
 
 # Confidence at or below this value is refused rather than acted upon.
 PARTNER_MIN_CONFIDENCE = 0.5

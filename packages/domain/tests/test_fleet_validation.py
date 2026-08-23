@@ -262,8 +262,12 @@ def test_missing_or_extra_template_parameters_are_refused():
 
 def test_agent_cannot_assert_an_acknowledgment():
     confirmed_state = dict(PARTNER_STATE, acknowledgment_status="CONFIRMED")
+    # Escalation is recomputed first, so a CONFIRMED partner cannot even be
+    # addressed at URGENT; both guards refuse agent-asserted acknowledgment.
     with pytest.raises(FleetProposalError) as exc:
-        validate_partner_communication(communication(), confirmed_state)
+        validate_partner_communication(
+            communication(escalation_level="ROUTINE"), confirmed_state
+        )
     assert exc.value.reason_code == "PARTNER_ACKNOWLEDGMENT_NOT_AGENT_AUTHORITY"
 
 
@@ -288,3 +292,96 @@ def test_outbound_text_is_rendered_deterministically():
         "Site 01: confirm custody of lot LTC-4471, 8 cases, "
         "by 2026-08-08T17:00:00Z."
     )
+
+
+# --- Finding 4: every rendered parameter is bound to trusted state ----------
+
+
+def test_invented_pickup_window_cannot_be_expressed_or_rendered():
+    # The parameter no longer exists in any template, so supplying it fails.
+    params = dict(communication().template_parameters, pickup_window="any time")
+    with pytest.raises(FleetProposalError) as exc:
+        validate_partner_communication(
+            communication(template_parameters=params), PARTNER_STATE
+        )
+    assert exc.value.reason_code == "PARTNER_TEMPLATE_PARAMETERS_INVALID"
+    from full_shelf_domain.fleet.contracts import PARTNER_TEMPLATE_IDS
+
+    for required in PARTNER_TEMPLATE_IDS.values():
+        assert "pickup_window" not in required
+
+
+def test_pickup_request_renders_without_any_unbound_parameter():
+    pickup = PartnerCommunication(
+        partner_id="SITE-01", template_id="partner.pickup-request.v1",
+        escalation_level="URGENT",
+        template_parameters={"partner_name": "Site 01", "lot_id": "LTC-4471",
+                             "cases": "8"},
+        rationale="Refrigerated pickup required.", confidence=0.9,
+    )
+    validate_partner_communication(pickup, PARTNER_STATE)
+    assert render_partner_message(pickup) == (
+        "Site 01: refrigerated partner pickup requested for lot LTC-4471, 8 cases."
+    )
+
+
+def test_parameter_with_no_authoritative_source_is_rejected():
+    from full_shelf_domain.fleet.contracts import PARTNER_TEMPLATE_IDS
+
+    original = PARTNER_TEMPLATE_IDS["partner.shortfall-notice.v1"]
+    PARTNER_TEMPLATE_IDS["partner.shortfall-notice.v1"] = original + ("invented",)
+    try:
+        bad = PartnerCommunication(
+            partner_id="SITE-01", template_id="partner.shortfall-notice.v1",
+            escalation_level="URGENT",
+            template_parameters={"partner_name": "Site 01", "lot_id": "LTC-4471",
+                                 "cases": "8", "invented": "anything"},
+            rationale="r", confidence=0.9,
+        )
+        with pytest.raises(FleetProposalError) as exc:
+            validate_partner_communication(bad, PARTNER_STATE)
+        assert exc.value.reason_code == (
+            "PARTNER_PARAMETER_HAS_NO_AUTHORITATIVE_SOURCE"
+        )
+    finally:
+        PARTNER_TEMPLATE_IDS["partner.shortfall-notice.v1"] = original
+
+
+@pytest.mark.parametrize("level", ["ROUTINE", "PRIORITY"])
+def test_model_chosen_escalation_must_match_deterministic_policy(level):
+    with pytest.raises(FleetProposalError) as exc:
+        validate_partner_communication(
+            communication(escalation_level=level), PARTNER_STATE
+        )
+    assert exc.value.reason_code == "PARTNER_ESCALATION_NOT_DETERMINISTIC"
+
+
+def test_escalation_is_derived_from_trusted_state_only():
+    from full_shelf_domain.fleet.contracts import deterministic_escalation_level
+
+    assert deterministic_escalation_level(PARTNER_STATE) == "URGENT"
+    assert deterministic_escalation_level(
+        dict(PARTNER_STATE, deadline=None)
+    ) == "PRIORITY"
+    assert deterministic_escalation_level(
+        dict(PARTNER_STATE, acknowledgment_status="CONFIRMED")
+    ) == "ROUTINE"
+
+
+def test_deadline_template_cannot_be_used_when_no_deadline_exists():
+    no_deadline = dict(PARTNER_STATE, deadline=None)
+    params = dict(communication().template_parameters, deadline="")
+    with pytest.raises(FleetProposalError) as exc:
+        validate_partner_communication(
+            communication(template_parameters=params, escalation_level="PRIORITY"),
+            no_deadline,
+        )
+    assert exc.value.reason_code == "PARTNER_TEMPLATE_REQUIRES_MISSING_DEADLINE"
+
+
+def test_invented_partner_identity_is_refused():
+    with pytest.raises(FleetProposalError) as exc:
+        validate_partner_communication(
+            communication(partner_id="SITE-99"), PARTNER_STATE
+        )
+    assert exc.value.reason_code == "PARTNER_IDENTITY_MISMATCH"

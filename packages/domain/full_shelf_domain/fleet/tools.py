@@ -6,6 +6,10 @@ performs I/O, or mutates state; the orchestrator passes snapshots in.
 
 Exact arithmetic, capacity, graph counts, deduplication, and candidate contents
 are owned here and never by a model. Agents may only read these results.
+
+ADK-visible tools are built by `build_*_tool` factories, which return named,
+typed, documented `FunctionTool` objects whose runtime names equal the stable
+catalog tool IDs' local names. No anonymous lambda is ever exposed to a model.
 """
 
 import hashlib
@@ -16,6 +20,7 @@ from .contracts import (
     TOOL_CUSTODY_GRAPH_READ,
     TOOL_PARTNER_STATE_READ,
     TOOL_RECOVERY_CANDIDATES_READ,
+    TOOL_RUNTIME_NAMES,
 )
 
 
@@ -62,7 +67,7 @@ def custody_dependents_read(
 ) -> Dict[str, Any]:
     """Return the deterministic downstream dependents of one custody node."""
     paths = [
-        path for path in graph_result["paths"]
+        path for path in graph_result.get("paths", [])
         if path["root_node_id"] == node_id or path["destination_node_id"] == node_id
     ]
     if not paths:
@@ -74,7 +79,7 @@ def custody_dependents_read(
         }
     by_id = {
         position["node_id"]: position
-        for position in graph_result["current_positions"]
+        for position in graph_result.get("current_positions", [])
     }
     dependents = [
         {
@@ -166,24 +171,31 @@ def _candidate_hash(candidate: Dict[str, Any]) -> str:
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
+# The deterministic candidate policy is exactly these two safe-lot consumption
+# orderings. This is a BOUNDED policy, not an exhaustive search of all feasible
+# allocations, and the catalog states it as such.
+CANDIDATE_POLICY_ID = "full-shelf.policy.bounded-lot-ordering.v1"
+CANDIDATE_POLICY_ORDERINGS = ("CAND-LOT-ASC", "CAND-LOT-DEEPEST-FIRST")
+
+
 def generate_recovery_candidates(
     *,
     incident_id: str,
     safe_lots: Sequence[Sequence],
     affected_orders: Sequence[Sequence],
 ) -> List[Dict[str, Any]]:
-    """Build the complete deterministic feasible candidate set.
+    """Build the candidate set defined by the bounded lot-ordering policy.
 
-    Candidate 1 (`CAND-LOT-ASC`) reproduces the accepted lot-ascending policy
-    exactly, so the canonical result is unchanged. Additional candidates come
-    from other truthful safe-lot consumption orders that still satisfy the
-    partial-recovery policy. Distinct candidates are deduplicated by allocation
-    content, so a scenario with only one truthful outcome yields exactly one
-    candidate and the planner has no discretion to exercise.
+    This is NOT a complete enumeration of every feasible allocation. The policy
+    admits exactly two safe-lot consumption orderings:
 
-    ponytail: two orderings (ascending, descending by remaining stock) cover the
-    real choice; a full permutation search buys nothing until a scenario has
-    more than a handful of safe lots.
+    * `CAND-LOT-ASC` reproduces the accepted lot-ascending allocation exactly,
+      so the canonical result is unchanged.
+    * `CAND-LOT-DEEPEST-FIRST` consumes the largest safe lot first.
+
+    Distinct candidates are deduplicated by allocation content, so a scenario
+    with only one truthful outcome yields exactly one candidate and the planner
+    has no discretion to exercise.
     """
     lot_ids = [row[0] for row in safe_lots]
     orderings = [
@@ -228,6 +240,7 @@ def recovery_candidates_read(candidates: Sequence[Dict[str, Any]]) -> Dict[str, 
     return {
         "tool_id": TOOL_RECOVERY_CANDIDATES_READ,
         "tool_outcome": "OK" if candidates else "EMPTY",
+        "candidate_policy_id": CANDIDATE_POLICY_ID,
         "candidate_ids": [c["candidate_id"] for c in candidates],
         "candidates": [
             {
@@ -264,3 +277,99 @@ def partner_state_read(
         "acknowledgment_status": acknowledgment_status,
         "deadline": deadline,
     }
+
+
+# ---------------------------------------------------------------------------
+# ADK-visible tool factories.
+#
+# Each factory closes over already-read deterministic data and returns a NAMED,
+# typed, documented function wrapped in an ADK FunctionTool. The runtime tool
+# name is asserted against TOOL_RUNTIME_NAMES so the model-visible name can
+# never drift from the governed catalog ID.
+# ---------------------------------------------------------------------------
+
+
+def _as_function_tool(func, expected_name: str):
+    """Wrap a named adapter in an ADK FunctionTool and pin its runtime name."""
+    from google.adk.tools import FunctionTool
+
+    if func.__name__ != expected_name:
+        raise ValueError(
+            f"TOOL_RUNTIME_NAME_MISMATCH: {func.__name__} != {expected_name}"
+        )
+    tool = FunctionTool(func)
+    if tool.name != expected_name:
+        raise ValueError(f"ADK_TOOL_NAME_MISMATCH: {tool.name} != {expected_name}")
+    return tool
+
+
+def build_custody_graph_tool(graph_result: Dict[str, Any]):
+    """Build the ADK tool exposing `TOOL_CUSTODY_GRAPH_READ`."""
+
+    def custody_graph_read_tool() -> Dict[str, Any]:
+        """Read the authoritative custody reconstruction for the recalled lot.
+
+        Returns total, confirmed, and unconfirmed case counts, the unconfirmed
+        node IDs, the maximum path depth, and every current custody position.
+        All values are computed by Spanner Graph, not by this tool.
+        """
+        return custody_graph_read(graph_result)
+
+    return _as_function_tool(
+        custody_graph_read_tool, TOOL_RUNTIME_NAMES[TOOL_CUSTODY_GRAPH_READ]
+    )
+
+
+def build_custody_dependents_tool(graph_result: Dict[str, Any]):
+    """Build the ADK tool exposing `TOOL_CUSTODY_DEPENDENTS_READ`."""
+
+    def custody_dependents_read_tool(node_id: str) -> Dict[str, Any]:
+        """Read the downstream custody dependents of one node.
+
+        Args:
+          node_id: The custody node identifier to inspect.
+
+        Returns each dependent node's ID, path depth, on-hand cases, and
+        acknowledgment status, or NOT_FOUND when the node has no paths.
+        """
+        return custody_dependents_read(graph_result, node_id=node_id)
+
+    return _as_function_tool(
+        custody_dependents_read_tool,
+        TOOL_RUNTIME_NAMES[TOOL_CUSTODY_DEPENDENTS_READ],
+    )
+
+
+def build_recovery_candidates_tool(candidates: Sequence[Dict[str, Any]]):
+    """Build the ADK tool exposing `TOOL_RECOVERY_CANDIDATES_READ`."""
+
+    def recovery_candidates_read_tool() -> Dict[str, Any]:
+        """Read the deterministic recovery candidates you may choose among.
+
+        Returns each candidate's ID, strategy, allocated and shortfall case
+        totals, agencies served, and exact allocations. You may select only a
+        candidate_id from this set; you may not modify any value inside it.
+        """
+        return recovery_candidates_read(candidates)
+
+    return _as_function_tool(
+        recovery_candidates_read_tool,
+        TOOL_RUNTIME_NAMES[TOOL_RECOVERY_CANDIDATES_READ],
+    )
+
+
+def build_partner_state_tool(partner_state: Dict[str, Any]):
+    """Build the ADK tool exposing `TOOL_PARTNER_STATE_READ`."""
+
+    def partner_state_read_tool() -> Dict[str, Any]:
+        """Read the bounded operational state of the partner to contact.
+
+        Returns the partner ID and name, the recalled lot, the unconfirmed case
+        count, the acknowledgment status, and the deadline when one exists.
+        Every outbound template parameter must be copied from these values.
+        """
+        return dict(partner_state)
+
+    return _as_function_tool(
+        partner_state_read_tool, TOOL_RUNTIME_NAMES[TOOL_PARTNER_STATE_READ]
+    )

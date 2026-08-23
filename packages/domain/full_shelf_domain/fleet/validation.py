@@ -19,6 +19,7 @@ from .contracts import (
     NetworkCustodyAssessment,
     PartnerCommunication,
     RecoverySelection,
+    deterministic_escalation_level,
 )
 
 
@@ -97,18 +98,28 @@ def validate_partner_communication(
     if set(communication.template_parameters) != set(required):
         raise FleetProposalError("PARTNER_TEMPLATE_PARAMETERS_INVALID")
 
-    # Bound every parameter that has an authoritative counterpart. The agent may
-    # not restate a case count, lot, or partner name of its own invention.
+    # Escalation is recomputed from trusted state, never accepted from the model.
+    if communication.escalation_level != deterministic_escalation_level(partner_state):
+        raise FleetProposalError("PARTNER_ESCALATION_NOT_DETERMINISTIC")
+
+    # Every renderable parameter must have an authoritative source. A parameter
+    # with no entry here cannot be bound and is therefore rejected outright,
+    # which is what prevents an invented pickup window or deadline.
     authoritative = {
         "partner_name": partner_state["partner_name"],
         "lot_id": partner_state["lot_id"],
         "cases": str(partner_state["unconfirmed_cases"]),
         "deadline": partner_state.get("deadline") or "",
     }
-    for key, expected in authoritative.items():
-        if key in communication.template_parameters:
-            if communication.template_parameters[key] != expected:
-                raise FleetProposalError("PARTNER_PARAMETER_NOT_AUTHORITATIVE")
+    for key, value in communication.template_parameters.items():
+        if key not in authoritative:
+            raise FleetProposalError("PARTNER_PARAMETER_HAS_NO_AUTHORITATIVE_SOURCE")
+        if value != authoritative[key]:
+            raise FleetProposalError("PARTNER_PARAMETER_NOT_AUTHORITATIVE")
+
+    # A template requiring a deadline may not be selected when none exists.
+    if "deadline" in required and not partner_state.get("deadline"):
+        raise FleetProposalError("PARTNER_TEMPLATE_REQUIRES_MISSING_DEADLINE")
 
     # Acknowledgment is an authoritative fact owned by the ledger callback path.
     # An agent may request one; it may never assert one.
@@ -126,7 +137,7 @@ def render_partner_message(communication: PartnerCommunication) -> str:
     templates = {
         "partner.pickup-request.v1": (
             "{partner_name}: refrigerated partner pickup requested for lot "
-            "{lot_id}, {cases} cases, window {pickup_window}."
+            "{lot_id}, {cases} cases."
         ),
         "partner.acknowledgment-request.v1": (
             "{partner_name}: confirm custody of lot {lot_id}, {cases} cases, "
@@ -148,3 +159,25 @@ def proposal_hash(payload: Dict[str, Any]) -> str:
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, default=str).encode()
     ).hexdigest()
+
+
+def validate_recall_extraction(extracted, raw_notice: str, expected_lot_id: str):
+    """Re-apply the accepted recall source-anchoring rules inside the fleet.
+
+    Every extracted value must appear verbatim in the screened notice, the lot
+    identifier must carry an explicit lot anchor, and it must match the lot the
+    authenticated event declared. This preserves the previously accepted
+    behavior of `extract_recall_entities_with_gemini_35`.
+    """
+    from full_shelf_domain.recall import _has_explicit_lot_anchor
+
+    normalized = raw_notice.casefold()
+    for field_name in type(extracted).model_fields:
+        value = getattr(extracted, field_name)
+        if value.casefold() not in normalized:
+            raise FleetProposalError("SOURCE_ANCHOR_VALIDATION_FAILED")
+    if not _has_explicit_lot_anchor(raw_notice, extracted.lot_id):
+        raise FleetProposalError("LOT_ANCHOR_VALIDATION_FAILED")
+    if extracted.lot_id != expected_lot_id:
+        raise FleetProposalError("EXTRACTED_LOT_DOES_NOT_MATCH_EVENT")
+    return extracted
