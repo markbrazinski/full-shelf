@@ -29,8 +29,7 @@ def validate_custody_assessment(
     expected_unconfirmed = [
         position["node_id"] for position in graph_result["unconfirmed_positions"]
     ]
-    checks = (
-        (assessment.lot_id, graph_result["lot_id"], "CUSTODY_LOT_MISMATCH"),
+    checks = [
         (assessment.total_cases_in_custody, graph_result["unique_current_cases"],
          "CUSTODY_TOTAL_MISMATCH"),
         (assessment.confirmed_cases, graph_result["confirmed_cases"],
@@ -39,9 +38,16 @@ def validate_custody_assessment(
          "CUSTODY_UNCONFIRMED_MISMATCH"),
         (sorted(assessment.unconfirmed_node_ids), sorted(expected_unconfirmed),
          "CUSTODY_UNCONFIRMED_NODES_MISMATCH"),
-        (assessment.max_path_depth, graph_result["max_path_depth"],
-         "CUSTODY_DEPTH_MISMATCH"),
-    )
+    ]
+    # Compare lot and depth only when the deterministic result reports them, so
+    # a narrower graph projection cannot be turned into a false mismatch.
+    if graph_result.get("lot_id") is not None:
+        checks.append(
+            (assessment.lot_id, graph_result["lot_id"], "CUSTODY_LOT_MISMATCH")
+        )
+    if graph_result.get("max_path_depth") is not None:
+        checks.append((assessment.max_path_depth, graph_result["max_path_depth"],
+                       "CUSTODY_DEPTH_MISMATCH"))
     for actual, expected, reason_code in checks:
         if actual != expected:
             raise FleetProposalError(reason_code)

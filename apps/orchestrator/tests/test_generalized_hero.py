@@ -29,6 +29,61 @@ def test_altered_recovery_is_derived_from_authoritative_orders_and_safe_stock():
     assert all("ALT" not in row["allocation_id"] for row in allocations)
 
 
+def altered_fleet_runner(agent_id_to_output):
+    """Replay scripted specialist outputs through the real fleet sequence."""
+
+    def _runner(*, agent, agent_id, prompt, output_model, timeout_seconds=None):
+        return {
+            "output": agent_id_to_output[agent_id],
+            "execution": {
+                "agent_id": agent_id, "agent_name": agent.name,
+                "model_used": "gemini-3.5-flash",
+                "adk_framework": "google-adk/test",
+                "adk_session_id": f"session-{agent_id}",
+                "adk_run_id": f"run-{agent_id}",
+                "adk_event_id": f"event-{agent_id}",
+                "declared_tools": [], "tool_invocations": [],
+            },
+        }
+
+    return _runner
+
+
+def altered_specialist_outputs():
+    from full_shelf_domain.fleet.contracts import (
+        AGENT_FULFILLMENT_RECOVERY, AGENT_NETWORK_CUSTODY,
+        AGENT_PARTNER_OPERATIONS, NetworkCustodyAssessment,
+        PartnerCommunication, RecoverySelection,
+    )
+
+    return {
+        AGENT_NETWORK_CUSTODY: NetworkCustodyAssessment(
+            lot_id="LOT-ALTERED-9001", total_cases_in_custody=51,
+            confirmed_cases=46, unconfirmed_cases=5,
+            unconfirmed_node_ids=["SITE-ALTERED-77"], max_path_depth=4,
+            containment_assessment="UNCONFIRMED_DOWNSTREAM",
+            narrative="Five cases at Site 77 remain unconfirmed.",
+        ),
+        AGENT_FULFILLMENT_RECOVERY: RecoverySelection(
+            selected_candidate_id="CAND-LOT-ASC",
+            rationale="Only feasible allocation of the available safe stock.",
+            cited_constraints=["21 safe cases available"],
+            tradeoffs="Two agencies retain truthful shortfalls.",
+            confidence=0.88,
+        ),
+        AGENT_PARTNER_OPERATIONS: PartnerCommunication(
+            partner_id="SITE-ALTERED-77",
+            template_id="partner.acknowledgment-request.v1",
+            escalation_level="PRIORITY",
+            template_parameters={
+                "partner_name": "Site 77", "lot_id": "LOT-ALTERED-9001",
+                "cases": "5", "deadline": "",
+            },
+            rationale="Custody is unconfirmed.", confidence=0.8,
+        ),
+    }
+
+
 def test_same_managed_hero_uses_altered_ids_quantities_and_calculated_outcome():
     commands = []
 
@@ -52,6 +107,7 @@ def test_same_managed_hero_uses_altered_ids_quantities_and_calculated_outcome():
         "adk_event_id": "event-alt", "correlation_id": "trace-alt",
     }
     graph = {
+        "lot_id": "LOT-ALTERED-9001", "max_path_depth": 4,
         "unique_current_cases": 51, "confirmed_cases": 46, "unconfirmed_cases": 5,
         "unconfirmed_positions": [{
             "node_id": "SITE-ALTERED-77", "node_type": "DOWNSTREAM_SITE",
@@ -82,6 +138,14 @@ def test_same_managed_hero_uses_altered_ids_quantities_and_calculated_outcome():
         patch.object(main, "_run_managed_custody_graph", return_value=graph),
         patch.object(main, "execute_ledger_command", side_effect=execute),
         patch.object(main, "schedule_site01_deadline_task", return_value=task) as schedule,
+        patch.object(
+            main, "run_fleet",
+            side_effect=lambda **kw: __import__(
+                "full_shelf_domain.fleet.coordinator", fromlist=["run_fleet"]
+            ).run_fleet(
+                **{**kw, "runner": altered_fleet_runner(altered_specialist_outputs())}
+            ),
+        ),
     ):
         result = main._execute_managed_recall_event(
             tenant_id="east-bay-food-bank", coordinator_id="COORD-ALTERED",
@@ -109,3 +173,17 @@ def test_same_managed_hero_uses_altered_ids_quantities_and_calculated_outcome():
     assert opened["payload"]["model_armor_correlation_id"] == (
         "0123456789abcdef0123456789abcdef"
     )
+
+    # The fleet delegated on the altered scenario and its selection reconciled
+    # with the deterministic recovery policy rather than any canonical memory.
+    fleet = result["agent_fleet"]
+    assert fleet["root_agent_id"] == "full-shelf.incident-coordinator.v1"
+    assert fleet["proposal_status"] == "PROPOSED"
+    assert fleet["deterministic_reconciliation"] == "RECONCILED_WITH_ACCEPTED_POLICY"
+    assert [entry["agent_id"] for entry in fleet["delegation_trace"]] == [
+        "full-shelf.recall-extraction.v1",
+        "full-shelf.network-custody.v1",
+        "full-shelf.fulfillment-recovery.v1",
+        "full-shelf.partner-operations.v1",
+    ]
+    assert fleet["selected_candidate_id"] in fleet["candidate_ids_offered"]

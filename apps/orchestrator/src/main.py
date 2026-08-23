@@ -48,6 +48,13 @@ from full_shelf_domain.recall import (
     VERTEX_LOCATION,
     is_eligible_gemini_model,
 )
+from full_shelf_domain.fleet.contracts import (
+    AGENT_INCIDENT_COORDINATOR,
+    FLEET_MANIFEST_VERSION,
+    FleetProposalError,
+)
+from full_shelf_domain.fleet.coordinator import run_fleet
+from full_shelf_domain.fleet.tools import generate_recovery_candidates
 
 app = FastAPI(
     title="Full Shelf Fulfillment Orchestrator API",
@@ -1351,6 +1358,60 @@ def _derive_safe_recovery(*, incident_id: str, safe_lots, affected_orders):
     return allocations, shortfalls
 
 
+def _run_agent_fleet_proposal(
+    *,
+    incident_id: str,
+    lot_id: str,
+    graph: Dict[str, Any],
+    candidates: List[Dict[str, Any]],
+    unconfirmed_position: Dict[str, Any],
+    unconfirmed_cases: int,
+    extraction_evidence: Dict[str, Any],
+    deadline: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Delegate to the ADK fleet and revalidate its advisory proposal here.
+
+    The fleet never submits anything. This function converts an accepted
+    proposal into deterministic allocations, and any agent, model, tool, schema,
+    or reconciliation failure into MANUAL_REVIEW_REQUIRED with zero mutation.
+    """
+    try:
+        result = run_fleet(
+            incident_id=incident_id,
+            lot_id=lot_id,
+            graph_result=graph,
+            recovery_candidates=candidates,
+            partner_state={
+                "partner_id": unconfirmed_position["node_id"],
+                "partner_name": unconfirmed_position["name"],
+                "lot_id": lot_id,
+                "unconfirmed_cases": unconfirmed_cases,
+                "acknowledgment_status": unconfirmed_position[
+                    "acknowledgment_status"
+                ],
+                "deadline": deadline,
+            },
+            extraction_evidence=extraction_evidence,
+        )
+    except FleetProposalError as exc:
+        return {"status": "MANUAL_REVIEW_REQUIRED", "reason_code": exc.reason_code,
+                "proposal": None, "recovery_candidate": None}
+    except Exception:
+        # No fleet failure may fall back to canonical output.
+        return {"status": "MANUAL_REVIEW_REQUIRED",
+                "reason_code": "FLEET_EXECUTION_FAILED",
+                "proposal": None, "recovery_candidate": None}
+
+    proposal = result["proposal"]
+    if proposal.status != "PROPOSED" or result["recovery_candidate"] is None:
+        return {"status": "MANUAL_REVIEW_REQUIRED",
+                "reason_code": proposal.reason_code or "FLEET_PROPOSAL_REJECTED",
+                "proposal": proposal.model_dump(), "recovery_candidate": None}
+    return {"status": "ACCEPTED", "reason_code": None,
+            "proposal": proposal.model_dump(),
+            "recovery_candidate": result["recovery_candidate"]}
+
+
 def _execute_managed_recall_event(
     *,
     tenant_id: str,
@@ -1466,10 +1527,47 @@ def _execute_managed_recall_event(
         "plan_id": inputs["plan_id"], "revision": active_revision,
         "reason": f"{recalled_lot_id}_RECALL",
     })
-    allocations, shortfalls = _derive_safe_recovery(
+    # Deterministic code owns the complete feasible candidate set. The fleet may
+    # only choose among these candidates; it can neither extend nor alter them.
+    candidates = generate_recovery_candidates(
         incident_id=incident_id, safe_lots=inputs["safe_lots"],
         affected_orders=inputs["affected_orders"],
     )
+    fleet = _run_agent_fleet_proposal(
+        incident_id=incident_id, lot_id=recalled_lot_id, graph=graph,
+        candidates=candidates, unconfirmed_position=unconfirmed_position,
+        unconfirmed_cases=graph["unconfirmed_cases"],
+        extraction_evidence=extracted,
+    )
+    if fleet["status"] != "ACCEPTED":
+        # An advisory failure stops recovery submission entirely. Containment
+        # work already committed above stands; nothing further is mutated.
+        return {
+            "hero_loop_status": "HALTED_FOR_MANUAL_REVIEW",
+            "halt_stage": "AGENT_FLEET_PROPOSAL",
+            "manual_review_reason": fleet["reason_code"],
+            "agent_fleet": fleet,
+            "model_armor_screening": screening,
+            "gemini_35_extraction": extracted,
+            "spanner_graph_reconstruction": graph,
+            "ledger_mutation_attempted": False,
+            "trace_id": trace_id,
+        }
+    allocations = fleet["recovery_candidate"]["allocations"]
+    shortfalls = fleet["recovery_candidate"]["shortfalls"]
+
+    # Independent deterministic cross-check: the fleet-selected candidate must
+    # reproduce the accepted safe-recovery policy exactly.
+    expected_allocations, expected_shortfalls = _derive_safe_recovery(
+        incident_id=incident_id, safe_lots=inputs["safe_lots"],
+        affected_orders=inputs["affected_orders"],
+    )
+    if (sum(a["cases"] for a in allocations)
+            != sum(a["cases"] for a in expected_allocations)
+            or sum(s["cases"] for s in shortfalls)
+            != sum(s["cases"] for s in expected_shortfalls)):
+        raise HTTPException(409, "FLEET_RECOVERY_DOES_NOT_RECONCILE")
+
     recovery = commit(
         "safe-recovery", "ALLOCATE_SAFE_STOCK",
         {"incident_id": incident_id, "allocations": allocations,
@@ -1509,6 +1607,17 @@ def _execute_managed_recall_event(
         "gemini_35_extraction": extracted,
         "spanner_graph_reconstruction": graph,
         "safe_stock_recovery": {"allocations": allocations, "shortfalls": shortfalls},
+        "agent_fleet": {
+            "manifest_version": FLEET_MANIFEST_VERSION,
+            "root_agent_id": AGENT_INCIDENT_COORDINATOR,
+            "proposal_status": fleet["proposal"]["status"],
+            "proposal_hash": fleet["proposal"]["proposal_hash"],
+            "delegation_trace": fleet["proposal"]["delegation_trace"],
+            "selected_candidate_id": fleet["recovery_candidate"]["candidate_id"],
+            "candidate_ids_offered": [c["candidate_id"] for c in candidates],
+            "partner_template_id": fleet["proposal"]["partner"]["template_id"],
+            "deterministic_reconciliation": "RECONCILED_WITH_ACCEPTED_POLICY",
+        },
         "unconfirmed_position": unconfirmed_position,
         "ledger_command_receipts": {
             "open": open_result["receipt"], "scoping": scoping["receipt"],

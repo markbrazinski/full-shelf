@@ -26,20 +26,20 @@ def custody_graph_read(graph_result: Dict[str, Any]) -> Dict[str, Any]:
     parameters so no prompt can carry query shape, and restates the counts the
     managed query already computed.
     """
-    positions = graph_result["current_positions"]
+    positions = graph_result.get("current_positions", [])
     return {
         "tool_id": TOOL_CUSTODY_GRAPH_READ,
         "tool_outcome": "OK",
-        "lot_id": graph_result["lot_id"],
-        "query_engine": graph_result["query_engine"],
+        "lot_id": graph_result.get("lot_id"),
+        "query_engine": graph_result.get("query_engine", "SPANNER_GRAPH_GQL"),
         "total_cases_in_custody": graph_result["unique_current_cases"],
         "confirmed_cases": graph_result["confirmed_cases"],
         "unconfirmed_cases": graph_result["unconfirmed_cases"],
         "unconfirmed_node_ids": [
             position["node_id"] for position in graph_result["unconfirmed_positions"]
         ],
-        "max_path_depth": graph_result["max_path_depth"],
-        "node_count": graph_result["node_count"],
+        "max_path_depth": graph_result.get("max_path_depth"),
+        "node_count": graph_result.get("node_count", len(positions)),
         "positions": [
             {
                 "node_id": position["node_id"],
@@ -51,7 +51,9 @@ def custody_graph_read(graph_result: Dict[str, Any]) -> Dict[str, Any]:
             }
             for position in positions
         ],
-        "intermediate_subtotals_readded": graph_result["intermediate_subtotals_readded"],
+        "intermediate_subtotals_readded": graph_result.get(
+            "intermediate_subtotals_readded", False
+        ),
     }
 
 
