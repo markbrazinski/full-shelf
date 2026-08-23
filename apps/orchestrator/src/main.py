@@ -9,6 +9,7 @@ from functools import lru_cache
 from typing import Dict, Any, Optional, List
 from zoneinfo import ZoneInfo
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, BackgroundTasks, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field
@@ -66,6 +67,30 @@ app = FastAPI(
     docs_url=None,
     redoc_url=None,
 )
+
+
+# -------------------------------------------------------------------
+# DELTA 1 - BROWSER ORIGIN BOUNDARY
+# The operator UI is a separate origin. Only exact, explicitly configured
+# origins are permitted, and only the three HUMAN_OPERATOR routes are
+# reachable from a browser anyway (see ROUTE_AUTHENTICATION_MATRIX).
+# The private plan ledger deliberately receives no CORS configuration.
+# -------------------------------------------------------------------
+FRONTEND_ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("FRONTEND_ALLOWED_ORIGINS", "").split(",")
+    if origin.strip()
+]
+if FRONTEND_ALLOWED_ORIGINS:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=FRONTEND_ALLOWED_ORIGINS,
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "Last-Event-ID"],
+        expose_headers=["X-Full-Shelf-Trace-Id"],
+        max_age=600,
+    )
 
 tracer = get_tracer("orchestrator")
 logger = logging.getLogger("full_shelf.orchestrator")
@@ -1664,6 +1689,20 @@ def _execute_managed_recall_event(
                 "product": extracted.get("product_name"),
                 "hazard": extracted.get("hazard"),
                 "action_required": extracted.get("action_required"),
+                # Delta 3: the advisory fleet execution evidence was previously
+                # returned to Pub/Sub and discarded. Persisting it on the
+                # incident makes the five real ADK run/session identities
+                # durably readable by the operator projection without adding a
+                # ledger command type, a route, or a schema change.
+                "agent_fleet": {
+                    "manifest_version": FLEET_MANIFEST_VERSION,
+                    "root_agent_id": AGENT_INCIDENT_COORDINATOR,
+                    "coordinator_session_id": fleet["proposal"]["coordinator_session_id"],
+                    "coordination_run_id": fleet["proposal"]["coordination_run_id"],
+                    "proposal_status": fleet["proposal"]["status"],
+                    "proposal_hash": fleet["proposal"]["proposal_hash"],
+                    "delegation_trace": fleet["proposal"]["delegation_trace"],
+                },
             },
         },
     ))
@@ -2463,62 +2502,439 @@ def get_system_evidence(
 @app.get("/api/v1/projections/demo-beats")
 def get_demo_beats_projections(
     authority=Depends(require_frontend_authority),
+    as_of: Optional[str] = Query(None, max_length=40),
+    include_next_day_draft: bool = Query(False),
 ):
-    """Project only committed facts from the configured verified authority."""
+    """Project only facts committed at or before an explicit boundary.
+
+    Cross-day leakage is closed by exact canonical plan identity. Intra-day
+    leakage is closed by receipt-gated blocks. Timeless current-state rows are
+    omitted whenever a later mutation proves the present value is not the
+    boundary value.
+    """
     identity, scope, operating_day = authority
+    boundary_at, boundary_mode = _resolve_projection_boundary(operating_day, as_of)
+    tenant = scope.tenant_id
+    current_plan_id = f"PLAN-{operating_day}"
     db = get_spanner_database(scope.database_id)
+    omitted: List[Dict[str, str]] = []
+
+    str_t = spanner.param_types.STRING
+    ts_t = spanner.param_types.TIMESTAMP
+
     with db.snapshot(multi_use=True) as snapshot:
-        plans = list(snapshot.execute_sql(
-            "SELECT plan_id, revision, status FROM PlanRevisions "
-            "WHERE tenant_id=@tenant ORDER BY created_at",
-            params={"tenant": scope.tenant_id},
-            param_types={"tenant": spanner.param_types.STRING},
+        receipt_rows = list(snapshot.execute_sql(
+            "SELECT receipt_id, action_id, action_type, status, mutations_applied, "
+            "timestamp FROM Receipts WHERE tenant_id=@tenant ORDER BY timestamp ASC",
+            params={"tenant": tenant}, param_types={"tenant": str_t},
         ))
-        approvals = list(snapshot.execute_sql(
+        boundary = ProjectionBoundary(boundary_at, boundary_mode, receipt_rows)
+
+        # Exact canonical plan identity. A prefix match would admit tomorrow.
+        plan_rows = list(snapshot.execute_sql(
+            "SELECT plan_id, revision, status, created_at FROM PlanRevisions "
+            "WHERE tenant_id=@tenant AND plan_id=@plan_id AND created_at<=@as_of "
+            "ORDER BY created_at",
+            params={"tenant": tenant, "plan_id": current_plan_id, "as_of": boundary_at},
+            param_types={"tenant": str_t, "plan_id": str_t, "as_of": ts_t},
+        ))
+        revisions = [r[1] for r in plan_rows]
+
+        order_rows = []
+        if revisions:
+            order_rows = list(snapshot.execute_sql(
+                "SELECT revision, order_id, destination_agency_name, cases, lot_id, "
+                "assigned_vehicle_id, status FROM Orders "
+                "WHERE tenant_id=@tenant AND plan_id=@plan_id "
+                "ORDER BY revision, order_id",
+                params={"tenant": tenant, "plan_id": current_plan_id},
+                param_types={"tenant": str_t, "plan_id": str_t},
+            ))
+
+        approval_rows = list(snapshot.execute_sql(
             "SELECT approval_id, plan_id, source_revision, proposed_revision, "
             "plan_diff_hash, kms_key_version, verified_at FROM Approvals "
-            "WHERE tenant_id=@tenant AND operating_day=@operating_day",
-            params={
-                "tenant": scope.tenant_id,
-                "operating_day": datetime.fromisoformat(operating_day).date(),
-            },
-            param_types={
-                "tenant": spanner.param_types.STRING,
-                "operating_day": spanner.param_types.DATE,
-            },
+            "WHERE tenant_id=@tenant AND operating_day=@day AND verified_at<=@as_of",
+            params={"tenant": tenant,
+                    "day": datetime.fromisoformat(operating_day).date(),
+                    "as_of": boundary_at},
+            param_types={"tenant": str_t, "day": spanner.param_types.DATE,
+                         "as_of": ts_t},
         ))
-        incidents = list(snapshot.execute_sql(
-            "SELECT incident_id, incident_type, status, terminal_state, details "
-            "FROM Incidents WHERE tenant_id=@tenant ORDER BY created_at",
-            params={"tenant": scope.tenant_id},
-            param_types={"tenant": spanner.param_types.STRING},
+
+        incident_rows = list(snapshot.execute_sql(
+            "SELECT incident_id, incident_type, status, terminal_state, details, "
+            "affected_lot_id, created_at, resolved_at FROM Incidents "
+            "WHERE tenant_id=@tenant AND created_at<=@as_of ORDER BY created_at",
+            params={"tenant": tenant, "as_of": boundary_at},
+            param_types={"tenant": str_t, "as_of": ts_t},
         ))
-    return {
-        "tenant_id": scope.tenant_id,
+
+        barrier_rows = list(snapshot.execute_sql(
+            "SELECT barrier_id, lot_id, status, created_at, released_at "
+            "FROM MovementBarriers WHERE tenant_id=@tenant AND created_at<=@as_of",
+            params={"tenant": tenant, "as_of": boundary_at},
+            param_types={"tenant": str_t, "as_of": ts_t},
+        ))
+        allocation_rows = list(snapshot.execute_sql(
+            "SELECT allocation_id, incident_id, status, created_at "
+            "FROM RecoveryAllocations WHERE tenant_id=@tenant AND created_at<=@as_of",
+            params={"tenant": tenant, "as_of": boundary_at},
+            param_types={"tenant": str_t, "as_of": ts_t},
+        ))
+        shortfall_rows = list(snapshot.execute_sql(
+            "SELECT shortfall_id, incident_id, status, created_at "
+            "FROM RecoveryShortfalls WHERE tenant_id=@tenant AND created_at<=@as_of",
+            params={"tenant": tenant, "as_of": boundary_at},
+            param_types={"tenant": str_t, "as_of": ts_t},
+        ))
+        work_rows = list(snapshot.execute_sql(
+            "SELECT work_item_id, incident_id, status, created_at, completed_at "
+            "FROM WorkItems WHERE tenant_id=@tenant AND created_at<=@as_of",
+            params={"tenant": tenant, "as_of": boundary_at},
+            param_types={"tenant": str_t, "as_of": ts_t},
+        ))
+        constraint_rows = list(snapshot.execute_sql(
+            "SELECT plan_id, constraint_type, description, created_at "
+            "FROM PlanConstraints WHERE tenant_id=@tenant AND created_at<=@as_of",
+            params={"tenant": tenant, "as_of": boundary_at},
+            param_types={"tenant": str_t, "as_of": ts_t},
+        ))
+
+        vehicle_rows = []
+        if boundary.timeless_row_is_safe("vehicles"):
+            vehicle_rows = list(snapshot.execute_sql(
+                "SELECT vehicle_id, name, max_capacity_cases, current_load_cases, "
+                "is_operational FROM Vehicles WHERE tenant_id=@tenant",
+                params={"tenant": tenant}, param_types={"tenant": str_t},
+            ))
+        else:
+            omitted.append({"field": "current_day.vehicles",
+                            "reason": PRE_BOUNDARY_STATE_NOT_RETAINED})
+
+        next_day_draft = None
+        if include_next_day_draft:
+            next_plan_id = (
+                f"PLAN-{(datetime.fromisoformat(operating_day).date() + timedelta(days=1)).isoformat()}"
+            )
+            draft_rows = list(snapshot.execute_sql(
+                "SELECT plan_id, revision, status, created_at FROM PlanRevisions "
+                "WHERE tenant_id=@tenant AND plan_id=@plan_id AND created_at<=@as_of",
+                params={"tenant": tenant, "plan_id": next_plan_id, "as_of": boundary_at},
+                param_types={"tenant": str_t, "plan_id": str_t, "as_of": ts_t},
+            ))
+            if draft_rows:
+                row = draft_rows[0]
+                next_day_draft = {
+                    "plan_id": row[0], "revision": row[1], "status": row[2],
+                    "approval_required": row[2] != "ACTIVE",
+                }
+
+    # --- Incident lifecycle by recomputed identity, never by position -------
+    incidents = []
+    for row in incident_rows:
+        incident_id = row[0]
+        terminal_receipt = boundary.committed(
+            _incident_status_action_id(tenant, incident_id, "PARTIALLY_CONTAINED"))
+        containment_receipt = boundary.committed(
+            _incident_status_action_id(tenant, incident_id, "CONTAINMENT_IN_PROGRESS"))
+        scoping_receipt = boundary.committed(
+            _incident_status_action_id(tenant, incident_id, "SCOPING"))
+        if terminal_receipt:
+            status_as_of, terminal_as_of = "PARTIALLY_CONTAINED", "PARTIALLY_CONTAINED"
+        elif containment_receipt:
+            status_as_of, terminal_as_of = "CONTAINMENT_IN_PROGRESS", "NONE"
+        elif scoping_receipt:
+            status_as_of, terminal_as_of = "SCOPING", "NONE"
+        else:
+            status_as_of, terminal_as_of = "DETECTED", "NONE"
+        refusal = boundary.committed(
+            _incident_action_id(tenant, incident_id, "containment-refusal"))
+        incidents.append({
+            "incident_id": incident_id,
+            "incident_type": row[1],
+            "status": status_as_of,
+            "terminal_state": terminal_as_of,
+            "affected_lot_id": row[5],
+            "model_armor_screening": (
+                {"result": "PASS",
+                 "correlation_id": json.loads(row[4] or "{}").get(
+                     "model_armor_correlation_id")}
+                if json.loads(row[4] or "{}").get("model_armor_correlation_id")
+                else None
+            ),
+            "refusal": (
+                {"decision": refusal["status"],
+                 "mutations_applied": refusal["mutations_applied"],
+                 "receipt_id": refusal["receipt_id"],
+                 "committed_at": refusal["committed_at"]}
+                if refusal else None
+            ),
+        })
+
+    # --- Commitments, gated per revision by its own committed receipt -------
+    commitments = []
+    for row in order_rows:
+        revision = row[0]
+        if revision not in revisions:
+            continue
+        commitments.append({
+            "revision": revision, "order_id": row[1], "agency": row[2],
+            "cases": row[3], "lot_id": row[4], "vehicle": row[5], "status": row[6],
+        })
+
+    # --- Open-as-of obligations, never present-day-open ---------------------
+    def _open_as_of(created_at, closed_at):
+        if created_at is None:
+            return False
+        if _normalize_receipt_timestamp(created_at) > boundary_at:
+            return False
+        if closed_at is None:
+            return True
+        return _normalize_receipt_timestamp(closed_at) > boundary_at
+
+    carry_forward = []
+    for row in work_rows:
+        if _open_as_of(row[3], row[4]):
+            carry_forward.append({"kind": "ACKNOWLEDGMENT_OBLIGATION",
+                                  "reference_id": row[0], "incident_id": row[1]})
+    for row in barrier_rows:
+        if _open_as_of(row[3], row[4]):
+            carry_forward.append({"kind": "MOVEMENT_BARRIER",
+                                  "reference_id": row[0], "lot_id": row[1]})
+    for row in shortfall_rows:
+        if _open_as_of(row[3], None) and row[2] == "OPEN":
+            carry_forward.append({"kind": "RECOVERY_SHORTFALL",
+                                  "reference_id": row[0], "incident_id": row[1]})
+    for row in incident_rows:
+        if _open_as_of(row[6], row[7]):
+            entry = next((i for i in incidents if i["incident_id"] == row[0]), None)
+            if entry and entry["terminal_state"] == "PARTIALLY_CONTAINED":
+                carry_forward.append({"kind": "UNRESOLVED_INCIDENT",
+                                      "reference_id": row[0],
+                                      "terminal_state": "PARTIALLY_CONTAINED"})
+
+    # --- Custody, gated on its own committed reconciliation receipt ---------
+    custody = None
+    recall_incident = next(
+        (r for r in incident_rows if r[1] == "FOOD_SAFETY_RECALL"), None)
+    if recall_incident is not None:
+        # No CUSTODY_RECONCILIATION command type exists in the closed ledger
+        # enum, and adding one would change the ledger contract. The movement
+        # barrier is the first commit that provably depends on a completed
+        # custody reconstruction, so it is the truthful gate.
+        reconciled = boundary.committed(
+            _incident_action_id(tenant, recall_incident[0], "movement-barrier"))
+        if reconciled is None:
+            omitted.append({"field": "custody_graph",
+                            "reason": "NOT_COMMITTED_AS_OF_BOUNDARY"})
+        elif not boundary.timeless_row_is_safe("custody"):
+            omitted.append({"field": "custody_graph",
+                            "reason": PRE_BOUNDARY_STATE_NOT_RETAINED})
+        else:
+            try:
+                custody = _run_managed_custody_graph(
+                    db, tenant_id=tenant, lot_id=recall_incident[5])
+            except Exception:
+                logger.exception("Bounded projection custody graph read failed")
+                omitted.append({"field": "custody_graph",
+                                "reason": "MANAGED_GRAPH_READ_UNAVAILABLE"})
+
+    # --- Fleet / execution evidence (Delta 3 durable source) ----------------
+    fleet_evidence = None
+    if recall_incident is not None:
+        details = json.loads(recall_incident[4] or "{}")
+        stored = details.get("agent_fleet")
+        # The advisory fleet proposal is a strict precondition of the safe-stock
+        # allocation, which is an existing ledger command type. Gating on it
+        # avoids inventing a new command type for evidence purposes.
+        proposal_receipt = boundary.committed(
+            _incident_action_id(tenant, recall_incident[0], "safe-recovery"))
+        if stored and proposal_receipt:
+            fleet_evidence = {
+                "manifest_version": stored.get("manifest_version"),
+                "root_agent_id": stored.get("root_agent_id"),
+                "coordinator_session_id": stored.get("coordinator_session_id"),
+                "coordination_run_id": stored.get("coordination_run_id"),
+                "proposal_status": stored.get("proposal_status"),
+                "delegation_trace": stored.get("delegation_trace") or [],
+                "committed_at": proposal_receipt["committed_at"],
+            }
+        elif stored:
+            omitted.append({"field": "agent_activity_as_of",
+                            "reason": "NOT_COMMITTED_AS_OF_BOUNDARY"})
+
+    response = {
+        "tenant_id": tenant,
         "operating_day": operating_day,
-        "authority_scope": f"{scope.tenant_id}@{operating_day}",
+        "authority_scope": f"{tenant}@{operating_day}",
         "verified_principal_subject": identity.subject,
         "classification": "OBSERVED_LIVE",
-        "plan_revisions": [
-            {"plan_id": row[0], "revision": row[1], "status": row[2]}
-            for row in plans
-        ],
-        "approvals": [
-            {"approval_id": row[0], "plan_id": row[1],
-             "source_revision": row[2], "proposed_revision": row[3],
-             "plan_diff_hash": row[4], "kms_key_version": row[5],
-             "verified_at": str(row[6])}
-            for row in approvals
-        ],
-        "incidents": [
-            {"incident_id": row[0], "incident_type": row[1],
-             "status": row[2], "terminal_state": row[3],
-             "model_armor_correlation_id": (
-                 json.loads(row[4] or "{}").get("model_armor_correlation_id")
-             )}
-            for row in incidents
-        ],
+        "projection_boundary": {
+            "as_of": boundary_at.isoformat(),
+            "mode": boundary_mode,
+            "omitted_fields": omitted,
+        },
+        "current_day": {
+            "plan_id": current_plan_id,
+            "plan_revisions": [
+                {"plan_id": r[0], "revision": r[1], "status": r[2]} for r in plan_rows
+            ],
+            "active_plan_revision": revisions[-1] if revisions else None,
+            "commitments": commitments,
+            "vehicles": [
+                {"vehicle_id": v[0], "name": v[1], "capacity": v[2],
+                 "assigned_cases": v[3], "is_operational": v[4]}
+                for v in vehicle_rows
+            ] if vehicle_rows else None,
+            "approvals": [
+                {"approval_id": a[0], "plan_id": a[1], "source_revision": a[2],
+                 "proposed_revision": a[3], "plan_diff_hash": a[4],
+                 "kms_key_version": a[5], "verified_at": str(a[6])}
+                for a in approval_rows
+            ],
+            "incidents": incidents,
+            "plan_constraints": [
+                {"plan_id": c[0], "constraint_type": c[1], "description": c[2]}
+                for c in constraint_rows
+            ],
+            "recovery": {
+                "allocations": [
+                    {"allocation_id": a[0], "incident_id": a[1], "status": a[2]}
+                    for a in allocation_rows
+                ],
+                "shortfalls": [
+                    {"shortfall_id": s[0], "incident_id": s[1], "status": s[2]}
+                    for s in shortfall_rows
+                ],
+            },
+        },
+        "agent_activity_as_of": fleet_evidence,
+        "execution_evidence_as_of": {
+            "custody_graph": custody,
+            "receipts_committed": len(boundary._by_action_id),
+        },
+        "carry_forward_obligations": carry_forward,
     }
+    if next_day_draft is not None:
+        response["next_day_draft"] = next_day_draft
+    return response
+
+
+# -------------------------------------------------------------------
+# DELTA 2 - TRUTHFUL BOUNDED PROJECTION
+#
+# The operator projection must expose only facts committed at or before an
+# explicit boundary. Four rules govern this, and each exists because of a
+# specific structural limitation of the authoritative schema:
+#
+#   1. Receipts are the only per-event clock. Every gated block is unlocked
+#      by a committed receipt, never by wall time or presentation state.
+#   2. Receipts carry no incident_id or payload column, so a receipt cannot
+#      be read to learn its target. Identity flows the other way: the target
+#      is read from authoritative rows and its action_id is recomputed with
+#      the same _command_identity used to write it. No positional assumption
+#      ("the second SET_INCIDENT_STATUS") is ever made.
+#   3. Vehicles, CustodyNodes and CustodyEdges are mutable current-state
+#      tables with no history column. Their value at a past boundary cannot
+#      be reconstructed, so they are returned only when no later mutation
+#      exists, and omitted as PRE_BOUNDARY_STATE_NOT_RETAINED otherwise.
+#   4. Obligations are evaluated open-as-of, never present-day-open.
+# -------------------------------------------------------------------
+
+PRE_BOUNDARY_STATE_NOT_RETAINED = "PRE_BOUNDARY_STATE_NOT_RETAINED"
+
+# Receipt action types capable of mutating each timeless current-state table.
+# If any of these committed after the boundary, that table's present row is a
+# later value and cannot be shown as historical truth.
+TIMELESS_TABLE_MUTATORS = {
+    "vehicles": frozenset({"SAVE_PLAN_REVISION", "ALLOCATE_SAFE_STOCK"}),
+    "custody": frozenset({
+        "ACTIVATE_MOVEMENT_BARRIER",
+        "ALLOCATE_SAFE_STOCK",
+        "RECORD_ACKNOWLEDGMENT_HOLD",
+        "CUSTODY_RECONCILIATION",
+    }),
+}
+
+
+class ProjectionBoundary:
+    """Committed receipts at or before one instant, indexed for exact matching."""
+
+    def __init__(self, as_of: datetime, mode: str, rows: List[Any]):
+        self.as_of = as_of
+        self.mode = mode
+        self._by_action_id = {}
+        self._after_boundary_action_types = set()
+        for receipt_id, action_id, action_type, status, mutations, timestamp in rows:
+            committed = _normalize_receipt_timestamp(timestamp)
+            record = {
+                "receipt_id": receipt_id,
+                "action_id": action_id,
+                "action_type": action_type,
+                "status": status,
+                "mutations_applied": mutations,
+                "committed_at": committed.isoformat(),
+            }
+            if committed <= as_of:
+                self._by_action_id.setdefault(action_id, record)
+            else:
+                self._after_boundary_action_types.add(action_type)
+
+    def committed(self, action_id: str) -> Optional[Dict[str, Any]]:
+        """Return the receipt for one exact recomputed action identity."""
+        return self._by_action_id.get(action_id)
+
+    def has_committed(self, action_id: str) -> bool:
+        return action_id in self._by_action_id
+
+    def timeless_row_is_safe(self, table_key: str) -> bool:
+        """True only when no later mutation of this table exists past the boundary."""
+        return not (
+            TIMELESS_TABLE_MUTATORS[table_key] & self._after_boundary_action_types
+        )
+
+
+def _resolve_projection_boundary(operating_day: str, as_of: Optional[str]):
+    """Resolve the boundary instant from trusted server time or explicit request.
+
+    A live request for the current operating day uses trusted server time. A
+    historical or replay day requires an explicit as_of. An as_of outside the
+    authority operating day is rejected, never silently narrowed.
+    """
+    day = datetime.fromisoformat(operating_day).date()
+    now = datetime.now(timezone.utc)
+    if as_of is None:
+        if now.date() != day:
+            raise HTTPException(
+                status_code=400,
+                detail="EXPLICIT_AS_OF_REQUIRED_FOR_NON_CURRENT_OPERATING_DAY",
+            )
+        return now, "LIVE_SERVER_TIME"
+    try:
+        parsed = datetime.fromisoformat(as_of.replace("Z", "+00:00"))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="INVALID_AS_OF") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    parsed = parsed.astimezone(timezone.utc)
+    if parsed.date() != day:
+        raise HTTPException(
+            status_code=400,
+            detail="AS_OF_OUTSIDE_AUTHORITY_OPERATING_DAY",
+        )
+    return parsed, "EXPLICIT_AS_OF"
+
+
+def _incident_status_action_id(tenant_id: str, incident_id: str, status: str) -> str:
+    """Recompute the exact action identity a lifecycle commit would have written."""
+    action_id, _ = _command_identity(tenant_id, incident_id, f"status:{status}")
+    return action_id
+
+
+def _incident_action_id(tenant_id: str, incident_id: str, action: str) -> str:
+    action_id, _ = _command_identity(tenant_id, incident_id, action)
+    return action_id
 
 
 def _normalize_receipt_timestamp(value: Any) -> datetime:
@@ -2576,7 +2992,7 @@ def _query_committed_receipts_after(db, *, tenant_id: str, cursor):
 
     sql = f"""
       SELECT receipt_id, action_id, plan_revision_id, action_type, status,
-             message, timestamp, trace_id, caller_email
+             message, timestamp, trace_id, caller_email, mutations_applied
       FROM Receipts
       WHERE tenant_id = @tenant_id
       {cursor_predicate}
@@ -2601,6 +3017,11 @@ def _receipt_projection(row) -> Dict[str, Any]:
         "timestamp": timestamp.isoformat(),
         "correlation_trace_id": row[7],
         "committed_by": row[8],
+        # Delta 3: the refusal beat must read DENIED - 0 MUTATIONS from the
+        # ledger itself rather than being asserted by the presentation layer.
+        # Absent rather than guessed when a caller supplies a narrower row, so
+        # the frontend can distinguish "no mutation" from "not reported".
+        "mutations_applied": row[9] if len(row) > 9 else None,
     }
 
 

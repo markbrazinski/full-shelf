@@ -185,16 +185,26 @@ def test_endpoint_rejects_malformed_last_event_id_before_streaming():
 
 
 def test_authoritative_projection_exposes_persisted_model_armor_correlation():
+    """Model Armor screening remains truthfully readable under the bounded
+    projection. The response shape moved under current_day when Delta 2 added
+    as-of boundaries; the screening claim itself is unchanged, and it is still
+    gated on the incident row having actually committed."""
     correlation_id = "0123456789abcdef0123456789abcdef"
+    committed_at = datetime(2026, 8, 14, 9, 36, tzinfo=timezone.utc)
+
+    def execute_sql(sql, params=None, param_types=None):
+        if "FROM Receipts" in sql:
+            return []
+        if "FROM Incidents" in sql:
+            return [("INC-RECALL", "FOOD_SAFETY_RECALL", "PARTIALLY_CONTAINED",
+                     "PARTIALLY_CONTAINED",
+                     '{"model_armor_correlation_id":"' + correlation_id + '"}',
+                     "LTC-4471", committed_at, None)]
+        return []
+
     db = MagicMock()
     snapshot = MagicMock()
-    snapshot.execute_sql.side_effect = [
-        [("PLAN-AUDIT-CANONICAL", "rev08", "INVALIDATED_RECALL")],
-        [],
-        [("INC-RECALL", "FOOD_SAFETY_RECALL", "PARTIALLY_CONTAINED",
-          "PARTIALLY_CONTAINED",
-          '{"model_armor_correlation_id":"' + correlation_id + '"}')],
-    ]
+    snapshot.execute_sql.side_effect = execute_sql
     db.snapshot.return_value.__enter__.return_value = snapshot
     client = TestClient(orchestrator_main.app)
     orchestrator_main.app.dependency_overrides[
@@ -206,9 +216,13 @@ def test_authoritative_projection_exposes_persisted_model_armor_correlation():
     )
 
     with patch.object(orchestrator_main, "get_spanner_database", return_value=db):
-        response = client.get("/api/v1/projections/demo-beats")
+        response = client.get(
+            "/api/v1/projections/demo-beats?as_of=2026-08-14T23%3A59%3A00%2B00%3A00"
+        )
     orchestrator_main.app.dependency_overrides.clear()
 
     assert response.status_code == 200
-    assert response.json()["incidents"][0]["model_armor_correlation_id"] == correlation_id
+    incident = response.json()["current_day"]["incidents"][0]
+    assert incident["model_armor_screening"]["correlation_id"] == correlation_id
+    assert incident["model_armor_screening"]["result"] == "PASS"
     db.snapshot.assert_called_once_with(multi_use=True)
