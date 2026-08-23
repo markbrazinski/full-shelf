@@ -2205,7 +2205,7 @@ def get_system_evidence(
             }
         },
         "preview_service_seams": {
-            "agent_registry": "STRUCTURALLY_VERIFIED — Versioned Agent Cards / Tool Gateway Manifest",
+            "agent_registry": "NOT_PROVEN — managed Agent Registry unavailable; internal fleet manifest is not a managed registry or tool gateway",
             "agent_identity": "STRUCTURALLY_VERIFIED — Cloud IAM / OIDC seam; not managed Agent Identity",
             "agent_gateway": "STRUCTURALLY_VERIFIED — private plan-ledger seam; not managed Agent Gateway",
             "agent_sessions": "STRUCTURALLY_VERIFIED — Spanner coordinator seam; not managed Agent Sessions"
