@@ -1,8 +1,11 @@
-"""apps/web must not reference an application entry point that does not exist.
+"""apps/web must stay coherent with the entry point it actually ships.
 
-The React client is being built separately. Until it lands, this package holds
-only the environment contract and its dependency declaration, and nothing here
-may point at a file that was deleted or promise a build that cannot run.
+These guards were written while the React client lived outside the repo and
+apps/web held only the environment contract. The v6.1 client now ships here, so
+the "no entry point may exist" assertions are gone; what remains is what still
+protects the boundary: the HTML entry must reference a module that exists, the
+browser must never reach the ledger directly, and the environment contract must
+point only at the orchestrator.
 """
 
 import json
@@ -21,16 +24,19 @@ def _entry_points():
             if p.suffix in SOURCE_SUFFIXES and p.stem in {"main", "index", "App"}]
 
 
-def test_no_dangling_html_entry_point_remains():
-    """index.html referenced a deleted main.tsx, so it must not exist."""
-    assert not (WEB / "index.html").exists()
+def test_every_html_entry_points_at_a_module_that_exists():
+    """An HTML entry may reference /src/..., but the file must be there."""
+    import re
 
-
-def test_no_html_file_references_a_missing_module():
     for html in WEB.glob("*.html"):
-        text = html.read_text()
-        for marker in ('src="/src/', "src='/src/"):
-            assert marker not in text, f"{html.name} references a src module"
+        for ref in re.findall(r"""src=["'](/src/[^"']+)["']""", html.read_text()):
+            assert (WEB / ref.lstrip("/")).exists(), f"{html.name} -> {ref} missing"
+
+
+def test_the_shipped_entry_point_is_reachable():
+    """index.html and its module both exist, so the build can actually run."""
+    assert (WEB / "index.html").exists()
+    assert _entry_points(), "apps/web declares a build but has no entry point"
 
 
 def test_package_declares_no_build_it_cannot_run():
