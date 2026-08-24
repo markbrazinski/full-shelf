@@ -16,7 +16,36 @@
   "classification": "SYNTHETIC_TEST",
   "current_day": {
     "active_plan_revision": "rev08",
-    "approvals": [],
+    "approvals": [
+      {
+        "approval_id": "fixture-APR-rev08",
+        "approver_domain": "example.com",
+        "approver_identity_class": "VERIFIED_HUMAN_OPERATOR",
+        "authority_scope": "east-bay-food-bank@2026-08-14",
+        "expires_at": "2026-08-14 20:00:00+00:00",
+        "kms_key_version": "projects/p/locations/l/keyRings/k/cryptoKeys/c/cryptoKeyVersions/1",
+        "plan_diff": [
+          {
+            "cases": 22,
+            "change_type": "REROUTE",
+            "order_id": "O202",
+            "target_vehicle": "TRUCK-02"
+          },
+          {
+            "cases": 21,
+            "change_type": "PICKUP",
+            "order_id": "O205",
+            "target_vehicle": null
+          }
+        ],
+        "plan_diff_hash": "fixture-diffhash-rev08",
+        "plan_id": "PLAN-2026-08-14",
+        "proposed_revision": "rev08",
+        "source_revision": "rev07",
+        "state": "VERIFIED",
+        "verified_at": "2026-08-14 08:24:00+00:00"
+      }
+    ],
     "commitments": [
       {
         "agency": "Agency 01",
@@ -55,6 +84,31 @@
         "vehicle": "TRUCK-02"
       }
     ],
+    "dispatch": {
+      "plan_id": "PLAN-2026-08-14",
+      "revision": "rev08",
+      "vehicles": [
+        {
+          "assigned_cases": null,
+          "at_capacity": null,
+          "capacity_cases": null,
+          "is_operational": null,
+          "name": null,
+          "remaining_cases": null,
+          "stop_count": 1,
+          "stops": [
+            {
+              "agency": "Agency 02",
+              "cases": 22,
+              "lot_id": "LTC-4471",
+              "order_id": "O202",
+              "status": "PLANNED"
+            }
+          ],
+          "vehicle_id": "TRUCK-02"
+        }
+      ]
+    },
     "incidents": [
       {
         "affected_lot_id": null,
@@ -100,12 +154,55 @@
     ],
     "recovery": {
       "allocations": [],
+      "explanation": null,
       "shortfalls": []
     },
     "vehicles": null
   },
   "execution_evidence_as_of": {
     "custody_graph": null,
+    "history": [
+      {
+        "action_id": "CMD-81337DC1990351BB97F3566E358C",
+        "action_type": "SAVE_PLAN_REVISION",
+        "committed_at": "2026-08-14T07:30:00+00:00",
+        "mutations_applied": 1,
+        "receipt_id": "fixture-RCT-plan:rev07",
+        "status": "SUCCESS"
+      },
+      {
+        "action_id": "CMD-82A0876D9A428F38C7FCA570A15B",
+        "action_type": "SET_INCIDENT_STATUS",
+        "committed_at": "2026-08-14T08:20:00+00:00",
+        "mutations_applied": 1,
+        "receipt_id": "fixture-RCT-status:SCOPING",
+        "status": "SUCCESS"
+      },
+      {
+        "action_id": "CMD-08DF43D6320B712F1311C5F3DBBE",
+        "action_type": "SAVE_PLAN_REVISION",
+        "committed_at": "2026-08-14T08:24:00+00:00",
+        "mutations_applied": 1,
+        "receipt_id": "fixture-RCT-plan:rev08",
+        "status": "SUCCESS"
+      },
+      {
+        "action_id": "CMD-703DB31A739465A604496B8B3EF8",
+        "action_type": "SET_INCIDENT_STATUS",
+        "committed_at": "2026-08-14T09:36:00+00:00",
+        "mutations_applied": 1,
+        "receipt_id": "fixture-RCT-status:SCOPING",
+        "status": "SUCCESS"
+      },
+      {
+        "action_id": "CMD-4D18163F14822366071B269DAB63",
+        "action_type": "ACTIVATE_MOVEMENT_BARRIER",
+        "committed_at": "2026-08-14T10:05:00+00:00",
+        "mutations_applied": 1,
+        "receipt_id": "fixture-RCT-movement-barrier",
+        "status": "SUCCESS"
+      }
+    ],
     "receipts_committed": 5
   },
   "operating_day": "2026-08-14",
@@ -124,6 +221,35 @@
       {
         "field": "agent_activity_as_of",
         "reason": "NOT_COMMITTED_AS_OF_BOUNDARY"
+      }
+    ]
+  },
+  "recall_intake_as_of": {
+    "incident_id": "INC-2231",
+    "steps": [
+      {
+        "state": "COMPLETED",
+        "step": "NOTICE_SCREENED"
+      },
+      {
+        "state": "COMPLETED",
+        "step": "NOTICE_EXTRACTED"
+      },
+      {
+        "state": "COMPLETED",
+        "step": "INCIDENT_OPENED"
+      },
+      {
+        "state": "PENDING",
+        "step": "PLAN_INVALIDATED"
+      },
+      {
+        "state": "COMPLETED",
+        "step": "MOVEMENT_BARRIER_ACTIVE"
+      },
+      {
+        "state": "PENDING",
+        "step": "FLEET_PROPOSAL_ACCEPTED"
       }
     ]
   },

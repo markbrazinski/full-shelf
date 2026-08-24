@@ -50,12 +50,15 @@ from full_shelf_domain.recall import (
     is_eligible_gemini_model,
 )
 from full_shelf_domain.fleet.contracts import (
+    AGENT_FULFILLMENT_RECOVERY,
     AGENT_INCIDENT_COORDINATOR,
+    AGENT_NETWORK_CUSTODY,
+    AGENT_PARTNER_OPERATIONS,
     AGENT_RECALL_EXTRACTION,
     FLEET_MANIFEST_VERSION,
     FleetProposalError,
 )
-from full_shelf_domain.fleet.coordinator import run_fleet
+from full_shelf_domain.fleet.coordinator import GOVERNED_SEQUENCE, run_fleet
 from full_shelf_domain.fleet.manifest import build_manifest
 from full_shelf_domain.fleet.tools import generate_recovery_candidates
 
@@ -2589,7 +2592,8 @@ def get_demo_beats_projections(
 
         approval_rows = list(snapshot.execute_sql(
             "SELECT approval_id, plan_id, source_revision, proposed_revision, "
-            "plan_diff_hash, kms_key_version, verified_at FROM Approvals "
+            "plan_diff_hash, kms_key_version, verified_at, plan_diff_json, "
+            "approver_email, authority_scope, expires_at FROM Approvals "
             "WHERE tenant_id=@tenant AND operating_day=@day AND verified_at<=@as_of",
             params={"tenant": tenant,
                     "day": datetime.fromisoformat(operating_day).date(),
@@ -2613,14 +2617,16 @@ def get_demo_beats_projections(
             param_types={"tenant": str_t, "as_of": ts_t},
         ))
         allocation_rows = list(snapshot.execute_sql(
-            "SELECT allocation_id, incident_id, status, created_at "
-            "FROM RecoveryAllocations WHERE tenant_id=@tenant AND created_at<=@as_of",
+            "SELECT allocation_id, incident_id, status, created_at, agency_id, "
+            "lot_id, cases FROM RecoveryAllocations "
+            "WHERE tenant_id=@tenant AND created_at<=@as_of",
             params={"tenant": tenant, "as_of": boundary_at},
             param_types={"tenant": str_t, "as_of": ts_t},
         ))
         shortfall_rows = list(snapshot.execute_sql(
-            "SELECT shortfall_id, incident_id, status, created_at "
-            "FROM RecoveryShortfalls WHERE tenant_id=@tenant AND created_at<=@as_of",
+            "SELECT shortfall_id, incident_id, status, created_at, agency_id, "
+            "cases FROM RecoveryShortfalls "
+            "WHERE tenant_id=@tenant AND created_at<=@as_of",
             params={"tenant": tenant, "as_of": boundary_at},
             param_types={"tenant": str_t, "as_of": ts_t},
         ))
@@ -2631,7 +2637,7 @@ def get_demo_beats_projections(
             param_types={"tenant": str_t, "as_of": ts_t},
         ))
         constraint_rows = list(snapshot.execute_sql(
-            "SELECT plan_id, constraint_type, description, created_at "
+            "SELECT plan_id, constraint_type, details, created_at "
             "FROM PlanConstraints WHERE tenant_id=@tenant AND created_at<=@as_of",
             params={"tenant": tenant, "as_of": boundary_at},
             param_types={"tenant": str_t, "as_of": ts_t},
@@ -2787,18 +2793,96 @@ def get_demo_beats_projections(
         proposal_receipt = boundary.committed(
             _incident_action_id(tenant, recall_incident[0], "safe-recovery"))
         if stored and proposal_receipt:
-            fleet_evidence = {
-                "manifest_version": stored.get("manifest_version"),
-                "root_agent_id": stored.get("root_agent_id"),
-                "coordinator_session_id": stored.get("coordinator_session_id"),
-                "coordination_run_id": stored.get("coordination_run_id"),
-                "proposal_status": stored.get("proposal_status"),
-                "delegation_trace": stored.get("delegation_trace") or [],
-                "committed_at": proposal_receipt["committed_at"],
-            }
+            fleet_evidence = _projected_agent_activity(
+                stored, proposal_receipt["committed_at"]
+            )
         elif stored:
             omitted.append({"field": "agent_activity_as_of",
                             "reason": "NOT_COMMITTED_AS_OF_BOUNDARY"})
+
+    # --- Recall intake, one completed step per proven commitment -----------
+    # Each step is unlocked by a committed receipt or by persisted evidence.
+    # Steps not yet proven are reported PENDING; the synchronous runtime never
+    # observes an intermediate Running or Waiting state, so none is invented.
+    recall_intake = None
+    if recall_incident is not None:
+        details = json.loads(recall_incident[4] or "{}")
+        incident_id = recall_incident[0]
+        proven = {
+            "model_armor": bool(details.get("model_armor_correlation_id")),
+            "extraction": bool((details.get("agent_fleet") or {}).get("proposal_hash")),
+            "fleet": fleet_evidence is not None,
+            "incident_row": True,
+        }
+        steps = []
+        for step, source in RECALL_INTAKE_STEPS:
+            if source in proven:
+                complete = proven[source]
+            else:
+                complete = boundary.has_committed(
+                    _incident_action_id(tenant, incident_id, source)
+                )
+            steps.append({
+                "step": step,
+                "state": "COMPLETED" if complete else "PENDING",
+            })
+        recall_intake = {"incident_id": incident_id, "steps": steps}
+
+    # --- Dispatch, from committed assignments and authoritative capacity ----
+    # Stops are the order-to-vehicle relationships the plan actually records.
+    # No coordinate, bearing, position, or route geometry exists in authority,
+    # so none is produced here.
+    dispatch = None
+    if revisions:
+        active_revision = revisions[-1]
+        assignments = {}
+        for row in order_rows:
+            if row[0] != active_revision or not row[5]:
+                continue
+            assignments.setdefault(row[5], []).append({
+                "order_id": row[1],
+                "agency": row[2],
+                "cases": row[3],
+                "lot_id": row[4],
+                "status": row[6],
+            })
+        vehicles_by_id = {v[0]: v for v in vehicle_rows}
+        dispatch_vehicles = []
+        for vehicle_id in sorted(set(assignments) | set(vehicles_by_id)):
+            stops = sorted(assignments.get(vehicle_id, []),
+                           key=lambda stop: stop["order_id"])
+            vehicle = vehicles_by_id.get(vehicle_id)
+            assigned_cases = vehicle[3] if vehicle else None
+            capacity = vehicle[2] if vehicle else None
+            dispatch_vehicles.append({
+                "vehicle_id": vehicle_id,
+                "name": vehicle[1] if vehicle else None,
+                "capacity_cases": capacity,
+                "assigned_cases": assigned_cases,
+                # Arithmetic over authoritative capacity, omitted rather than
+                # guessed when the timeless vehicle row is not boundary-safe.
+                "remaining_cases": (
+                    capacity - assigned_cases
+                    if capacity is not None and assigned_cases is not None
+                    else None
+                ),
+                # Null, not False, when the timeless vehicle row is not
+                # boundary-safe: "not at capacity" is a claim, and an unknown
+                # capacity cannot support it.
+                "at_capacity": (
+                    assigned_cases >= capacity
+                    if capacity is not None and assigned_cases is not None
+                    else None
+                ),
+                "is_operational": vehicle[4] if vehicle else None,
+                "stops": stops,
+                "stop_count": len(stops),
+            })
+        dispatch = {"plan_id": current_plan_id, "revision": active_revision,
+                    "vehicles": dispatch_vehicles}
+
+    # --- Execution Record, bounded and never past the boundary -------------
+    history = boundary.history()
 
     response = {
         "tenant_id": tenant,
@@ -2826,7 +2910,17 @@ def get_demo_beats_projections(
             "approvals": [
                 {"approval_id": a[0], "plan_id": a[1], "source_revision": a[2],
                  "proposed_revision": a[3], "plan_diff_hash": a[4],
-                 "kms_key_version": a[5], "verified_at": str(a[6])}
+                 # The key version is stored authority. The signature itself is
+                 # never projected, at any boundary, to any caller.
+                 "kms_key_version": a[5], "verified_at": str(a[6]),
+                 "state": "VERIFIED",
+                 "plan_diff": _plan_diff_rows(a[7]),
+                 "approver_identity_class": "VERIFIED_HUMAN_OPERATOR",
+                 "approver_domain": (
+                     a[8].split("@", 1)[1] if a[8] and "@" in a[8] else None
+                 ),
+                 "authority_scope": a[9],
+                 "expires_at": str(a[10]) if a[10] is not None else None}
                 for a in approval_rows
             ],
             "incidents": incidents,
@@ -2836,19 +2930,28 @@ def get_demo_beats_projections(
             ],
             "recovery": {
                 "allocations": [
-                    {"allocation_id": a[0], "incident_id": a[1], "status": a[2]}
+                    {"allocation_id": a[0], "incident_id": a[1], "status": a[2],
+                     "agency_id": a[4], "lot_id": a[5], "cases": a[6]}
                     for a in allocation_rows
                 ],
                 "shortfalls": [
-                    {"shortfall_id": s[0], "incident_id": s[1], "status": s[2]}
+                    {"shortfall_id": s[0], "incident_id": s[1], "status": s[2],
+                     "agency_id": s[4], "cases": s[5]}
                     for s in shortfall_rows
                 ],
+                "explanation": (
+                    _recovery_explanation(allocation_rows, shortfall_rows)
+                    if allocation_rows or shortfall_rows else None
+                ),
             },
+            "dispatch": dispatch,
         },
         "agent_activity_as_of": fleet_evidence,
+        "recall_intake_as_of": recall_intake,
         "execution_evidence_as_of": {
             "custody_graph": custody,
             "receipts_committed": len(boundary._by_action_id),
+            "history": history,
         },
         "carry_forward_obligations": carry_forward,
     }
@@ -2878,7 +2981,174 @@ def get_demo_beats_projections(
 #   4. Obligations are evaluated open-as-of, never present-day-open.
 # -------------------------------------------------------------------
 
+# The five accepted agents. The coordinator is the root execution; the other
+# four are the governed specialist sequence it orders. Model Armor is an
+# input-screening boundary and is deliberately NOT a member of this list.
+PROJECTED_AGENT_SEQUENCE = (
+    (AGENT_INCIDENT_COORDINATOR, "Incident Coordinator"),
+    (AGENT_RECALL_EXTRACTION, "Recall Extraction"),
+    (AGENT_NETWORK_CUSTODY, "Network & Custody"),
+    (AGENT_FULFILLMENT_RECOVERY, "Fulfillment & Recovery"),
+    (AGENT_PARTNER_OPERATIONS, "Partner Operations"),
+)
+
+# Recall intake steps, each unlocked by the committed receipt or persisted
+# evidence that actually proves it happened. There is no Running or Waiting
+# member: the runtime is synchronous and reports no such state truthfully.
+# `INCIDENT_OPENED` is proven by the incident row itself, not by a receipt
+# lookup: the open command's action id embeds the source_event_id, which is not
+# retained anywhere the projection can read, and recomputing it from a guessed
+# value would be fabrication. A recall incident visible at the boundary was
+# necessarily opened at or before it.
+RECALL_INTAKE_STEPS = (
+    ("NOTICE_SCREENED", "model_armor"),
+    ("NOTICE_EXTRACTED", "extraction"),
+    ("INCIDENT_OPENED", "incident_row"),
+    ("PLAN_INVALIDATED", "plan:invalidate"),
+    ("MOVEMENT_BARRIER_ACTIVE", "movement-barrier"),
+    ("FLEET_PROPOSAL_ACCEPTED", "fleet"),
+)
+
+
+def _projected_agent_activity(stored: Dict[str, Any], committed_at: str):
+    """Project all five agents from persisted fleet evidence only.
+
+    Every agent the manifest governs is listed so the rail cannot silently drop
+    a member, but each one reports only what the persisted trace proves. An
+    agent with no persisted hop is `NOT_YET_REPORTED`; it is never inferred to
+    have run, and never given a duration, ordering, or Running/Waiting state
+    the synchronous runtime does not record.
+    """
+    trace = stored.get("delegation_trace") or []
+    by_agent = {entry.get("agent_id"): entry for entry in trace if entry.get("agent_id")}
+    agents = []
+    for agent_id, display_name in PROJECTED_AGENT_SEQUENCE:
+        if agent_id == AGENT_INCIDENT_COORDINATOR:
+            # The coordinator does not appear in its own delegation trace. Its
+            # execution is proven by the run/session identity it recorded while
+            # ordering the specialists.
+            reported = bool(stored.get("coordination_run_id"))
+            agents.append({
+                "agent_id": agent_id,
+                "display_name": display_name,
+                "role": "ROOT_COORDINATOR",
+                "state": "COMPLETED" if reported else "NOT_YET_REPORTED",
+                "run_id": stored.get("coordination_run_id"),
+                "session_id": stored.get("coordinator_session_id"),
+                "model_used": None,
+                "adk_framework": None,
+                "deterministic_validation": None,
+                "declared_tools": [],
+                "tool_invocations": [],
+            })
+            continue
+        entry = by_agent.get(agent_id)
+        if entry is None:
+            agents.append({
+                "agent_id": agent_id,
+                "display_name": display_name,
+                "role": "GOVERNED_SPECIALIST",
+                "state": "NOT_YET_REPORTED",
+                "run_id": None,
+                "session_id": None,
+                "model_used": None,
+                "adk_framework": None,
+                "deterministic_validation": None,
+                "declared_tools": [],
+                "tool_invocations": [],
+            })
+            continue
+        agents.append({
+            "agent_id": agent_id,
+            "display_name": display_name,
+            "role": "GOVERNED_SPECIALIST",
+            "state": "COMPLETED",
+            # The specialist's OWN ADK identity, never the coordinator's.
+            "run_id": entry.get("specialist_run_id"),
+            "session_id": entry.get("specialist_session_id"),
+            "model_used": entry.get("model_used"),
+            "adk_framework": entry.get("adk_framework"),
+            "deterministic_validation": entry.get("deterministic_validation"),
+            "declared_tools": entry.get("declared_tools") or [],
+            # Only Network & Custody holds tools today. Every other agent
+            # projects the empty list its evidence actually contains.
+            "tool_invocations": entry.get("tool_invocations") or [],
+        })
+    return {
+        "manifest_version": stored.get("manifest_version"),
+        "root_agent_id": stored.get("root_agent_id"),
+        "coordinator_session_id": stored.get("coordinator_session_id"),
+        "coordination_run_id": stored.get("coordination_run_id"),
+        "proposal_status": stored.get("proposal_status"),
+        "delegation_trace": trace,
+        "committed_at": committed_at,
+        "agents": agents,
+        # Stated so the UI cannot render the topology as native ADK parentage.
+        "topology": "SEPARATELY_CORRELATED_SPECIALIST_RUNNERS",
+        "governed_sequence": list(GOVERNED_SEQUENCE),
+    }
+
+
+def _plan_diff_rows(plan_diff_json: Optional[str]):
+    """Project the immutable approved plan diff as ordered rows.
+
+    The diff is read from the approval record written under KMS binding, so the
+    rows are the approved change itself rather than a recomputed guess at it.
+    """
+    try:
+        diff = json.loads(plan_diff_json or "{}")
+    except (TypeError, ValueError):
+        return []
+    rows = []
+    if diff.get("reroute_order_id"):
+        rows.append({
+            "change_type": "REROUTE",
+            "order_id": diff.get("reroute_order_id"),
+            "cases": diff.get("reroute_cases"),
+            "target_vehicle": diff.get("reroute_target_vehicle"),
+        })
+    if diff.get("pickup_order_id"):
+        rows.append({
+            "change_type": "PICKUP",
+            "order_id": diff.get("pickup_order_id"),
+            "cases": diff.get("pickup_cases"),
+            "target_vehicle": None,
+        })
+    return rows
+
+
+def _recovery_explanation(allocation_rows, shortfall_rows):
+    """Explain recovery from authoritative quantities, never from model text.
+
+    No agent rationale is persisted anywhere in the schema, so none is claimed.
+    This is arithmetic over committed allocation and shortfall rows, labelled
+    as a derivation so the operator can tell it apart from recorded reasoning.
+    """
+    allocated = sum(row[6] or 0 for row in allocation_rows)
+    short = sum(row[5] or 0 for row in shortfall_rows)
+    requested = allocated + short
+    return {
+        "basis": "DETERMINISTIC_DERIVATION",
+        "cases_requested": requested,
+        "cases_allocated": allocated,
+        "cases_short": short,
+        "agencies_allocated": len({row[4] for row in allocation_rows}),
+        "agencies_short": len({row[4] for row in shortfall_rows}),
+        "statement": (
+            f"{allocated} of {requested} cases were allocated from safe stock; "
+            f"{short} cases remain short across "
+            f"{len({row[4] for row in shortfall_rows})} agency destinations."
+        ),
+        "persisted_agent_rationale": None,
+    }
+
+
 PRE_BOUNDARY_STATE_NOT_RETAINED = "PRE_BOUNDARY_STATE_NOT_RETAINED"
+
+# The Execution Record is a bounded operator surface, not an audit export. The
+# canonical day commits far fewer receipts than this; the cap exists so the
+# projection can never degrade into an unbounded all-time scan.
+HISTORY_MAX_EVENTS = 100
 
 # Receipt action types capable of mutating each timeless current-state table.
 # If any of these committed after the boundary, that table's present row is a
@@ -2902,6 +3172,7 @@ class ProjectionBoundary:
         self.mode = mode
         self._by_action_id = {}
         self._after_boundary_action_types = set()
+        self._committed_in_order = []
         for receipt_id, action_id, action_type, status, mutations, timestamp in rows:
             committed = _normalize_receipt_timestamp(timestamp)
             record = {
@@ -2914,8 +3185,12 @@ class ProjectionBoundary:
             }
             if committed <= as_of:
                 self._by_action_id.setdefault(action_id, record)
+                self._committed_in_order.append(record)
             else:
                 self._after_boundary_action_types.add(action_type)
+        self._committed_in_order.sort(
+            key=lambda entry: (entry["committed_at"], entry["receipt_id"])
+        )
 
     def committed(self, action_id: str) -> Optional[Dict[str, Any]]:
         """Return the receipt for one exact recomputed action identity."""
@@ -2923,6 +3198,16 @@ class ProjectionBoundary:
 
     def has_committed(self, action_id: str) -> bool:
         return action_id in self._by_action_id
+
+    def history(self, limit: int = HISTORY_MAX_EVENTS) -> List[Dict[str, Any]]:
+        """Committed receipts in commit order, bounded and never post-boundary.
+
+        Only receipts already admitted by the boundary are eligible, so a
+        post-boundary commit can never appear. The tail is kept rather than the
+        head: the operator record is read backwards from the boundary, and an
+        unbounded all-time scan is exactly what this projection must not do.
+        """
+        return self._committed_in_order[-limit:]
 
     def timeless_row_is_safe(self, table_key: str) -> bool:
         """True only when no later mutation of this table exists past the boundary."""

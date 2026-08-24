@@ -39,6 +39,18 @@ BEATS = [
 ]
 
 
+def _reclassify(node):
+    """Relabel every classification claim in a fixture as synthetic."""
+    if isinstance(node, dict):
+        return {
+            key: "SYNTHETIC_TEST" if key == "classification" else _reclassify(value)
+            for key, value in node.items()
+        }
+    if isinstance(node, list):
+        return [_reclassify(item) for item in node]
+    return node
+
+
 def main():
     FIXTURES.mkdir(parents=True, exist_ok=True)
     index = []
@@ -47,8 +59,11 @@ def main():
         if response.status_code != 200:
             raise SystemExit(f"{name}: handler returned {response.status_code}")
         body = response.json()
-        # Replay evidence is never presented as live or measured.
-        body["classification"] = "SYNTHETIC_TEST"
+        # Replay evidence is never presented as live or measured. Nested
+        # evidence carries its own classification (the custody graph labels
+        # itself OBSERVED_LIVE when read from Spanner), so reclassification
+        # must reach every depth, not just the envelope.
+        body = _reclassify(body)
         body["replay_notice"] = (
             "Fixture generated from the production handler against a faked "
             "snapshot. Not a real execution. No Gemini, ADK, Model Armor, KMS, "

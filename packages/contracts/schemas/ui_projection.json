@@ -14,41 +14,71 @@
     "current_day",
     "agent_activity_as_of",
     "execution_evidence_as_of",
-    "carry_forward_obligations"
+    "carry_forward_obligations",
+    "recall_intake_as_of"
   ],
   "properties": {
-    "tenant_id": { "type": "string", "minLength": 1 },
-    "operating_day": { "type": "string", "format": "date" },
+    "tenant_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "operating_day": {
+      "type": "string",
+      "format": "date"
+    },
     "authority_scope": {
       "type": "string",
       "description": "tenant_id@operating_day",
       "pattern": "^.+@\\d{4}-\\d{2}-\\d{2}$"
     },
-    "verified_principal_subject": { "type": "string", "minLength": 1 },
+    "verified_principal_subject": {
+      "type": "string",
+      "minLength": 1
+    },
     "classification": {
       "type": "string",
       "description": "OBSERVED_LIVE from the deployed handler. Replay fixtures are relabelled SYNTHETIC_TEST and are never presented as live or recorded evidence.",
-      "enum": ["OBSERVED_LIVE", "SYNTHETIC_TEST"]
+      "enum": [
+        "OBSERVED_LIVE",
+        "SYNTHETIC_TEST"
+      ]
     },
     "replay_notice": {
       "type": "string",
       "description": "Present only on deterministic replay fixtures, never on a live response."
     },
-
     "projection_boundary": {
       "type": "object",
       "description": "The instant this projection is true as of, and what could not be truthfully reconstructed at it.",
-      "required": ["as_of", "mode", "omitted_fields"],
+      "required": [
+        "as_of",
+        "mode",
+        "omitted_fields"
+      ],
       "properties": {
-        "as_of": { "type": "string", "format": "date-time" },
-        "mode": { "type": "string", "enum": ["LIVE_SERVER_TIME", "EXPLICIT_AS_OF"] },
+        "as_of": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "LIVE_SERVER_TIME",
+            "EXPLICIT_AS_OF"
+          ]
+        },
         "omitted_fields": {
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["field", "reason"],
+            "required": [
+              "field",
+              "reason"
+            ],
             "properties": {
-              "field": { "type": "string" },
+              "field": {
+                "type": "string"
+              },
               "reason": {
                 "type": "string",
                 "enum": [
@@ -62,56 +92,148 @@
         }
       }
     },
-
     "current_day": {
       "type": "object",
       "required": [
-        "plan_id", "plan_revisions", "active_plan_revision", "commitments",
-        "vehicles", "approvals", "incidents", "plan_constraints", "recovery"
+        "plan_id",
+        "plan_revisions",
+        "active_plan_revision",
+        "commitments",
+        "vehicles",
+        "approvals",
+        "incidents",
+        "plan_constraints",
+        "recovery",
+        "dispatch"
       ],
       "properties": {
-        "plan_id": { "type": "string" },
+        "plan_id": {
+          "type": "string"
+        },
         "plan_revisions": {
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["plan_id", "revision", "status"],
+            "required": [
+              "plan_id",
+              "revision",
+              "status"
+            ],
             "properties": {
-              "plan_id": { "type": "string" },
-              "revision": { "type": "string" },
-              "status": { "type": "string" }
+              "plan_id": {
+                "type": "string"
+              },
+              "revision": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              }
             }
           }
         },
-        "active_plan_revision": { "type": ["string", "null"] },
+        "active_plan_revision": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "commitments": {
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["revision", "order_id", "agency", "cases", "lot_id", "vehicle", "status"],
+            "required": [
+              "revision",
+              "order_id",
+              "agency",
+              "cases",
+              "lot_id",
+              "vehicle",
+              "status"
+            ],
             "properties": {
-              "revision": { "type": "string" },
-              "order_id": { "type": "string" },
-              "agency": { "type": ["string", "null"] },
-              "cases": { "type": ["integer", "null"] },
-              "lot_id": { "type": ["string", "null"] },
-              "vehicle": { "type": ["string", "null"] },
-              "status": { "type": ["string", "null"] }
+              "revision": {
+                "type": "string"
+              },
+              "order_id": {
+                "type": "string"
+              },
+              "agency": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "cases": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "lot_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "vehicle": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "status": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
             }
           }
         },
         "vehicles": {
           "description": "null when a later mutation proves the present row is not the boundary value; the omission is then reported in projection_boundary.omitted_fields.",
-          "type": ["array", "null"],
+          "type": [
+            "array",
+            "null"
+          ],
           "items": {
             "type": "object",
-            "required": ["vehicle_id", "name", "capacity", "assigned_cases", "is_operational"],
+            "required": [
+              "vehicle_id",
+              "name",
+              "capacity",
+              "assigned_cases",
+              "is_operational"
+            ],
             "properties": {
-              "vehicle_id": { "type": "string" },
-              "name": { "type": ["string", "null"] },
-              "capacity": { "type": ["integer", "null"] },
-              "assigned_cases": { "type": ["integer", "null"] },
-              "is_operational": { "type": ["boolean", "null"] }
+              "vehicle_id": {
+                "type": "string"
+              },
+              "name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "capacity": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "assigned_cases": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "is_operational": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              }
             }
           }
         },
@@ -119,15 +241,133 @@
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["approval_id", "plan_id", "source_revision", "proposed_revision", "plan_diff_hash", "kms_key_version", "verified_at"],
+            "required": [
+              "approval_id",
+              "plan_id",
+              "source_revision",
+              "proposed_revision",
+              "plan_diff_hash",
+              "kms_key_version",
+              "verified_at",
+              "state",
+              "plan_diff",
+              "approver_identity_class",
+              "approver_domain",
+              "authority_scope",
+              "expires_at"
+            ],
             "properties": {
-              "approval_id": { "type": "string" },
-              "plan_id": { "type": ["string", "null"] },
-              "source_revision": { "type": ["string", "null"] },
-              "proposed_revision": { "type": ["string", "null"] },
-              "plan_diff_hash": { "type": ["string", "null"] },
-              "kms_key_version": { "type": ["string", "null"] },
-              "verified_at": { "type": "string" }
+              "approval_id": {
+                "type": "string"
+              },
+              "plan_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "source_revision": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "proposed_revision": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "plan_diff_hash": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "kms_key_version": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "verified_at": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "VERIFIED"
+                ]
+              },
+              "plan_diff": {
+                "description": "Rows of the immutable approved rev07->rev08 diff, read from the KMS-bound approval record.",
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "change_type",
+                    "order_id",
+                    "cases",
+                    "target_vehicle"
+                  ],
+                  "properties": {
+                    "change_type": {
+                      "type": "string",
+                      "enum": [
+                        "REROUTE",
+                        "PICKUP"
+                      ]
+                    },
+                    "order_id": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "cases": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    },
+                    "target_vehicle": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              },
+              "approver_identity_class": {
+                "type": "string",
+                "enum": [
+                  "VERIFIED_HUMAN_OPERATOR"
+                ]
+              },
+              "approver_domain": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "authority_scope": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "expires_at": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "not": {
+              "required": [
+                "kms_signature"
+              ]
             }
           }
         },
@@ -135,36 +375,96 @@
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["incident_id", "incident_type", "status", "terminal_state", "affected_lot_id", "model_armor_screening", "refusal"],
+            "required": [
+              "incident_id",
+              "incident_type",
+              "status",
+              "terminal_state",
+              "affected_lot_id",
+              "model_armor_screening",
+              "refusal"
+            ],
             "properties": {
-              "incident_id": { "type": "string" },
-              "incident_type": { "type": ["string", "null"] },
+              "incident_id": {
+                "type": "string"
+              },
+              "incident_type": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "status": {
                 "type": "string",
                 "description": "Recomputed as-of state, never the present-day row value.",
-                "enum": ["DETECTED", "SCOPING", "CONTAINMENT_IN_PROGRESS", "PARTIALLY_CONTAINED"]
+                "enum": [
+                  "DETECTED",
+                  "SCOPING",
+                  "CONTAINMENT_IN_PROGRESS",
+                  "PARTIALLY_CONTAINED"
+                ]
               },
               "terminal_state": {
                 "type": "string",
-                "enum": ["NONE", "PARTIALLY_CONTAINED"]
+                "enum": [
+                  "NONE",
+                  "PARTIALLY_CONTAINED"
+                ]
               },
-              "affected_lot_id": { "type": ["string", "null"] },
+              "affected_lot_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "model_armor_screening": {
-                "type": ["object", "null"],
-                "required": ["result", "correlation_id"],
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "required": [
+                  "result",
+                  "correlation_id"
+                ],
                 "properties": {
-                  "result": { "type": "string", "enum": ["PASS"] },
-                  "correlation_id": { "type": ["string", "null"] }
+                  "result": {
+                    "type": "string",
+                    "enum": [
+                      "PASS"
+                    ]
+                  },
+                  "correlation_id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
                 }
               },
               "refusal": {
-                "type": ["object", "null"],
-                "required": ["decision", "mutations_applied", "receipt_id", "committed_at"],
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "required": [
+                  "decision",
+                  "mutations_applied",
+                  "receipt_id",
+                  "committed_at"
+                ],
                 "properties": {
-                  "decision": { "type": "string" },
-                  "mutations_applied": { "type": "integer" },
-                  "receipt_id": { "type": "string" },
-                  "committed_at": { "type": "string" }
+                  "decision": {
+                    "type": "string"
+                  },
+                  "mutations_applied": {
+                    "type": "integer"
+                  },
+                  "receipt_id": {
+                    "type": "string"
+                  },
+                  "committed_at": {
+                    "type": "string"
+                  }
                 }
               }
             }
@@ -174,27 +474,84 @@
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["plan_id", "constraint_type", "description"],
+            "required": [
+              "plan_id",
+              "constraint_type",
+              "description"
+            ],
             "properties": {
-              "plan_id": { "type": ["string", "null"] },
-              "constraint_type": { "type": ["string", "null"] },
-              "description": { "type": ["string", "null"] }
+              "plan_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "constraint_type": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "description": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
             }
           }
         },
         "recovery": {
           "type": "object",
-          "required": ["allocations", "shortfalls"],
+          "required": [
+            "allocations",
+            "shortfalls",
+            "explanation"
+          ],
           "properties": {
             "allocations": {
               "type": "array",
               "items": {
                 "type": "object",
-                "required": ["allocation_id", "incident_id", "status"],
+                "required": [
+                  "allocation_id",
+                  "incident_id",
+                  "status"
+                ],
                 "properties": {
-                  "allocation_id": { "type": "string" },
-                  "incident_id": { "type": ["string", "null"] },
-                  "status": { "type": ["string", "null"] }
+                  "allocation_id": {
+                    "type": "string"
+                  },
+                  "incident_id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "status": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "agency_id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "lot_id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "cases": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  }
                 }
               }
             },
@@ -202,11 +559,223 @@
               "type": "array",
               "items": {
                 "type": "object",
-                "required": ["shortfall_id", "incident_id", "status"],
+                "required": [
+                  "shortfall_id",
+                  "incident_id",
+                  "status"
+                ],
                 "properties": {
-                  "shortfall_id": { "type": "string" },
-                  "incident_id": { "type": ["string", "null"] },
-                  "status": { "type": ["string", "null"] }
+                  "shortfall_id": {
+                    "type": "string"
+                  },
+                  "incident_id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "status": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "agency_id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "cases": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  }
+                }
+              }
+            },
+            "explanation": {
+              "description": "Derived from committed allocation and shortfall quantities. No model reasoning is persisted, so none is reconstructed.",
+              "type": [
+                "object",
+                "null"
+              ],
+              "required": [
+                "basis",
+                "cases_requested",
+                "cases_allocated",
+                "cases_short",
+                "agencies_allocated",
+                "agencies_short",
+                "statement",
+                "persisted_agent_rationale"
+              ],
+              "properties": {
+                "basis": {
+                  "type": "string",
+                  "enum": [
+                    "DETERMINISTIC_DERIVATION"
+                  ]
+                },
+                "cases_requested": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "cases_allocated": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "cases_short": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "agencies_allocated": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "agencies_short": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "statement": {
+                  "type": "string"
+                },
+                "persisted_agent_rationale": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "dispatch": {
+          "description": "Order-to-vehicle assignments and capacity arithmetic from committed plan rows. Contains no coordinate, position, bearing, or route geometry.",
+          "type": [
+            "object",
+            "null"
+          ],
+          "required": [
+            "plan_id",
+            "revision",
+            "vehicles"
+          ],
+          "properties": {
+            "plan_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "revision": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "vehicles": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "vehicle_id",
+                  "name",
+                  "capacity_cases",
+                  "assigned_cases",
+                  "remaining_cases",
+                  "at_capacity",
+                  "is_operational",
+                  "stops",
+                  "stop_count"
+                ],
+                "properties": {
+                  "vehicle_id": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "capacity_cases": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "assigned_cases": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "remaining_cases": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "at_capacity": {
+                    "type": [
+                      "boolean",
+                      "null"
+                    ]
+                  },
+                  "is_operational": {
+                    "type": [
+                      "boolean",
+                      "null"
+                    ]
+                  },
+                  "stop_count": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "stops": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "order_id",
+                        "agency",
+                        "cases",
+                        "lot_id",
+                        "status"
+                      ],
+                      "properties": {
+                        "order_id": {
+                          "type": "string"
+                        },
+                        "agency": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "cases": {
+                          "type": [
+                            "integer",
+                            "null"
+                          ]
+                        },
+                        "lot_id": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "status": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -214,40 +783,235 @@
         }
       }
     },
-
     "agent_activity_as_of": {
       "description": "Advisory fleet evidence, null until its gating ledger receipt has committed at or before the boundary.",
-      "type": ["object", "null"],
-      "required": ["manifest_version", "root_agent_id", "coordinator_session_id", "coordination_run_id", "proposal_status", "delegation_trace", "committed_at"],
+      "type": [
+        "object",
+        "null"
+      ],
+      "required": [
+        "manifest_version",
+        "root_agent_id",
+        "coordinator_session_id",
+        "coordination_run_id",
+        "proposal_status",
+        "delegation_trace",
+        "committed_at",
+        "agents",
+        "topology",
+        "governed_sequence"
+      ],
       "properties": {
-        "manifest_version": { "type": ["string", "null"] },
-        "root_agent_id": { "type": ["string", "null"] },
-        "coordinator_session_id": { "type": ["string", "null"] },
-        "coordination_run_id": { "type": ["string", "null"] },
-        "proposal_status": { "type": ["string", "null"] },
-        "delegation_trace": { "type": "array", "items": { "type": "object" } },
-        "committed_at": { "type": "string" }
+        "manifest_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "root_agent_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "coordinator_session_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "coordination_run_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "proposal_status": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "delegation_trace": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "committed_at": {
+          "type": "string"
+        },
+        "agents": {
+          "description": "The five accepted agents. Model Armor is an input-screening boundary and is deliberately not a member.",
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 5,
+          "items": {
+            "type": "object",
+            "required": [
+              "agent_id",
+              "display_name",
+              "role",
+              "state",
+              "run_id",
+              "session_id",
+              "model_used",
+              "adk_framework",
+              "deterministic_validation",
+              "declared_tools",
+              "tool_invocations"
+            ],
+            "properties": {
+              "agent_id": {
+                "type": "string"
+              },
+              "display_name": {
+                "type": "string"
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "ROOT_COORDINATOR",
+                  "GOVERNED_SPECIALIST"
+                ]
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "COMPLETED",
+                  "NOT_YET_REPORTED",
+                  "NOT_INVOLVED"
+                ]
+              },
+              "run_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "session_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "model_used": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "adk_framework": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "deterministic_validation": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "declared_tools": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "tool_invocations": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "topology": {
+          "type": "string",
+          "enum": [
+            "SEPARATELY_CORRELATED_SPECIALIST_RUNNERS"
+          ]
+        },
+        "governed_sequence": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
       }
     },
-
     "execution_evidence_as_of": {
       "type": "object",
-      "required": ["custody_graph", "receipts_committed"],
+      "required": [
+        "custody_graph",
+        "receipts_committed",
+        "history"
+      ],
       "properties": {
         "custody_graph": {
           "description": "null when not yet committed at the boundary, or when a later mutation means the present row is not the boundary value.",
-          "type": ["object", "null"]
+          "type": [
+            "object",
+            "null"
+          ]
         },
-        "receipts_committed": { "type": "integer", "minimum": 0 }
+        "receipts_committed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "history": {
+          "description": "Bounded, tenant-scoped receipts committed at or before the boundary, in commit order. Never contains a post-boundary event.",
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "required": [
+              "receipt_id",
+              "action_id",
+              "action_type",
+              "status",
+              "mutations_applied",
+              "committed_at"
+            ],
+            "properties": {
+              "receipt_id": {
+                "type": "string"
+              },
+              "action_id": {
+                "type": "string"
+              },
+              "action_type": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              },
+              "mutations_applied": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 0
+              },
+              "committed_at": {
+                "type": "string"
+              }
+            }
+          }
+        }
       }
     },
-
     "carry_forward_obligations": {
       "description": "Obligations open AS OF the boundary, never present-day-open.",
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["kind", "reference_id"],
+        "required": [
+          "kind",
+          "reference_id"
+        ],
         "properties": {
           "kind": {
             "type": "string",
@@ -258,23 +1022,87 @@
               "UNRESOLVED_INCIDENT"
             ]
           },
-          "reference_id": { "type": "string" },
-          "incident_id": { "type": ["string", "null"] },
-          "lot_id": { "type": ["string", "null"] },
-          "terminal_state": { "type": "string" }
+          "reference_id": {
+            "type": "string"
+          },
+          "incident_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lot_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "terminal_state": {
+            "type": "string"
+          }
         }
       }
     },
-
     "next_day_draft": {
       "description": "OPTIONAL top-level block. Absent unless include_next_day_draft=true and a next-day revision committed at or before the boundary.",
       "type": "object",
-      "required": ["plan_id", "revision", "status", "approval_required"],
+      "required": [
+        "plan_id",
+        "revision",
+        "status",
+        "approval_required"
+      ],
       "properties": {
-        "plan_id": { "type": "string" },
-        "revision": { "type": "string" },
-        "status": { "type": "string" },
-        "approval_required": { "type": "boolean" }
+        "plan_id": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "approval_required": {
+          "type": "boolean"
+        }
+      }
+    },
+    "recall_intake_as_of": {
+      "description": "Completed intake steps derived from committed receipts and persisted evidence. No intermediate Running or Waiting state exists in the runtime, so none is projected.",
+      "type": [
+        "object",
+        "null"
+      ],
+      "required": [
+        "incident_id",
+        "steps"
+      ],
+      "properties": {
+        "incident_id": {
+          "type": "string"
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "step",
+              "state"
+            ],
+            "properties": {
+              "step": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "COMPLETED",
+                  "PENDING"
+                ]
+              }
+            }
+          }
+        }
       }
     }
   }

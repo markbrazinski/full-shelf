@@ -35,6 +35,57 @@
         "vehicle": "TRUCK-02"
       }
     ],
+    "dispatch": {
+      "plan_id": "PLAN-2026-08-14",
+      "revision": "rev07",
+      "vehicles": [
+        {
+          "assigned_cases": null,
+          "at_capacity": null,
+          "capacity_cases": null,
+          "is_operational": null,
+          "name": null,
+          "remaining_cases": null,
+          "stop_count": 1,
+          "stops": [
+            {
+              "agency": "Agency 01",
+              "cases": 18,
+              "lot_id": "LTC-4471",
+              "order_id": "O201",
+              "status": "PLANNED"
+            }
+          ],
+          "vehicle_id": "TRUCK-01"
+        },
+        {
+          "assigned_cases": null,
+          "at_capacity": null,
+          "capacity_cases": null,
+          "is_operational": null,
+          "name": null,
+          "remaining_cases": null,
+          "stop_count": 2,
+          "stops": [
+            {
+              "agency": "Agency 04",
+              "cases": 15,
+              "lot_id": "LTC-5090",
+              "order_id": "O204",
+              "status": "PLANNED"
+            },
+            {
+              "agency": "Agency 05",
+              "cases": 21,
+              "lot_id": "LTC-5090",
+              "order_id": "O205",
+              "status": "PLANNED"
+            }
+          ],
+          "vehicle_id": "TRUCK-02"
+        }
+      ]
+    },
     "incidents": [],
     "plan_constraints": [],
     "plan_id": "PLAN-2026-08-14",
@@ -47,12 +98,23 @@
     ],
     "recovery": {
       "allocations": [],
+      "explanation": null,
       "shortfalls": []
     },
     "vehicles": null
   },
   "execution_evidence_as_of": {
     "custody_graph": null,
+    "history": [
+      {
+        "action_id": "CMD-81337DC1990351BB97F3566E358C",
+        "action_type": "SAVE_PLAN_REVISION",
+        "committed_at": "2026-08-14T07:30:00+00:00",
+        "mutations_applied": 1,
+        "receipt_id": "fixture-RCT-plan:rev07",
+        "status": "SUCCESS"
+      }
+    ],
     "receipts_committed": 1
   },
   "operating_day": "2026-08-14",
@@ -66,6 +128,7 @@
       }
     ]
   },
+  "recall_intake_as_of": null,
   "replay_notice": "Fixture generated from the production handler against a faked snapshot. Not a real execution. No Gemini, ADK, Model Armor, KMS, or ledger evidence.",
   "tenant_id": "east-bay-food-bank",
   "verified_principal_subject": "operator-subject"

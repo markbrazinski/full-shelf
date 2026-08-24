@@ -1,17 +1,159 @@
 {
   "agent_activity_as_of": {
+    "agents": [
+      {
+        "adk_framework": null,
+        "agent_id": "full-shelf.incident-coordinator.v1",
+        "declared_tools": [],
+        "deterministic_validation": null,
+        "display_name": "Incident Coordinator",
+        "model_used": null,
+        "role": "ROOT_COORDINATOR",
+        "run_id": "fixture-run-coord-1",
+        "session_id": "fixture-sess-coord-1",
+        "state": "COMPLETED",
+        "tool_invocations": []
+      },
+      {
+        "adk_framework": "google-adk-2.6.1",
+        "agent_id": "full-shelf.recall-extraction.v1",
+        "declared_tools": [],
+        "deterministic_validation": "SCHEMA_AND_SOURCE_ANCHORS_VALIDATED",
+        "display_name": "Recall Extraction",
+        "model_used": "gemini-flash-latest",
+        "role": "GOVERNED_SPECIALIST",
+        "run_id": "fixture-run-recall-1",
+        "session_id": "fixture-sess-recall-1",
+        "state": "COMPLETED",
+        "tool_invocations": []
+      },
+      {
+        "adk_framework": "google-adk-2.6.1",
+        "agent_id": "full-shelf.network-custody.v1",
+        "declared_tools": [
+          "custody_graph_read",
+          "custody_dependents_read"
+        ],
+        "deterministic_validation": "RECONCILED_WITH_DETERMINISTIC_GRAPH",
+        "display_name": "Network & Custody",
+        "model_used": "gemini-flash-latest",
+        "role": "GOVERNED_SPECIALIST",
+        "run_id": "fixture-run-custody-1",
+        "session_id": "fixture-sess-custody-1",
+        "state": "COMPLETED",
+        "tool_invocations": [
+          {
+            "status": "SUCCEEDED",
+            "tool_name": "custody_graph_read"
+          }
+        ]
+      },
+      {
+        "adk_framework": "google-adk-2.6.1",
+        "agent_id": "full-shelf.fulfillment-recovery.v1",
+        "declared_tools": [],
+        "deterministic_validation": "CANDIDATE_ID_RESOLVED_DETERMINISTICALLY",
+        "display_name": "Fulfillment & Recovery",
+        "model_used": "gemini-flash-latest",
+        "role": "GOVERNED_SPECIALIST",
+        "run_id": "fixture-run-recovery-1",
+        "session_id": "fixture-sess-recovery-1",
+        "state": "COMPLETED",
+        "tool_invocations": []
+      },
+      {
+        "adk_framework": "google-adk-2.6.1",
+        "agent_id": "full-shelf.partner-operations.v1",
+        "declared_tools": [],
+        "deterministic_validation": "TEMPLATE_AND_PARAMETERS_VALIDATED",
+        "display_name": "Partner Operations",
+        "model_used": "gemini-flash-latest",
+        "role": "GOVERNED_SPECIALIST",
+        "run_id": "fixture-run-partner-1",
+        "session_id": "fixture-sess-partner-1",
+        "state": "COMPLETED",
+        "tool_invocations": []
+      }
+    ],
     "committed_at": "2026-08-14T10:10:00+00:00",
     "coordination_run_id": "fixture-run-coord-1",
     "coordinator_session_id": "fixture-sess-coord-1",
     "delegation_trace": [
       {
+        "adk_event_id": "fixture-evt-recall-1",
+        "adk_framework": "google-adk-2.6.1",
         "agent_id": "full-shelf.recall-extraction.v1",
-        "specialist_run_id": "fixture-run-recall-1"
+        "agent_name": "recall",
+        "coordination_run_id": "fixture-run-coord-1",
+        "coordinator_agent_id": "full-shelf.incident-coordinator.v1",
+        "declared_tools": [],
+        "deterministic_validation": "SCHEMA_AND_SOURCE_ANCHORS_VALIDATED",
+        "model_used": "gemini-flash-latest",
+        "specialist_run_id": "fixture-run-recall-1",
+        "specialist_session_id": "fixture-sess-recall-1",
+        "tool_invocations": []
+      },
+      {
+        "adk_event_id": "fixture-evt-custody-1",
+        "adk_framework": "google-adk-2.6.1",
+        "agent_id": "full-shelf.network-custody.v1",
+        "agent_name": "custody",
+        "coordination_run_id": "fixture-run-coord-1",
+        "coordinator_agent_id": "full-shelf.incident-coordinator.v1",
+        "declared_tools": [
+          "custody_graph_read",
+          "custody_dependents_read"
+        ],
+        "deterministic_validation": "RECONCILED_WITH_DETERMINISTIC_GRAPH",
+        "model_used": "gemini-flash-latest",
+        "specialist_run_id": "fixture-run-custody-1",
+        "specialist_session_id": "fixture-sess-custody-1",
+        "tool_invocations": [
+          {
+            "status": "SUCCEEDED",
+            "tool_name": "custody_graph_read"
+          }
+        ]
+      },
+      {
+        "adk_event_id": "fixture-evt-recovery-1",
+        "adk_framework": "google-adk-2.6.1",
+        "agent_id": "full-shelf.fulfillment-recovery.v1",
+        "agent_name": "recovery",
+        "coordination_run_id": "fixture-run-coord-1",
+        "coordinator_agent_id": "full-shelf.incident-coordinator.v1",
+        "declared_tools": [],
+        "deterministic_validation": "CANDIDATE_ID_RESOLVED_DETERMINISTICALLY",
+        "model_used": "gemini-flash-latest",
+        "specialist_run_id": "fixture-run-recovery-1",
+        "specialist_session_id": "fixture-sess-recovery-1",
+        "tool_invocations": []
+      },
+      {
+        "adk_event_id": "fixture-evt-partner-1",
+        "adk_framework": "google-adk-2.6.1",
+        "agent_id": "full-shelf.partner-operations.v1",
+        "agent_name": "partner",
+        "coordination_run_id": "fixture-run-coord-1",
+        "coordinator_agent_id": "full-shelf.incident-coordinator.v1",
+        "declared_tools": [],
+        "deterministic_validation": "TEMPLATE_AND_PARAMETERS_VALIDATED",
+        "model_used": "gemini-flash-latest",
+        "specialist_run_id": "fixture-run-partner-1",
+        "specialist_session_id": "fixture-sess-partner-1",
+        "tool_invocations": []
       }
+    ],
+    "governed_sequence": [
+      "full-shelf.recall-extraction.v1",
+      "full-shelf.network-custody.v1",
+      "full-shelf.fulfillment-recovery.v1",
+      "full-shelf.partner-operations.v1"
     ],
     "manifest_version": "1.1.0",
     "proposal_status": "PROPOSED",
-    "root_agent_id": "full-shelf.incident-coordinator.v1"
+    "root_agent_id": "full-shelf.incident-coordinator.v1",
+    "topology": "SEPARATELY_CORRELATED_SPECIALIST_RUNNERS"
   },
   "authority_scope": "east-bay-food-bank@2026-08-14",
   "carry_forward_obligations": [
@@ -39,7 +181,36 @@
   "classification": "SYNTHETIC_TEST",
   "current_day": {
     "active_plan_revision": "rev08",
-    "approvals": [],
+    "approvals": [
+      {
+        "approval_id": "fixture-APR-rev08",
+        "approver_domain": "example.com",
+        "approver_identity_class": "VERIFIED_HUMAN_OPERATOR",
+        "authority_scope": "east-bay-food-bank@2026-08-14",
+        "expires_at": "2026-08-14 20:00:00+00:00",
+        "kms_key_version": "projects/p/locations/l/keyRings/k/cryptoKeys/c/cryptoKeyVersions/1",
+        "plan_diff": [
+          {
+            "cases": 22,
+            "change_type": "REROUTE",
+            "order_id": "O202",
+            "target_vehicle": "TRUCK-02"
+          },
+          {
+            "cases": 21,
+            "change_type": "PICKUP",
+            "order_id": "O205",
+            "target_vehicle": null
+          }
+        ],
+        "plan_diff_hash": "fixture-diffhash-rev08",
+        "plan_id": "PLAN-2026-08-14",
+        "proposed_revision": "rev08",
+        "source_revision": "rev07",
+        "state": "VERIFIED",
+        "verified_at": "2026-08-14 08:24:00+00:00"
+      }
+    ],
     "commitments": [
       {
         "agency": "Agency 01",
@@ -78,6 +249,31 @@
         "vehicle": "TRUCK-02"
       }
     ],
+    "dispatch": {
+      "plan_id": "PLAN-2026-08-14",
+      "revision": "rev08",
+      "vehicles": [
+        {
+          "assigned_cases": 58,
+          "at_capacity": false,
+          "capacity_cases": 60,
+          "is_operational": true,
+          "name": "Refrigerated Truck 2",
+          "remaining_cases": 2,
+          "stop_count": 1,
+          "stops": [
+            {
+              "agency": "Agency 02",
+              "cases": 22,
+              "lot_id": "LTC-4471",
+              "order_id": "O202",
+              "status": "PLANNED"
+            }
+          ],
+          "vehicle_id": "TRUCK-02"
+        }
+      ]
+    },
     "incidents": [
       {
         "affected_lot_id": null,
@@ -129,13 +325,36 @@
     "recovery": {
       "allocations": [
         {
+          "agency_id": "AGY-01",
           "allocation_id": "ALLOC-1",
+          "cases": 22,
           "incident_id": "INC-2231",
+          "lot_id": "LTC-5090",
+          "status": "COMMITTED"
+        },
+        {
+          "agency_id": "AGY-02",
+          "allocation_id": "ALLOC-2",
+          "cases": 18,
+          "incident_id": "INC-2231",
+          "lot_id": "LTC-5090",
           "status": "COMMITTED"
         }
       ],
+      "explanation": {
+        "agencies_allocated": 2,
+        "agencies_short": 1,
+        "basis": "DETERMINISTIC_DERIVATION",
+        "cases_allocated": 40,
+        "cases_requested": 60,
+        "cases_short": 20,
+        "persisted_agent_rationale": null,
+        "statement": "40 of 60 cases were allocated from safe stock; 20 cases remain short across 1 agency destinations."
+      },
       "shortfalls": [
         {
+          "agency_id": "AGY-03",
+          "cases": 20,
           "incident_id": "INC-2231",
           "shortfall_id": "SF-A03",
           "status": "OPEN"
@@ -154,18 +373,222 @@
   },
   "execution_evidence_as_of": {
     "custody_graph": {
+      "classification": "SYNTHETIC_TEST",
       "confirmed_cases": 88,
+      "current_positions": [
+        {
+          "acknowledgment_status": "CONFIRMED",
+          "name": "Central Warehouse",
+          "node_id": "WH-01",
+          "node_type": "WAREHOUSE",
+          "on_hand_cases": 30,
+          "path_depth": 0
+        },
+        {
+          "acknowledgment_status": "CONFIRMED",
+          "name": "Agency 01",
+          "node_id": "AGY-01",
+          "node_type": "AGENCY",
+          "on_hand_cases": 20,
+          "path_depth": 1
+        },
+        {
+          "acknowledgment_status": "CONFIRMED",
+          "name": "Agency 02",
+          "node_id": "AGY-02",
+          "node_type": "AGENCY",
+          "on_hand_cases": 18,
+          "path_depth": 1
+        },
+        {
+          "acknowledgment_status": "CONFIRMED",
+          "name": "Agency 04",
+          "node_id": "AGY-04",
+          "node_type": "AGENCY",
+          "on_hand_cases": 12,
+          "path_depth": 1
+        },
+        {
+          "acknowledgment_status": "UNCONFIRMED",
+          "name": "Site 01",
+          "node_id": "SITE-01",
+          "node_type": "SUB_SITE",
+          "on_hand_cases": 8,
+          "path_depth": 2
+        },
+        {
+          "acknowledgment_status": "CONFIRMED",
+          "name": "Agency 05",
+          "node_id": "AGY-05",
+          "node_type": "AGENCY",
+          "on_hand_cases": 8,
+          "path_depth": 1
+        }
+      ],
+      "intermediate_subtotals_readded": false,
       "lot_id": "LTC-4471",
+      "max_path_depth": 2,
+      "node_count": 6,
+      "paths": [
+        {
+          "destination_node_id": "AGY-01",
+          "path_depth": 1,
+          "root_node_id": "WH-01"
+        },
+        {
+          "destination_node_id": "AGY-02",
+          "path_depth": 1,
+          "root_node_id": "WH-01"
+        },
+        {
+          "destination_node_id": "AGY-04",
+          "path_depth": 1,
+          "root_node_id": "WH-01"
+        },
+        {
+          "destination_node_id": "SITE-01",
+          "path_depth": 2,
+          "root_node_id": "WH-01"
+        },
+        {
+          "destination_node_id": "AGY-05",
+          "path_depth": 1,
+          "root_node_id": "WH-01"
+        }
+      ],
+      "query_engine": "SPANNER_GRAPH_GQL",
+      "tenant_id": "east-bay-food-bank",
       "unconfirmed_cases": 8,
+      "unconfirmed_positions": [
+        {
+          "acknowledgment_status": "UNCONFIRMED",
+          "name": "Site 01",
+          "node_id": "SITE-01",
+          "node_type": "SUB_SITE",
+          "on_hand_cases": 8,
+          "path_depth": 2
+        }
+      ],
       "unique_current_cases": 96
     },
-    "receipts_committed": 9
+    "history": [
+      {
+        "action_id": "CMD-81337DC1990351BB97F3566E358C",
+        "action_type": "SAVE_PLAN_REVISION",
+        "committed_at": "2026-08-14T07:30:00+00:00",
+        "mutations_applied": 1,
+        "receipt_id": "fixture-RCT-plan:rev07",
+        "status": "SUCCESS"
+      },
+      {
+        "action_id": "CMD-82A0876D9A428F38C7FCA570A15B",
+        "action_type": "SET_INCIDENT_STATUS",
+        "committed_at": "2026-08-14T08:20:00+00:00",
+        "mutations_applied": 1,
+        "receipt_id": "fixture-RCT-status:SCOPING",
+        "status": "SUCCESS"
+      },
+      {
+        "action_id": "CMD-08DF43D6320B712F1311C5F3DBBE",
+        "action_type": "SAVE_PLAN_REVISION",
+        "committed_at": "2026-08-14T08:24:00+00:00",
+        "mutations_applied": 1,
+        "receipt_id": "fixture-RCT-plan:rev08",
+        "status": "SUCCESS"
+      },
+      {
+        "action_id": "CMD-703DB31A739465A604496B8B3EF8",
+        "action_type": "SET_INCIDENT_STATUS",
+        "committed_at": "2026-08-14T09:36:00+00:00",
+        "mutations_applied": 1,
+        "receipt_id": "fixture-RCT-status:SCOPING",
+        "status": "SUCCESS"
+      },
+      {
+        "action_id": "CMD-4D18163F14822366071B269DAB63",
+        "action_type": "ACTIVATE_MOVEMENT_BARRIER",
+        "committed_at": "2026-08-14T10:05:00+00:00",
+        "mutations_applied": 1,
+        "receipt_id": "fixture-RCT-movement-barrier",
+        "status": "SUCCESS"
+      },
+      {
+        "action_id": "CMD-E8C05D7A1EF1AA2E85C7085A846B",
+        "action_type": "SET_INCIDENT_STATUS",
+        "committed_at": "2026-08-14T10:06:00+00:00",
+        "mutations_applied": 1,
+        "receipt_id": "fixture-RCT-status:CONTAINMENT_IN_PROGRESS",
+        "status": "SUCCESS"
+      },
+      {
+        "action_id": "CMD-26ED813D0781E6733CCC2538882D",
+        "action_type": "INVALIDATE_PLAN",
+        "committed_at": "2026-08-14T10:07:00+00:00",
+        "mutations_applied": 1,
+        "receipt_id": "fixture-RCT-plan:invalidate",
+        "status": "SUCCESS"
+      },
+      {
+        "action_id": "CMD-01060F596F27833BAC96E45D35EE",
+        "action_type": "ALLOCATE_SAFE_STOCK",
+        "committed_at": "2026-08-14T10:10:00+00:00",
+        "mutations_applied": 1,
+        "receipt_id": "fixture-RCT-safe-recovery",
+        "status": "SUCCESS"
+      },
+      {
+        "action_id": "CMD-EB92F0EFF4626473CB8E007CBEF5",
+        "action_type": "RECORD_REFUSAL",
+        "committed_at": "2026-08-14T10:12:00+00:00",
+        "mutations_applied": 0,
+        "receipt_id": "fixture-RCT-containment-refusal",
+        "status": "DENIED"
+      },
+      {
+        "action_id": "CMD-A479AFF12EC29E0C1BE3BA3089D1",
+        "action_type": "SET_INCIDENT_STATUS",
+        "committed_at": "2026-08-14T10:13:00+00:00",
+        "mutations_applied": 1,
+        "receipt_id": "fixture-RCT-status:PARTIALLY_CONTAINED",
+        "status": "SUCCESS"
+      }
+    ],
+    "receipts_committed": 10
   },
   "operating_day": "2026-08-14",
   "projection_boundary": {
     "as_of": "2026-08-14T16:30:00+00:00",
     "mode": "EXPLICIT_AS_OF",
     "omitted_fields": []
+  },
+  "recall_intake_as_of": {
+    "incident_id": "INC-2231",
+    "steps": [
+      {
+        "state": "COMPLETED",
+        "step": "NOTICE_SCREENED"
+      },
+      {
+        "state": "COMPLETED",
+        "step": "NOTICE_EXTRACTED"
+      },
+      {
+        "state": "COMPLETED",
+        "step": "INCIDENT_OPENED"
+      },
+      {
+        "state": "COMPLETED",
+        "step": "PLAN_INVALIDATED"
+      },
+      {
+        "state": "COMPLETED",
+        "step": "MOVEMENT_BARRIER_ACTIVE"
+      },
+      {
+        "state": "COMPLETED",
+        "step": "FLEET_PROPOSAL_ACCEPTED"
+      }
+    ]
   },
   "replay_notice": "Fixture generated from the production handler against a faked snapshot. Not a real execution. No Gemini, ADK, Model Armor, KMS, or ledger evidence.",
   "tenant_id": "east-bay-food-bank",

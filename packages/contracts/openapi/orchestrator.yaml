@@ -177,6 +177,23 @@ paths:
         narrowed. next_day_draft is omitted entirely unless
         include_next_day_draft=true, and even then appears only when a next-day
         revision committed at or before the boundary.
+
+
+        Evidence appears only after it exists. current_day.approvals carries
+        the verified approval, its immutable rev07->rev08 plan_diff, and the
+        stored kms_key_version, and is empty until an approval was verified at
+        or before the boundary; the KMS signature value is never projected.
+        agent_activity_as_of.agents lists all five accepted agents projected
+        from persisted fleet evidence only, each COMPLETED, NOT_YET_REPORTED,
+        or NOT_INVOLVED. The synchronous runtime records no Running or Waiting
+        state, no durations, and no per-hop timing, so the contract cannot
+        express them. Model Armor is an input-screening boundary and is not a
+        member of that list. current_day.dispatch exposes committed
+        order-to-vehicle assignments, stops, and capacity arithmetic, and
+        contains no coordinate, position, bearing, or route geometry.
+        execution_evidence_as_of.history is a bounded, tenant-scoped receipt
+        sequence at or before the boundary and never contains a post-boundary
+        event.
       security: [{ googleHumanOperatorOidc: [] }]
       parameters:
         - in: query
