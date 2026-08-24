@@ -3,3 +3,8 @@ dist
 dist-ssr
 *.local
 tsconfig.tsbuildinfo
+
+# Playwright: browser binaries live in the shared cache, never in Git.
+test-results
+playwright-report
+.playwright

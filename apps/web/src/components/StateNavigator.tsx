@@ -20,6 +20,7 @@ export function StateNavigator({ beats, activeBeat, onGo }: Props) {
             <button
               key={b.id}
               type="button"
+              data-beat={b.id}
               onClick={() => onGo(b.id)}
               style={css(
                 `flex:1;min-width:86px;background:${active ? "#16323b" : "#fff"};color:${active ? "#fff" : "#43555c"};border:1px solid ${active ? "#16323b" : "#d5d8d2"};border-radius:6px;padding:6px 8px;cursor:pointer;text-align:left;line-height:1.15;font-family:'IBM Plex Sans',sans-serif`,

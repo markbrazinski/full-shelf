@@ -1,19 +1,18 @@
 // =====================================================================
-// NON-RUNTIME INTEGRATION MATERIAL — DESIGN HANDOFF REFERENCE ONLY
+// NON-RUNTIME REFERENCE MATERIAL — NOT A DATA SOURCE FOR THE APP
 // ---------------------------------------------------------------------
-// This module is preserved Design-handoff reference. It holds hardcoded
-// canonical scenario quantities, IDs, agent results, receipts, and
-// timestamps that are NOT backed by the accepted backend contract.
+// Preserved Design-handoff reference. It holds hardcoded scenario
+// quantities, IDs, agent results, receipts and timestamps that are NOT
+// backed by the accepted backend contract, and several of them are now
+// known to contradict it.
 //
-// It MUST NOT be the runtime source for deterministic replay. Deterministic
-// replay reads the loopback replay server via a contract-validated adapter
-// (see apps/web/src/env.ts). That adapter is NOT YET WRITTEN: integration is
-// escalated on a contract-coverage gap — see docs/frontend-v4-contract-gap.md.
+// The runtime reads accepted contract v2 over HTTP through
+// data/ProjectionHttpDataSource.ts, selected in env.ts. Nothing on the
+// runtime entry path (main.tsx → App.tsx) imports this module, and it
+// is absent from the production bundle.
 //
-// Permitted uses: tests, isolated component development, handoff reference.
-// App.tsx currently still imports this as the only available source, so the
-// app renders Design fixture truth, NOT contract truth, and is not shippable
-// until the adapter lands.
+// Permitted uses: tests, isolated component development, handoff
+// reference. Never re-bind this as an application data source.
 // =====================================================================
 // =====================================================================
 // Full Shelf — DETERMINISTIC fixture data-source (SYNTHETIC_TEST)

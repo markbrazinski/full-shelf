@@ -1,16 +1,34 @@
+import { useCallback, useState } from "react";
 import { css } from "../styles/css";
 import type { BeatId, DispatchView } from "../types/fullShelf";
+import { PlannedDispatchMap, type PlannedStop } from "./PlannedDispatchMap";
 
 interface Props {
   dispatch: DispatchView;
   onToday: () => void;
   onGo: (b: BeatId) => void;
+  /** Absent key → the SVG schematic below is the rendered panel. */
+  mapsApiKey?: string;
+  plannedStops?: PlannedStop[];
+  mapLabel?: string;
 }
 
-export function DispatchSchematic({ dispatch, onToday, onGo }: Props) {
-  const s = dispatch.stops;
-  const v = dispatch.vehicles;
+export function DispatchSchematic({ dispatch, onToday, onGo, mapsApiKey, plannedStops, mapLabel }: Props) {
+  // A slot the contract does not populate is genuinely absent: show it as
+  // unreported rather than crashing or inventing a stop.
+  const ABSENT_STOP = { title: "Not in this plan", sub: "—", tone: "planned" as const };
+  const ABSENT_VEHICLE = { label: "—", status: "Not reported", tone: "planned" as const };
+  const s = new Proxy(dispatch.stops, {
+    get: (t, k: string) => t[k] ?? ABSENT_STOP,
+  }) as typeof dispatch.stops;
+  const v = new Proxy(dispatch.vehicles, {
+    get: (t, k: string) => t[k] ?? ABSENT_VEHICLE,
+  }) as typeof dispatch.vehicles;
   const cap = dispatch.capacityDecision;
+  // Maps failure must degrade to the schematic, never to a blank panel.
+  const [mapFailed, setMapFailed] = useState(false);
+  const onMapFailure = useCallback(() => setMapFailed(true), []);
+  const showMap = !!mapsApiKey && !!plannedStops?.length && !mapFailed;
   return (
     <>
       <div style={css("display:flex;align-items:center;gap:10px;margin-bottom:14px")}>
@@ -33,7 +51,16 @@ export function DispatchSchematic({ dispatch, onToday, onGo }: Props) {
       </div>
       <div style={css("display:grid;grid-template-columns:1fr 380px;gap:18px;align-items:start")}>
         <div style={css("background:#eef1ee;border:1px solid #ccd5d7;border-radius:12px;padding:14px")}>
-          <div style={css("position:relative;width:100%;height:460px;background:#e7ebe7;border-radius:9px;overflow:hidden;border:1px solid #dbe1dc")}>
+          {showMap ? (
+            <PlannedDispatchMap
+              stops={plannedStops!}
+              label={mapLabel ?? dispatch.schematicLabel}
+              apiKey={mapsApiKey!}
+              onFailure={onMapFailure}
+            />
+          ) : (
+            <>
+          <div data-testid="dispatch-svg-schematic" style={css("position:relative;width:100%;height:460px;background:#e7ebe7;border-radius:9px;overflow:hidden;border:1px solid #dbe1dc")}>
             <svg viewBox="0 0 820 460" preserveAspectRatio="xMidYMid meet" style={css("position:absolute;inset:0;width:100%;height:100%")} fill="none" strokeLinecap="round" strokeLinejoin="round">
               <defs>
                 <marker id="mk-blue2" markerWidth="8" markerHeight="8" refX="5.6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 z" fill="#1f6f8b" /></marker>
@@ -87,6 +114,9 @@ export function DispatchSchematic({ dispatch, onToday, onGo }: Props) {
             <Legend swatch="border-top:3px dashed #1f6f8b" label="Truck 2 recovery" />
             <Legend swatch="border-top:3px dashed #a85f12" label="Partner pickup" />
           </div>
+          <div className="mono" data-testid="schematic-provenance-label" style={css("font-size:11px;color:#a85f12;margin-top:9px;letter-spacing:.02em")}>{mapLabel ?? dispatch.schematicLabel}</div>
+            </>
+          )}
         </div>
         <div style={css("display:flex;flex-direction:column;gap:14px")}>
           <div style={css("background:#fff;border:1px solid #d5d8d2;border-radius:10px;padding:16px")}>
@@ -110,7 +140,7 @@ export function DispatchSchematic({ dispatch, onToday, onGo }: Props) {
             <div style={css("font-size:12px;color:#43555c;line-height:1.5;margin-top:11px")}>{cap.explain}</div>
           </div>
           <div style={css("background:#16323b;border-radius:10px;padding:16px;color:#f4f6f5")}>
-            <div style={css("font-size:12px;color:#c8d5d8;line-height:1.45;margin-bottom:12px")}>This schematic shows how the 42-case recovery load reassigns without exceeding capacity. It is not where the change is approved.</div>
+            <div style={css("font-size:12px;color:#c8d5d8;line-height:1.45;margin-bottom:12px")}>{cap.explain} This view is not where the change is approved.</div>
             <span role="button" tabIndex={0} className="fs-btn-teal" onClick={() => onGo("revisionReview")} onKeyDown={(e) => e.key === "Enter" && onGo("revisionReview")} style={css("display:block;text-align:center;background:#1f6f8b;color:#fff;border-radius:7px;padding:11px;font-size:14px;font-weight:600;cursor:pointer")}>← Return to plan revision</span>
           </div>
         </div>

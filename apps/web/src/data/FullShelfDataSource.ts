@@ -2,10 +2,10 @@
 // Full Shelf — data-source seam
 // ---------------------------------------------------------------------
 // This interface is the contract every data source implements. The
-// bundled implementation is FixtureDataSource (deterministic synthetic).
-// Claude Code adds a RecordedReplayDataSource and a LiveHttpDataSource
-// implementing THIS SAME interface — no component changes required.
-// See INTEGRATION_HANDOFF.md for exactly where to add them.
+// runtime implementations are ReplayHttpDataSource and
+// LiveOrchestratorDataSource (data/ProjectionHttpDataSource.ts), chosen
+// by VITE_DATA_SOURCE in env.ts. Both share one validator and one
+// normalizer, so replay cannot drift from live.
 // =====================================================================
 
 import type { BeatId, FullShelfProjection } from "../types/fullShelf";

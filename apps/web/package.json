@@ -3,19 +3,22 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Full Shelf v4 operator presentation (React + TypeScript + Vite). Vendored Design handoff; no live transport yet.",
+  "description": "Full Shelf v4 operator presentation (React + TypeScript + Vite) bound to accepted backend contract v2 via deterministic replay or the live orchestrator.",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "test": "echo \"no test runner configured for apps/web yet\" && exit 0"
+    "test": "playwright test",
+    "test:e2e": "playwright test",
+    "dev:replay": "VITE_DATA_SOURCE=deterministic_replay VITE_ORCHESTRATOR_URL=http://127.0.0.1:8787 vite --host 127.0.0.1 --port 5173"
   },
   "dependencies": {
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",

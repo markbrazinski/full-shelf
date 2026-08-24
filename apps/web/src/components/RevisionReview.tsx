@@ -9,8 +9,10 @@ interface Props {
 }
 
 export function RevisionReview({ incident, onToday, onGo, onApprove }: Props) {
-  const r = incident.rationale!;
-  const cta = incident.approvalCta!;
+  // Model reasoning is not persisted by the contract, so the advisory
+  // panel is omitted rather than filled with invented prose.
+  const r = incident.rationale;
+  const cta = incident.approvalCta;
   return (
     <>
       <div style={css("display:flex;align-items:center;gap:10px;margin-bottom:14px")}>
@@ -62,15 +64,23 @@ export function RevisionReview({ incident, onToday, onGo, onApprove }: Props) {
         <div style={css("display:flex;flex-direction:column;gap:14px")}>
           <div style={css("background:#fff;border:1px solid #d5d8d2;border-radius:10px;padding:16px")}>
             <div className="mono" style={css("font-size:11px;letter-spacing:.1em;color:#74848a;font-weight:600;margin-bottom:12px")}>WHY THIS RECOVERY <span style={css("color:#1f6f8b")}>· ADVISORY</span></div>
-            <Section title="OBSERVATION" color="#1f6f8b" body={r.observation} />
-            <Section title="CONSTRAINTS" color="#a85f12" body={r.constraints} />
-            <Section title="FEASIBLE OPTION" color="#3f7d5a" body={r.feasibleOption} />
-            <Section title="REQUIRED AUTHORITY" color="#16323b" body={r.requiredAuthority} last />
+            {r ? (
+              <>
+                <Section title="OBSERVATION" color="#1f6f8b" body={r.observation} />
+                <Section title="CONSTRAINTS" color="#a85f12" body={r.constraints} />
+                <Section title="FEASIBLE OPTION" color="#3f7d5a" body={r.feasibleOption} />
+                <Section title="REQUIRED AUTHORITY" color="#16323b" body={r.requiredAuthority} last />
+              </>
+            ) : (
+              <div style={css("font-size:12px;color:#74848a;line-height:1.5")}>
+                No agent rationale was persisted for this revision, so none is shown. The committed plan diff below is the authoritative record.
+              </div>
+            )}
           </div>
           <div style={css("background:#16323b;border-radius:10px;padding:16px 16px 15px;color:#f4f6f5")}>
             <div className="mono" style={css("font-size:11px;letter-spacing:.1em;color:#f0c987;font-weight:600;margin-bottom:4px")}>▲ HUMAN APPROVAL REQUIRED</div>
-            <div style={css("font-size:12px;color:#c8d5d8;line-height:1.4;margin-bottom:13px")}>{cta.guard}</div>
-            <button type="button" className="fs-btn-teal" onClick={onApprove} style={css("width:100%;background:#1f6f8b;color:#fff;border:none;border-radius:7px;padding:12px;font-size:14px;font-weight:600;cursor:pointer;box-shadow:0 0 0 3px rgba(31,111,139,.22);font-family:'IBM Plex Sans',sans-serif")}>{cta.label}</button>
+            <div style={css("font-size:12px;color:#c8d5d8;line-height:1.4;margin-bottom:13px")}>{cta?.guard ?? "This revision requires verified human approval."}</div>
+            <button type="button" className="fs-btn-teal" onClick={onApprove} style={css("width:100%;background:#1f6f8b;color:#fff;border:none;border-radius:7px;padding:12px;font-size:14px;font-weight:600;cursor:pointer;box-shadow:0 0 0 3px rgba(31,111,139,.22);font-family:'IBM Plex Sans',sans-serif")}>{cta?.label ?? "Approve revision"}</button>
             <div style={css("font-size:11px;color:#a4b4ba;text-align:center;margin-top:9px")}>Approves the complete diff as a single change</div>
           </div>
         </div>

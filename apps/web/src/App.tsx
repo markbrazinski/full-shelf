@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { css } from "./styles/css";
-import { BEATS, createFixtureDataSource } from "./data/FixtureDataSource";
+import { BEATS } from "./data/contract/beats";
+import { plannedStopsFrom } from "./data/contract/plannedStops";
+import { createDataSource, googleMapsApiKey, isReplayMode } from "./env";
 import type { FullShelfDataSource } from "./data/FullShelfDataSource";
 import type { BeatId, Connection, FullShelfProjection } from "./types/fullShelf";
 
@@ -22,12 +24,17 @@ import { TomorrowsDraft } from "./components/TomorrowsDraft";
 import { HistoryLedger } from "./components/HistoryLedger";
 import { ExecutionRecordDrawer } from "./components/ExecutionRecordDrawer";
 
-// NOT SHIPPABLE: this entry path still binds the Design fixture, which is
-// non-runtime reference material (see data/FixtureDataSource.ts). The
-// contract-validated replay/live adapter is not yet written — integration
-// is escalated on a contract-coverage gap. See
-// docs/frontend-v4-contract-gap.md. Swap this one binding when it lands.
-const dataSource: FullShelfDataSource = createFixtureDataSource();
+// Runtime truth comes from the accepted contract over HTTP — deterministic
+// replay or the live orchestrator, selected by VITE_DATA_SOURCE. The Design
+// fixture is NOT reachable from this entry path; it is test/reference material.
+const dataSource: FullShelfDataSource = createDataSource();
+
+const MAPS_API_KEY = googleMapsApiKey();
+// Provenance is stated differently for synthetic replay vs configured live
+// locations, but neither ever claims a live vehicle position.
+const MAP_LABEL = isReplayMode()
+  ? "Synthetic replay · Google planned dispatch · not live vehicle tracking"
+  : "Google planned dispatch · configured facility locations · not live vehicle tracking";
 
 const TODAY_HOME: Partial<Record<BeatId, BeatId>> = {
   revisionReview: "truckFailure",
@@ -141,7 +148,16 @@ export default function App() {
                 <RevisionReview incident={p.incident} onToday={goToday} onGo={loadBeat} onApprove={() => loadBeat("rev08Active")} />
               )}
 
-              {p.dispatch && <DispatchSchematic dispatch={p.dispatch} onToday={goToday} onGo={loadBeat} />}
+              {p.dispatch && (
+                <DispatchSchematic
+                  dispatch={p.dispatch}
+                  onToday={goToday}
+                  onGo={loadBeat}
+                  mapsApiKey={MAPS_API_KEY}
+                  plannedStops={plannedStopsFrom(p.dispatch)}
+                  mapLabel={MAP_LABEL}
+                />
+              )}
 
               {beat === "recallProcessing" && p.recall && (
                 <RecallWorkspace recall={p.recall} onToday={goToday} onGo={loadBeat} onOpenEvidence={openEvidence} />
