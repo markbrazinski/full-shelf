@@ -1,35 +1,281 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "FullShelfUIProjection",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://full-shelf.example/schemas/ui_projection.json",
+  "title": "FullShelfBoundedOperatorProjection",
+  "description": "Response of GET /api/v1/projections/demo-beats. Projects only facts committed at or before an explicit boundary. next_day_draft is present only when include_next_day_draft=true AND a next-day revision was committed at or before the boundary.",
   "type": "object",
+  "required": [
+    "tenant_id",
+    "operating_day",
+    "authority_scope",
+    "verified_principal_subject",
+    "classification",
+    "projection_boundary",
+    "current_day",
+    "agent_activity_as_of",
+    "execution_evidence_as_of",
+    "carry_forward_obligations"
+  ],
   "properties": {
-    "day_preview": {
-      "type": "object",
-      "properties": {
-        "date": { "type": "string" },
-        "active_plan_revision": { "type": "string" },
-        "total_deliveries": { "type": "integer" },
-        "total_cases": { "type": "integer" },
-        "trucks_assigned": { "type": "integer" },
-        "agencies": { "type": "array", "items": { "type": "object" } }
-      },
-      "required": ["date", "active_plan_revision", "total_deliveries", "total_cases", "trucks_assigned"]
+    "tenant_id": { "type": "string", "minLength": 1 },
+    "operating_day": { "type": "string", "format": "date" },
+    "authority_scope": {
+      "type": "string",
+      "description": "tenant_id@operating_day",
+      "pattern": "^.+@\\d{4}-\\d{2}-\\d{2}$"
     },
-    "incident_summary": {
+    "verified_principal_subject": { "type": "string", "minLength": 1 },
+    "classification": {
+      "type": "string",
+      "description": "OBSERVED_LIVE from the deployed handler. Replay fixtures are relabelled SYNTHETIC_TEST and are never presented as live or recorded evidence.",
+      "enum": ["OBSERVED_LIVE", "SYNTHETIC_TEST"]
+    },
+    "replay_notice": {
+      "type": "string",
+      "description": "Present only on deterministic replay fixtures, never on a live response."
+    },
+
+    "projection_boundary": {
       "type": "object",
+      "description": "The instant this projection is true as of, and what could not be truthfully reconstructed at it.",
+      "required": ["as_of", "mode", "omitted_fields"],
       "properties": {
-        "active_incidents": { "type": "array", "items": { "type": "object" } },
-        "terminal_state": { "type": "string" }
+        "as_of": { "type": "string", "format": "date-time" },
+        "mode": { "type": "string", "enum": ["LIVE_SERVER_TIME", "EXPLICIT_AS_OF"] },
+        "omitted_fields": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["field", "reason"],
+            "properties": {
+              "field": { "type": "string" },
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "PRE_BOUNDARY_STATE_NOT_RETAINED",
+                  "NOT_COMMITTED_AS_OF_BOUNDARY",
+                  "MANAGED_GRAPH_READ_UNAVAILABLE"
+                ]
+              }
+            }
+          }
+        }
       }
     },
-    "custody_graph": {
+
+    "current_day": {
       "type": "object",
+      "required": [
+        "plan_id", "plan_revisions", "active_plan_revision", "commitments",
+        "vehicles", "approvals", "incidents", "plan_constraints", "recovery"
+      ],
       "properties": {
-        "total_unique_cases": { "type": "integer" },
-        "nodes": { "type": "array", "items": { "type": "object" } },
-        "edges": { "type": "array", "items": { "type": "object" } }
+        "plan_id": { "type": "string" },
+        "plan_revisions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["plan_id", "revision", "status"],
+            "properties": {
+              "plan_id": { "type": "string" },
+              "revision": { "type": "string" },
+              "status": { "type": "string" }
+            }
+          }
+        },
+        "active_plan_revision": { "type": ["string", "null"] },
+        "commitments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["revision", "order_id", "agency", "cases", "lot_id", "vehicle", "status"],
+            "properties": {
+              "revision": { "type": "string" },
+              "order_id": { "type": "string" },
+              "agency": { "type": ["string", "null"] },
+              "cases": { "type": ["integer", "null"] },
+              "lot_id": { "type": ["string", "null"] },
+              "vehicle": { "type": ["string", "null"] },
+              "status": { "type": ["string", "null"] }
+            }
+          }
+        },
+        "vehicles": {
+          "description": "null when a later mutation proves the present row is not the boundary value; the omission is then reported in projection_boundary.omitted_fields.",
+          "type": ["array", "null"],
+          "items": {
+            "type": "object",
+            "required": ["vehicle_id", "name", "capacity", "assigned_cases", "is_operational"],
+            "properties": {
+              "vehicle_id": { "type": "string" },
+              "name": { "type": ["string", "null"] },
+              "capacity": { "type": ["integer", "null"] },
+              "assigned_cases": { "type": ["integer", "null"] },
+              "is_operational": { "type": ["boolean", "null"] }
+            }
+          }
+        },
+        "approvals": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["approval_id", "plan_id", "source_revision", "proposed_revision", "plan_diff_hash", "kms_key_version", "verified_at"],
+            "properties": {
+              "approval_id": { "type": "string" },
+              "plan_id": { "type": ["string", "null"] },
+              "source_revision": { "type": ["string", "null"] },
+              "proposed_revision": { "type": ["string", "null"] },
+              "plan_diff_hash": { "type": ["string", "null"] },
+              "kms_key_version": { "type": ["string", "null"] },
+              "verified_at": { "type": "string" }
+            }
+          }
+        },
+        "incidents": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["incident_id", "incident_type", "status", "terminal_state", "affected_lot_id", "model_armor_screening", "refusal"],
+            "properties": {
+              "incident_id": { "type": "string" },
+              "incident_type": { "type": ["string", "null"] },
+              "status": {
+                "type": "string",
+                "description": "Recomputed as-of state, never the present-day row value.",
+                "enum": ["DETECTED", "SCOPING", "CONTAINMENT_IN_PROGRESS", "PARTIALLY_CONTAINED"]
+              },
+              "terminal_state": {
+                "type": "string",
+                "enum": ["NONE", "PARTIALLY_CONTAINED"]
+              },
+              "affected_lot_id": { "type": ["string", "null"] },
+              "model_armor_screening": {
+                "type": ["object", "null"],
+                "required": ["result", "correlation_id"],
+                "properties": {
+                  "result": { "type": "string", "enum": ["PASS"] },
+                  "correlation_id": { "type": ["string", "null"] }
+                }
+              },
+              "refusal": {
+                "type": ["object", "null"],
+                "required": ["decision", "mutations_applied", "receipt_id", "committed_at"],
+                "properties": {
+                  "decision": { "type": "string" },
+                  "mutations_applied": { "type": "integer" },
+                  "receipt_id": { "type": "string" },
+                  "committed_at": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "plan_constraints": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["plan_id", "constraint_type", "description"],
+            "properties": {
+              "plan_id": { "type": ["string", "null"] },
+              "constraint_type": { "type": ["string", "null"] },
+              "description": { "type": ["string", "null"] }
+            }
+          }
+        },
+        "recovery": {
+          "type": "object",
+          "required": ["allocations", "shortfalls"],
+          "properties": {
+            "allocations": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["allocation_id", "incident_id", "status"],
+                "properties": {
+                  "allocation_id": { "type": "string" },
+                  "incident_id": { "type": ["string", "null"] },
+                  "status": { "type": ["string", "null"] }
+                }
+              }
+            },
+            "shortfalls": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["shortfall_id", "incident_id", "status"],
+                "properties": {
+                  "shortfall_id": { "type": "string" },
+                  "incident_id": { "type": ["string", "null"] },
+                  "status": { "type": ["string", "null"] }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "agent_activity_as_of": {
+      "description": "Advisory fleet evidence, null until its gating ledger receipt has committed at or before the boundary.",
+      "type": ["object", "null"],
+      "required": ["manifest_version", "root_agent_id", "coordinator_session_id", "coordination_run_id", "proposal_status", "delegation_trace", "committed_at"],
+      "properties": {
+        "manifest_version": { "type": ["string", "null"] },
+        "root_agent_id": { "type": ["string", "null"] },
+        "coordinator_session_id": { "type": ["string", "null"] },
+        "coordination_run_id": { "type": ["string", "null"] },
+        "proposal_status": { "type": ["string", "null"] },
+        "delegation_trace": { "type": "array", "items": { "type": "object" } },
+        "committed_at": { "type": "string" }
+      }
+    },
+
+    "execution_evidence_as_of": {
+      "type": "object",
+      "required": ["custody_graph", "receipts_committed"],
+      "properties": {
+        "custody_graph": {
+          "description": "null when not yet committed at the boundary, or when a later mutation means the present row is not the boundary value.",
+          "type": ["object", "null"]
+        },
+        "receipts_committed": { "type": "integer", "minimum": 0 }
+      }
+    },
+
+    "carry_forward_obligations": {
+      "description": "Obligations open AS OF the boundary, never present-day-open.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["kind", "reference_id"],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "ACKNOWLEDGMENT_OBLIGATION",
+              "MOVEMENT_BARRIER",
+              "RECOVERY_SHORTFALL",
+              "UNRESOLVED_INCIDENT"
+            ]
+          },
+          "reference_id": { "type": "string" },
+          "incident_id": { "type": ["string", "null"] },
+          "lot_id": { "type": ["string", "null"] },
+          "terminal_state": { "type": "string" }
+        }
+      }
+    },
+
+    "next_day_draft": {
+      "description": "OPTIONAL top-level block. Absent unless include_next_day_draft=true and a next-day revision committed at or before the boundary.",
+      "type": "object",
+      "required": ["plan_id", "revision", "status", "approval_required"],
+      "properties": {
+        "plan_id": { "type": "string" },
+        "revision": { "type": "string" },
+        "status": { "type": "string" },
+        "approval_required": { "type": "boolean" }
       }
     }
-  },
-  "required": ["day_preview", "incident_summary", "custody_graph"]
+  }
 }

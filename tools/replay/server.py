@@ -34,12 +34,21 @@ def _load(beat: str) -> dict:
     return json.loads((FIXTURES / BEATS[beat]["fixture"]).read_text())
 
 
+class InvalidAsOf(ValueError):
+    """Malformed as_of, mirroring the production INVALID_AS_OF rejection."""
+
+
 def _select(as_of: str | None, include_next_day: bool) -> dict:
     """Pick the latest beat at or before as_of, mirroring boundary semantics."""
     if as_of and as_of in BY_AS_OF:
         beat = BY_AS_OF[as_of]["beat"]
     elif as_of:
-        parsed = datetime.fromisoformat(as_of.replace("Z", "+00:00"))
+        try:
+            parsed = datetime.fromisoformat(as_of.replace("Z", "+00:00"))
+        except (TypeError, ValueError) as exc:
+            # Production returns a structured 400 INVALID_AS_OF rather than
+            # crashing, and replay is only useful if it fails the same way.
+            raise InvalidAsOf("INVALID_AS_OF") from exc
         eligible = [
             b for b in INDEX["beats"]
             if datetime.fromisoformat(b["as_of"]) <= parsed
@@ -80,7 +89,10 @@ class ReplayHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/v1/projections/demo-beats":
             as_of = (query.get("as_of") or [None])[0]
             include = (query.get("include_next_day_draft") or ["false"])[0] == "true"
-            return self._json(200, _select(as_of, include))
+            try:
+                return self._json(200, _select(as_of, include))
+            except InvalidAsOf:
+                return self._json(400, {"detail": "INVALID_AS_OF"})
         if parsed.path == "/api/v1/projections/stream":
             return self._stream()
         if parsed.path == "/__replay/beats":

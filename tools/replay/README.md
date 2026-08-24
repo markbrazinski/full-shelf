@@ -30,12 +30,13 @@ PYTHONPATH=packages/domain:packages/observability:apps/orchestrator/src:apps/pla
 # DETERMINISTIC TEST MODE - replay on http://127.0.0.1:8787
 ```
 
-Frontend, in a second shell:
+Frontend, in a second shell. `apps/web` currently ships only the environment
+contract (`src/env.ts`) and its dependency declaration; there is no application
+entry point yet, so the React client is run from wherever it is being built:
 
 ```bash
-cd apps/web
 VITE_DATA_SOURCE=deterministic_replay \
-VITE_ORCHESTRATOR_URL=http://127.0.0.1:8787 npm run dev
+VITE_ORCHESTRATOR_URL=http://127.0.0.1:8787
 ```
 
 The UI must show an unmistakable `DETERMINISTIC TEST MODE` banner whenever
@@ -44,9 +45,8 @@ The UI must show an unmistakable `DETERMINISTIC TEST MODE` banner whenever
 ## Live mode
 
 ```bash
-cd apps/web
 VITE_DATA_SOURCE=live \
-VITE_ORCHESTRATOR_URL=https://full-shelf-orchestrator-<project>.run.app npm run dev
+VITE_ORCHESTRATOR_URL=https://full-shelf-orchestrator-<project>.run.app
 ```
 
 Live mode requires a real Google operator identity and the orchestrator's

@@ -1,12 +1,12 @@
 {
   "agent_activity_as_of": {
     "committed_at": "2026-08-14T10:10:00+00:00",
-    "coordination_run_id": "run-coord-1",
-    "coordinator_session_id": "sess-coord-1",
+    "coordination_run_id": "fixture-run-coord-1",
+    "coordinator_session_id": "fixture-sess-coord-1",
     "delegation_trace": [
       {
         "agent_id": "full-shelf.recall-extraction.v1",
-        "specialist_run_id": "run-recall-1"
+        "specialist_run_id": "fixture-run-recall-1"
       }
     ],
     "manifest_version": "1.1.0",

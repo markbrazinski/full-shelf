@@ -120,3 +120,105 @@ def test_replay_is_absent_from_deployment_configuration():
 def test_fixture_identifiers_are_not_presented_as_real_managed_evidence():
     body = json.loads((FIXTURES / "refusal.json").read_text())
     assert body["replay_notice"].startswith("Fixture generated")
+
+
+# --- production parity for malformed input ----------------------------------
+
+
+def test_replay_rejects_malformed_as_of_the_way_production_does():
+    """Production returns a structured 400 INVALID_AS_OF; replay must too."""
+    with pytest.raises(replay.InvalidAsOf):
+        replay._select("not-a-timestamp", False)
+
+
+@pytest.mark.parametrize("bad", [
+    "not-a-timestamp", "2026-13-45T99:99:99Z", "", "   ", "2026-08-14T10:13:00+99:00",
+])
+def test_every_malformed_as_of_shape_is_structured_not_a_crash(bad):
+    if not bad:
+        # An empty value is falsy and behaves as "no explicit boundary".
+        assert replay._select(bad, False)
+        return
+    with pytest.raises(replay.InvalidAsOf):
+        replay._select(bad, False)
+
+
+def test_replay_http_layer_returns_400_invalid_as_of():
+    """The handler must translate the malformed boundary into a real 400."""
+    source = (pathlib.Path(__file__).resolve().parent / "server.py").read_text()
+    assert "except InvalidAsOf:" in source
+    assert '"detail": "INVALID_AS_OF"' in source
+
+
+def test_valid_as_of_still_selects_a_beat():
+    assert replay._select("2026-08-14T10:13:00Z", False)
+    assert replay._select("2026-08-14T10:13:00+00:00", False)
+
+
+# --- synthetic execution/evidence identifiers are visibly fixture-prefixed ---
+
+
+SYNTHETIC_ID_FIELDS = (
+    "coordinator_session_id", "coordination_run_id",
+    "specialist_session_id", "specialist_run_id", "receipt_id",
+)
+
+# Canonical business identity is real domain data and must NOT be prefixed.
+CANONICAL_BUSINESS_PREFIXES = ("INC-", "PLAN-", "LTC-", "AG-", "O2", "BARRIER-",
+                               "WORK-", "SF-", "ALLOC-", "APR-")
+
+
+def _walk(node):
+    if isinstance(node, dict):
+        for key, value in node.items():
+            yield key, value
+            yield from _walk(value)
+    elif isinstance(node, list):
+        for item in node:
+            yield from _walk(item)
+
+
+@pytest.mark.parametrize("beat", [b["beat"] for b in INDEX["beats"]])
+def test_every_synthetic_execution_identifier_is_fixture_prefixed(beat):
+    entry = next(b for b in INDEX["beats"] if b["beat"] == beat)
+    body = json.loads((FIXTURES / entry["fixture"]).read_text())
+    seen = 0
+    for key, value in _walk(body):
+        if key in SYNTHETIC_ID_FIELDS and isinstance(value, str) and value:
+            assert value.startswith("fixture-"), (beat, key, value)
+            seen += 1
+    if beat in {"refusal", "outcome", "tomorrow"}:
+        assert seen, f"{beat} should carry synthetic execution evidence"
+
+
+def test_no_unprefixed_receipt_or_run_identifier_survives_anywhere():
+    """A bare RCT-/sess-/run- identifier would read as real execution evidence."""
+    import re
+
+    for entry in INDEX["beats"]:
+        blob = (FIXTURES / entry["fixture"]).read_text()
+        for match in re.findall(r'"((?:RCT|sess|run)-[^"]*)"', blob):
+            assert match.startswith("fixture-"), (entry["beat"], match)
+
+
+def test_canonical_business_identifiers_are_never_fixture_prefixed():
+    """Prefixing real domain identity would itself be a falsehood."""
+    body = json.loads((FIXTURES / "refusal.json").read_text())
+    assert body["current_day"]["plan_id"] == "PLAN-2026-08-14"
+    incident_ids = [i["incident_id"] for i in body["current_day"]["incidents"]]
+    assert scenario.RECALL_INC in incident_ids
+    for incident_id in incident_ids:
+        assert not incident_id.startswith("fixture-")
+    for key, value in _walk(body):
+        if isinstance(value, str) and value.startswith(CANONICAL_BUSINESS_PREFIXES):
+            assert not value.startswith("fixture-"), (key, value)
+
+
+def test_no_live_evidence_classification_appears_in_any_fixture():
+    for entry in INDEX["beats"]:
+        body = json.loads((FIXTURES / entry["fixture"]).read_text())
+        assert body["classification"] == "SYNTHETIC_TEST"
+        blob = json.dumps(body)
+        for banned in ("OBSERVED_LIVE", "RECORDED_LIVE", "MEASURED",
+                       "STRUCTURALLY_VERIFIED"):
+            assert banned not in blob, (entry["beat"], banned)

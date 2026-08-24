@@ -166,9 +166,57 @@ paths:
   /api/v1/projections/demo-beats:
     get:
       summary: Project committed state for the deployment-bound frontend tenant/day
+      description: >-
+        Projects only facts committed at or before an explicit boundary.
+        With no as_of, a request for the CURRENT authority operating day uses
+        trusted server time (projection_boundary.mode = LIVE_SERVER_TIME). A
+        historical or replay operating day has no trustworthy implicit
+        boundary, so an explicit as_of is REQUIRED and its absence is rejected
+        with EXPLICIT_AS_OF_REQUIRED_FOR_NON_CURRENT_OPERATING_DAY. An as_of
+        outside the authority operating day is rejected, never silently
+        narrowed. next_day_draft is omitted entirely unless
+        include_next_day_draft=true, and even then appears only when a next-day
+        revision committed at or before the boundary.
       security: [{ googleHumanOperatorOidc: [] }]
+      parameters:
+        - in: query
+          name: as_of
+          required: false
+          description: >-
+            Explicit ISO-8601 boundary instant. A trailing Z is accepted; a
+            naive value is interpreted as UTC. Must fall within the authority
+            operating day. Omit only for the current operating day.
+          schema: { type: string, maxLength: 40 }
+        - in: query
+          name: include_next_day_draft
+          required: false
+          description: Include the optional next_day_draft block. Defaults to false.
+          schema: { type: boolean, default: false }
       responses:
-        '200': { description: Authority-bound committed plan, approval, and incident facts }
+        '200':
+          description: Authority-bound committed plan, approval, and incident facts
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BoundedOperatorProjection' }
+        '400':
+          description: >-
+            INVALID_AS_OF (as_of is not a parseable ISO-8601 instant);
+            AS_OF_OUTSIDE_AUTHORITY_OPERATING_DAY (as_of resolves to a
+            different day than the authority operating day);
+            EXPLICIT_AS_OF_REQUIRED_FOR_NON_CURRENT_OPERATING_DAY (as_of was
+            omitted for a non-current operating day).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [detail]
+                properties:
+                  detail:
+                    type: string
+                    enum:
+                      - INVALID_AS_OF
+                      - AS_OF_OUTSIDE_AUTHORITY_OPERATING_DAY
+                      - EXPLICIT_AS_OF_REQUIRED_FOR_NON_CURRENT_OPERATING_DAY
         '401': { description: Verified frontend Google identity required }
         '503': { description: Deployment-bound frontend tenant/day unavailable }
   /api/v1/evidence/system:
@@ -187,6 +235,8 @@ components:
       required: true
       schema: { type: string, minLength: 1, maxLength: 64 }
   schemas:
+    BoundedOperatorProjection:
+      $ref: '../schemas/ui_projection.json'
     RecallTrigger:
       type: object
       additionalProperties: false

@@ -6,7 +6,7 @@
 - **ADK / Gemini Orchestrator (`apps/orchestrator`)**: Read-only coordination with the managed Model Armor input boundary and advisory agent reasoning; invokes `plan-ledger` via policy tools.
 - **Deterministic Plan Ledger (`apps/plan-ledger`)**: Authoritative, policy-checked mutation engine with Spanner R/W and KMS signature verification.
 - **Cloud Spanner & Spanner Graph**: Relational operational state and graph custody traversal across warehouse, trucks, staging, agencies, and sub-distributed sites (96 physical cases).
-- **React Frontend API Boundary (`apps/web`)**: Strongly typed TypeScript client boundary, routing shell, and environment contract reserved for UI integration.
+- **React Frontend API Boundary (`apps/web`)**: Environment contract (`src/env.ts`) and dependency declaration reserved for UI integration. No application entry point exists yet; the React client is built separately.
 
 ## Local Setup & Development Workflow
 

@@ -157,9 +157,45 @@ def registered_route_authentication_matrix() -> dict[tuple[str, str], str]:
     return registered
 
 
+def _normalized_target_path(path: str) -> str:
+    """Collapse a request path to the form the route matrix is keyed on."""
+    if len(path) > 1 and path.endswith("/"):
+        path = path.rstrip("/") or "/"
+    return path
+
+
+def _preflight_target_policy(request: Request) -> Optional[str]:
+    """Classify a genuine CORS preflight, or return None if it is not one.
+
+    A preflight is recognized only when the method is OPTIONS and the browser
+    sent both Origin and Access-Control-Request-Method. It is classified only
+    when the origin is explicitly allowlisted AND the *target* method and
+    normalized path already appear in ROUTE_AUTHENTICATION_MATRIX. OPTIONS is
+    deliberately never added to that matrix: a preflight carries no credentials
+    and reaches no handler, so admitting it must not widen the route surface.
+    """
+    if request.method != "OPTIONS":
+        return None
+    origin = request.headers.get("origin")
+    requested_method = request.headers.get("access-control-request-method")
+    if not origin or not requested_method:
+        return None
+    if origin not in FRONTEND_ALLOWED_ORIGINS:
+        return None
+    target = (requested_method.strip().upper(),
+              _normalized_target_path(request.url.path))
+    return ROUTE_AUTHENTICATION_MATRIX.get(target)
+
+
 @app.middleware("http")
 async def deny_unclassified_routes(request: Request, call_next):
-    policy = ROUTE_AUTHENTICATION_MATRIX.get((request.method, request.url.path))
+    # An allowlisted preflight for an already-classified target is handed to
+    # CORSMiddleware, which sits inside this middleware and answers it. Every
+    # other OPTIONS request falls through to the ordinary closed-matrix check.
+    if _preflight_target_policy(request) is not None:
+        return await call_next(request)
+    policy = ROUTE_AUTHENTICATION_MATRIX.get(
+        (request.method, _normalized_target_path(request.url.path)))
     if policy is None:
         return JSONResponse(
             status_code=403,

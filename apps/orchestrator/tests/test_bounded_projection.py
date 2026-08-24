@@ -49,7 +49,10 @@ def action_id(incident_id, action):
 
 
 def receipt(action, incident_id, action_type, ts, status="SUCCESS", mutations=1):
-    return (f"RCT-{action}", action_id(incident_id, action), action_type,
+    # Receipt ids are synthetic execution evidence, so they carry the fixture-
+    # prefix. Canonical business identity (INC-, PLAN-, LTC-, order/agency ids)
+    # is deliberately NOT prefixed: those are the real domain values.
+    return (f"fixture-RCT-{action}", action_id(incident_id, action), action_type,
             status, mutations, ts)
 
 
@@ -70,12 +73,12 @@ ALL_RECEIPTS = [
 FLEET = {
     "manifest_version": "1.1.0",
     "root_agent_id": "full-shelf.incident-coordinator.v1",
-    "coordinator_session_id": "sess-coord-1",
-    "coordination_run_id": "run-coord-1",
+    "coordinator_session_id": "fixture-sess-coord-1",
+    "coordination_run_id": "fixture-run-coord-1",
     "proposal_status": "PROPOSED",
     "proposal_hash": "abc123",
     "delegation_trace": [{"agent_id": "full-shelf.recall-extraction.v1",
-                          "specialist_run_id": "run-recall-1"}],
+                          "specialist_run_id": "fixture-run-recall-1"}],
 }
 
 PLAN_ROWS = [
@@ -151,9 +154,12 @@ def project(as_of, *, include_next_day=False, db=None):
     client = TestClient(orchestrator_main.app)
     identity = MagicMock(subject="operator-subject", email="op@example.com")
     scope = MagicMock(tenant_id=TENANT, database_id="full-shelf-audit-test")
-    url = f"/api/v1/projections/demo-beats?as_of={quote(as_of.isoformat())}"
+    url = "/api/v1/projections/demo-beats"
+    if as_of is not None:
+        raw = as_of if isinstance(as_of, str) else as_of.isoformat()
+        url += f"?as_of={quote(raw)}"
     if include_next_day:
-        url += "&include_next_day_draft=true"
+        url += ("&" if "?" in url else "?") + "include_next_day_draft=true"
     # Override the FastAPI dependency by key. Patching the module attribute is
     # not enough: the route already captured the original callable at import.
     orchestrator_main.app.dependency_overrides[
@@ -375,13 +381,13 @@ def test_delta3_refusal_reports_denied_zero_mutations_from_ledger():
 def test_delta3_fleet_evidence_durable_and_boundary_gated():
     body = project(T(10, 13)).json()
     fleet = body["agent_activity_as_of"]
-    assert fleet["coordination_run_id"] == "run-coord-1"
+    assert fleet["coordination_run_id"] == "fixture-run-coord-1"
     assert fleet["proposal_status"] == "PROPOSED"
-    assert fleet["delegation_trace"][0]["specialist_run_id"] == "run-recall-1"
+    assert fleet["delegation_trace"][0]["specialist_run_id"] == "fixture-run-recall-1"
 
 
 def test_delta3_sse_receipt_projection_carries_mutations_applied():
-    row = ("RCT-1", "CMD-1", "rev08", "RECORD_REFUSAL", "DENIED", "refused",
+    row = ("fixture-RCT-1", "CMD-1", "rev08", "RECORD_REFUSAL", "DENIED", "refused",
            T(10, 12), CORRELATION, "op@example.com", 0)
     projected = orchestrator_main._receipt_projection(row)
     assert projected["status"] == "DENIED"
