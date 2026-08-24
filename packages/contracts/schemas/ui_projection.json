@@ -396,12 +396,14 @@
               },
               "status": {
                 "type": "string",
-                "description": "Recomputed as-of state, never the present-day row value.",
+                "description": "Recomputed as-of state, never the present-day row value. Vehicle-failure incidents use ACTIVE/RESOLVED; recall incidents use the containment ladder.",
                 "enum": [
                   "DETECTED",
                   "SCOPING",
                   "CONTAINMENT_IN_PROGRESS",
-                  "PARTIALLY_CONTAINED"
+                  "PARTIALLY_CONTAINED",
+                  "ACTIVE",
+                  "RESOLVED"
                 ]
               },
               "terminal_state": {

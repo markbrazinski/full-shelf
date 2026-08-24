@@ -2717,12 +2717,27 @@ def get_demo_beats_projections(
             _incident_status_action_id(tenant, incident_id, "CONTAINMENT_IN_PROGRESS"))
         scoping_receipt = boundary.committed(
             _incident_status_action_id(tenant, incident_id, "SCOPING"))
-        if terminal_receipt:
+        # A vehicle failure has no containment ladder: it is resolved by the
+        # approved repair revision its own recovery commits. Gate on that exact
+        # revision's plan receipt AND require it to land at or after the
+        # incident opened, so the pre-incident morning plan can never read as a
+        # repair of a failure that had not happened yet.
+        repair_receipt = None
+        if _is_vehicle_failure(row[1]):
+            candidate = boundary.committed(_incident_action_id(
+                tenant, incident_id, f"plan:{CANONICAL_APPROVAL_PROPOSED_REVISION}"))
+            if candidate and row[6] is not None and _normalize_receipt_timestamp(
+                    candidate["committed_at"]) >= _normalize_receipt_timestamp(row[6]):
+                repair_receipt = candidate
+        if repair_receipt:
+            status_as_of, terminal_as_of = "RESOLVED", "NONE"
+        elif terminal_receipt:
             status_as_of, terminal_as_of = "PARTIALLY_CONTAINED", "PARTIALLY_CONTAINED"
         elif containment_receipt:
             status_as_of, terminal_as_of = "CONTAINMENT_IN_PROGRESS", "NONE"
         elif scoping_receipt:
-            status_as_of, terminal_as_of = "SCOPING", "NONE"
+            status_as_of, terminal_as_of = ("ACTIVE" if _is_vehicle_failure(row[1])
+                                            else "SCOPING"), "NONE"
         else:
             status_as_of, terminal_as_of = "DETECTED", "NONE"
         refusal = boundary.committed(
@@ -3221,6 +3236,17 @@ CANONICAL_APPROVAL_SOURCE_REVISION = "rev07"
 CANONICAL_APPROVAL_PROPOSED_REVISION = "rev08"
 
 PRE_BOUNDARY_STATE_NOT_RETAINED = "PRE_BOUNDARY_STATE_NOT_RETAINED"
+
+# A vehicle failure is stored under the contract's TRUCK_BREAKDOWN type, while
+# the authoritative Friday seed records the same event as VEHICLE_FAILURE. Both
+# name one domain concept with an ACTIVE -> RESOLVED lifecycle (see
+# IncidentStateMachine), so the projection recognizes both rather than
+# rewriting committed rows or inventing a third spelling.
+VEHICLE_FAILURE_INCIDENT_TYPES = frozenset({"TRUCK_BREAKDOWN", "VEHICLE_FAILURE"})
+
+
+def _is_vehicle_failure(incident_type: Optional[str]) -> bool:
+    return incident_type in VEHICLE_FAILURE_INCIDENT_TYPES
 
 # The Execution Record is a bounded operator surface, not an audit export. The
 # canonical day commits far fewer receipts than this; the cap exists so the

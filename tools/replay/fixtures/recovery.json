@@ -349,7 +349,7 @@
         "incident_type": "VEHICLE_FAILURE",
         "model_armor_screening": null,
         "refusal": null,
-        "status": "SCOPING",
+        "status": "RESOLVED",
         "terminal_state": "NONE"
       },
       {

@@ -514,8 +514,52 @@ def test_amendment2_same_action_type_different_targets_do_not_unlock():
     ids = [i["incident_id"] for i in body["current_day"]["incidents"]]
     assert ids == [TRUCK_INC]
     truck = body["current_day"]["incidents"][0]
-    assert truck["status"] == "SCOPING"
+    # A vehicle failure runs ACTIVE -> RESOLVED, not the recall containment
+    # ladder. Its own SCOPING receipt opens it; it must not read as a recall
+    # stage, and it must not unlock the recall incident's lifecycle either.
+    assert truck["status"] == "ACTIVE"
     assert truck["terminal_state"] == "NONE"
+
+
+def test_vehicle_failure_is_active_then_resolved_by_its_repair_revision():
+    """The truck breakdown is a real projected incident with its own lifecycle.
+
+    It is absent before it happens, ACTIVE once its own status receipt commits,
+    and RESOLVED only when the approved repair revision commits. The operator
+    surface derives its incident badge from this, never from view state.
+    """
+    assert project(T(8, 19)).json()["current_day"]["incidents"] == []
+
+    def truck_at(as_of):
+        incidents = project(as_of).json()["current_day"]["incidents"]
+        return next(i for i in incidents if i["incident_id"] == TRUCK_INC)
+
+    assert truck_at(T(8, 20))["status"] == "ACTIVE"
+    assert truck_at(T(8, 23))["status"] == "ACTIVE"
+    # rev08 is the approved repair; its commit resolves the failure.
+    assert truck_at(T(8, 24))["status"] == "RESOLVED"
+    assert truck_at(T(23, 59))["status"] == "RESOLVED"
+    # Resolved is not terminal containment, and it never carries forward.
+    assert truck_at(T(23, 59))["terminal_state"] == "NONE"
+
+
+def test_vehicle_failure_is_not_resolved_by_the_pre_incident_morning_plan():
+    """rev07 committed at 07:30, before the 08:20 failure.
+
+    An earlier plan receipt must never read as the repair of a failure that had
+    not happened yet, so the incident stays ACTIVE until rev08 commits.
+    """
+    incidents = project(T(8, 21)).json()["current_day"]["incidents"]
+    truck = next(i for i in incidents if i["incident_id"] == TRUCK_INC)
+    assert truck["status"] == "ACTIVE"
+
+
+def test_recall_incident_never_uses_the_vehicle_failure_lifecycle():
+    """rev08's plan receipt must not resolve the recall incident."""
+    incidents = project(T(23, 59)).json()["current_day"]["incidents"]
+    recall = next(i for i in incidents if i["incident_id"] == RECALL_INC)
+    assert recall["status"] == "PARTIALLY_CONTAINED"
+    assert recall["terminal_state"] == "PARTIALLY_CONTAINED"
 
 
 def test_amendment2_terminal_state_requires_its_own_recomputed_receipt():

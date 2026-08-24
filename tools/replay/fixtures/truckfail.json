@@ -131,7 +131,7 @@
         "incident_type": "VEHICLE_FAILURE",
         "model_armor_screening": null,
         "refusal": null,
-        "status": "SCOPING",
+        "status": "ACTIVE",
         "terminal_state": "NONE"
       }
     ],
