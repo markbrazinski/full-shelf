@@ -662,3 +662,275 @@ def test_incident_scope_mismatch_aborts_without_receipt_or_state_mutation():
         raise AssertionError("Cross-incident command was accepted")
     assert transaction.updates == []
     assert transaction.inserts == []
+
+
+# ---------------------------------------------------------------------------
+# Candidate next-day assignments persisted as child Orders of the draft.
+# ---------------------------------------------------------------------------
+
+def _candidate_transaction():
+    """Authoritative state a candidate schedule is validated against."""
+
+    class CandidateTransaction(FakeTransaction):
+        def execute_sql(self, sql, params, param_types):
+            if "idempotency_key" in sql:
+                return []
+            if "AND plan_id = @plan_id" in sql:
+                return []
+            if "SELECT status FROM PlanRevisions" in sql:
+                return [("INVALIDATED_RECALL",)]
+            if "SELECT revision FROM PlanRevisions" in sql:
+                return []
+            if "FROM MovementBarriers" in sql:
+                return [("BARRIER-ALT",)]
+            if "FROM RecoveryShortfalls" in sql:
+                return [("SHORT-ALT",)]
+            if "incident_type = 'DEADLINE_HOLD'" in sql:
+                return [('{"site_id":"SITE-X","unconfirmed_cases":3}',)]
+            if "FROM Lots" in sql:
+                return [("LOT-SAFE-ALT", 30)]
+            if "FROM Vehicles" in sql:
+                return [("VEHICLE-ALT", 40, 11)]
+            raise AssertionError(f"Unexpected SQL: {sql}")
+
+    return CandidateTransaction()
+
+
+def _candidate_payload(**overrides):
+    stop = {
+        "order_id": "CAND-PLAN-ALT-NEXT-SHORT-ALT",
+        "agency_id": "AG-X", "agency_name": "Altered Agency X",
+        "cases": 9, "lot_id": "LOT-SAFE-ALT", "vehicle_id": "VEHICLE-ALT",
+        "sequence": 1, "shortfall_id": "SHORT-ALT", "status": "CANDIDATE",
+    }
+    stop.update(overrides.pop("stop", {}))
+    vehicle = {
+        "vehicle_id": "VEHICLE-ALT", "capacity_cases": 40,
+        "committed_load_cases": 11, "candidate_load_cases": 9, "stops": [stop],
+    }
+    vehicle.update(overrides.pop("vehicle", {}))
+    payload = {
+        "source_event_id": "message-alt-1",
+        "source_operating_day": "2026-08-13",
+        "event_type": "PLAN_NEXT_DAY_REQUESTED",
+        "operating_date": "2026-08-14",
+        "plan_id": "PLAN-2026-08-14",
+        "revision": "rev01",
+        "status": "DRAFT_WITH_CONSTRAINTS",
+        "coordinator_id": "COORD-ALT-NEXT",
+        "barriers": [{"barrier_id": "BARRIER-ALT", "lot_id": "LOT-ALT-908"}],
+        "shortfalls": [{"shortfall_id": "SHORT-ALT", "agency_id": "AG-X",
+                        "cases": 9}],
+        "acknowledgment_holds": [{"hold_incident_id": "HOLD-ALT",
+                                  "site_id": "SITE-X", "unconfirmed_cases": 3}],
+        "human_approval_required": True,
+        "candidate_vehicles": [vehicle],
+        "unassigned_demand": [],
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _candidate_command(**overrides):
+    return coordinator_command(
+        command_id="CMD-NEXT-CAND",
+        idempotency_key="audit:PLAN-2026-08-14:rev01:day-close",
+        agent_role="FULFILLMENT_RECOVERY_PLANNER",
+        command_type=LedgerCommandType.CREATE_NEXT_DAY_DRAFT,
+        payload=_candidate_payload(**overrides),
+    )
+
+
+def _execute_candidate(transaction, **overrides):
+    return SpannerLedgerCommandExecutor(
+        FakeDatabase(transaction), allowed_tenant_ids={"audit-tenant"}
+    ).execute(_candidate_command(**overrides), IDENTITY)
+
+
+def test_candidate_assignments_persist_as_child_orders_of_the_draft():
+    """The exact generated assignments are stored, not re-derived on read."""
+    transaction = _candidate_transaction()
+    _execute_candidate(transaction)
+
+    orders = [item for item in transaction.inserts if item["table"] == "Orders"]
+    assert len(orders) == 1
+    row = orders[0]["values"][0]
+    # Subordinate to the draft revision: Orders interleaves in PlanRevisions.
+    assert row[1:4] == ["PLAN-2026-08-14", "rev01", "CAND-PLAN-ALT-NEXT-SHORT-ALT"]
+    assert row[6] == 9 and row[7] == "LOT-SAFE-ALT" and row[8] == "VEHICLE-ALT"
+    # Never an activatable state.
+    assert row[9] == "CANDIDATE"
+
+
+def test_candidate_rows_never_claim_an_active_status():
+    transaction = _candidate_transaction()
+    _execute_candidate(transaction)
+    for item in transaction.inserts:
+        for row in item["values"]:
+            assert "ACTIVE" not in [str(value) for value in row]
+
+
+def test_unassigned_demand_persists_as_a_visible_draft_constraint():
+    """Agency 03's carried shortfall must stay explicitly open."""
+    transaction = _candidate_transaction()
+    _execute_candidate(transaction, unassigned_demand=[
+        {"shortfall_id": "SHORT-OPEN", "agency_id": "AG-SHORT", "cases": 20,
+         "reason": "NO_CONFIRMED_SAFE_LOT_WITH_SUFFICIENT_CASES"}])
+    constraints = [item for item in transaction.inserts
+                   if item["table"] == "PlanConstraints"]
+    unassigned = [row for item in constraints for row in item["values"]
+                  if row[3] == "UNASSIGNED_DEMAND"]
+    assert len(unassigned) == 1
+    details = json.loads(unassigned[0][5])
+    assert details["cases"] == 20 and details["agency_id"] == "AG-SHORT"
+
+
+def test_recalled_lot_under_barrier_cannot_enter_the_candidate_plan():
+    """A barred lot fails closed with no partial write."""
+    transaction = _candidate_transaction()
+    with pytest.raises(ValueError, match="CANDIDATE_LOT_UNDER_MOVEMENT_BARRIER"):
+        _execute_candidate(transaction, stop={"lot_id": "LOT-ALT-908"})
+    assert transaction.inserts == []
+    assert transaction.upserts == []
+    assert transaction.updates == []
+
+
+def test_unsafe_lot_cannot_enter_the_candidate_plan():
+    transaction = _candidate_transaction()
+    with pytest.raises(ValueError, match="CANDIDATE_LOT_NOT_CONFIRMED_SAFE"):
+        _execute_candidate(transaction, stop={"lot_id": "LOT-NOT-CLEARED"})
+    assert transaction.inserts == []
+
+
+def test_candidate_load_may_not_exceed_authoritative_vehicle_capacity():
+    """40 capacity, 11 committed: a 30-case candidate overruns it."""
+    transaction = _candidate_transaction()
+    with pytest.raises(ValueError, match="CANDIDATE_LOAD_EXCEEDS_VEHICLE_CAPACITY"):
+        _execute_candidate(
+            transaction,
+            shortfalls=[{"shortfall_id": "SHORT-ALT", "agency_id": "AG-X",
+                         "cases": 30}],
+            vehicle={"candidate_load_cases": 30},
+            stop={"cases": 30},
+        )
+    assert transaction.inserts == []
+
+
+def test_candidate_vehicle_must_be_operational_and_current():
+    transaction = _candidate_transaction()
+    with pytest.raises(ValueError, match="CANDIDATE_VEHICLE_NOT_OPERATIONAL"):
+        _execute_candidate(transaction,
+                           vehicle={"vehicle_id": "VEHICLE-GHOST"},
+                           stop={"vehicle_id": "VEHICLE-GHOST"})
+    assert transaction.inserts == []
+
+    stale = _candidate_transaction()
+    with pytest.raises(ValueError, match="CANDIDATE_VEHICLE_STATE_STALE"):
+        _execute_candidate(stale, vehicle={"committed_load_cases": 0})
+    assert stale.inserts == []
+
+
+def test_candidate_stop_requires_an_open_shortfall_of_matching_size():
+    transaction = _candidate_transaction()
+    with pytest.raises(ValueError, match="CANDIDATE_STOP_WITHOUT_OPEN_SHORTFALL"):
+        _execute_candidate(transaction, stop={"shortfall_id": "SHORT-GHOST"})
+    assert transaction.inserts == []
+
+    mismatched = _candidate_transaction()
+    with pytest.raises(ValueError, match="CANDIDATE_CASES_DO_NOT_MATCH_SHORTFALL"):
+        _execute_candidate(mismatched,
+                           vehicle={"candidate_load_cases": 4},
+                           stop={"cases": 4})
+    assert mismatched.inserts == []
+
+
+def test_candidate_draw_may_not_exceed_confirmed_safe_stock():
+    """Two stops drawing 16 each exceed the lot's 30 confirmed-safe cases.
+
+    The vehicle has ample room (200 capacity, 0 committed) so capacity is not
+    the binding limit, which proves the stock check rather than the load check.
+    """
+
+    class RoomyTransaction(type(_candidate_transaction())):
+        def execute_sql(self, sql, params, param_types):
+            if "FROM Vehicles" in sql:
+                return [("VEHICLE-ALT", 200, 0)]
+            return super().execute_sql(sql, params, param_types)
+
+    transaction = RoomyTransaction()
+    with pytest.raises(ValueError, match="CANDIDATE_DRAW_EXCEEDS_CONFIRMED_SAFE_STOCK"):
+        _execute_candidate(
+            transaction,
+            shortfalls=[{"shortfall_id": "SHORT-ALT", "agency_id": "AG-X",
+                         "cases": 16},
+                        {"shortfall_id": "SHORT-TWO", "agency_id": "AG-Y",
+                         "cases": 15}],
+            vehicle={"capacity_cases": 200, "committed_load_cases": 0,
+                     "candidate_load_cases": 31, "stops": [
+                {"order_id": "CAND-1", "agency_id": "AG-X", "agency_name": "X",
+                 "cases": 16, "lot_id": "LOT-SAFE-ALT", "vehicle_id": "VEHICLE-ALT",
+                 "sequence": 1, "shortfall_id": "SHORT-ALT", "status": "CANDIDATE"},
+                {"order_id": "CAND-2", "agency_id": "AG-Y", "agency_name": "Y",
+                 "cases": 15, "lot_id": "LOT-SAFE-ALT", "vehicle_id": "VEHICLE-ALT",
+                 "sequence": 2, "shortfall_id": "SHORT-TWO", "status": "CANDIDATE"}]},
+        )
+    assert transaction.inserts == []
+
+
+def test_candidate_plan_identity_must_match_its_operating_date():
+    transaction = _candidate_transaction()
+    with pytest.raises(ValueError, match="CANDIDATE_PLAN_IDENTITY_MISMATCH"):
+        _execute_candidate(transaction, plan_id="PLAN-SOMEBODY-ELSE")
+    assert transaction.inserts == []
+
+
+def test_constraints_only_next_day_draft_still_commits_without_candidates():
+    """The pre-existing caller contract is unchanged."""
+    transaction = _candidate_transaction()
+    result = _execute_candidate(transaction, candidate_vehicles=[])
+    assert [item["table"] for item in transaction.inserts] == [
+        "PlanRevisions", "PlanConstraints", "InboundEvents", "Receipts"
+    ]
+    assert result.additional_mutations == 6
+
+
+def test_recommitting_the_same_candidate_draft_is_idempotent():
+    """Requirement 6: a redelivered command writes nothing further.
+
+    Order ids are derived from the draft plan and the shortfall they serve, so
+    the regenerated command carries the same fingerprint and replays instead of
+    inserting a second set of candidate rows.
+    """
+    command = _candidate_command()
+    timestamp = datetime(2026, 8, 14, 17, 0, tzinfo=timezone.utc)
+    existing = (
+        "RCT-CAND-STABLE", command.command_id, "rev01",
+        "CREATE_NEXT_DAY_DRAFT", "SUCCESS", 8,
+        "CREATE_NEXT_DAY_DRAFT committed", "0123456789abcdef0123456789abcdef",
+        timestamp, IDENTITY.subject, IDENTITY.email,
+        "FULFILLMENT_RECOVERY_PLANNER", command.request_fingerprint(),
+    )
+
+    class ReplayTransaction(type(_candidate_transaction())):
+        def execute_sql(self, sql, params, param_types):
+            if "idempotency_key" in sql:
+                return [existing]
+            return super().execute_sql(sql, params, param_types)
+
+    transaction = ReplayTransaction()
+    result = SpannerLedgerCommandExecutor(
+        FakeDatabase(transaction), allowed_tenant_ids={"audit-tenant"}
+    ).execute(command, IDENTITY)
+
+    assert result.idempotent_replay is True
+    assert result.additional_mutations == 0
+    assert result.receipt["receipt_id"] == "RCT-CAND-STABLE"
+    assert transaction.inserts == []
+    assert transaction.upserts == []
+
+
+def test_candidate_order_ids_are_deterministic_across_regeneration():
+    """The same authoritative state derives the same ids, twice."""
+    first = _candidate_command().request_fingerprint()
+    second = _candidate_command().request_fingerprint()
+    assert first == second

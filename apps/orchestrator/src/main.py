@@ -2068,6 +2068,89 @@ def _parse_managed_publish_time(value: str) -> datetime:
     return parsed
 
 
+CANDIDATE_BASIS = "DETERMINISTIC_DERIVATION_FROM_AUTHORITATIVE_STATE"
+
+
+def _candidate_assignments(shortfalls, safe_lots, fleet, *, plan_id,
+                           agency_names) -> Dict[str, Any]:
+    """Derive one candidate next-day schedule from authoritative state only.
+
+    Demand is the open recovery shortfalls carried into tomorrow. Supply is
+    confirmed-safe inventory and operational transport capacity. Nothing here
+    invents a case, a vehicle, or a destination: demand that cannot be met from
+    confirmed-safe supply stays in unassigned_demand, visibly short, which is
+    the whole point of a constrained draft.
+
+    This is a candidate, not a plan. It is never activated, and the caller
+    commits it as DRAFT_WITH_CONSTRAINTS requiring human approval.
+    """
+    available = {row[0]: row[1] for row in safe_lots}
+    # Deterministic order so the same authoritative state always derives the
+    # same candidate: demand largest-first, supply and vehicles by stable id.
+    demand = sorted(
+        ({"agency_id": row[1], "cases": row[2], "shortfall_id": row[0]}
+         for row in shortfalls),
+        key=lambda d: (-(d["cases"] or 0), d["agency_id"] or ""),
+    )
+    vehicles = [
+        {"vehicle_id": row[0],
+         "capacity_cases": row[1],
+         "committed_load_cases": row[2],
+         "remaining": (row[1] or 0) - (row[2] or 0),
+         "stops": []}
+        for row in sorted(fleet, key=lambda r: r[0])
+    ]
+
+    unassigned = []
+    for item in demand:
+        cases = item["cases"] or 0
+        lot_id = next((l for l in sorted(available) if available[l] >= cases), None)
+        vehicle = next((v for v in vehicles if v["remaining"] >= cases), None)
+        if cases <= 0 or lot_id is None or vehicle is None:
+            # Truthfully short: no confirmed-safe lot or no remaining capacity.
+            # Agency 03's carried shortfall lands here whenever supply cannot
+            # cover it, and stays visibly open rather than being absorbed.
+            unassigned.append({
+                "shortfall_id": item["shortfall_id"],
+                "agency_id": item["agency_id"],
+                "cases": cases,
+                "reason": ("NO_CONFIRMED_SAFE_LOT_WITH_SUFFICIENT_CASES"
+                           if lot_id is None else "NO_REMAINING_TRANSPORT_CAPACITY"),
+            })
+            continue
+        available[lot_id] -= cases
+        vehicle["remaining"] -= cases
+        vehicle["stops"].append({
+            # Order identity is derived from the draft plan and the shortfall
+            # it serves, so re-running the command regenerates the same ids
+            # and the ledger's idempotency holds.
+            "order_id": f"CAND-{plan_id}-{item['shortfall_id']}",
+            "agency_id": item["agency_id"],
+            "agency_name": agency_names.get(item["agency_id"], item["agency_id"]),
+            "cases": cases,
+            "lot_id": lot_id,
+            "vehicle_id": vehicle["vehicle_id"],
+            "sequence": len(vehicle["stops"]) + 1,
+            "shortfall_id": item["shortfall_id"],
+            "status": "CANDIDATE",
+        })
+
+    return {
+        "candidate_basis": CANDIDATE_BASIS,
+        # Only vehicles that actually carry candidate work are part of the
+        # candidate schedule; an idle vehicle is not an assignment.
+        "candidate_vehicles": [
+            {"vehicle_id": v["vehicle_id"],
+             "capacity_cases": v["capacity_cases"],
+             "committed_load_cases": v["committed_load_cases"],
+             "candidate_load_cases": sum(s["cases"] for s in v["stops"]),
+             "stops": v["stops"]}
+            for v in vehicles if v["stops"]
+        ],
+        "unassigned_demand": unassigned,
+    }
+
+
 def _generate_next_day_plan(
     *,
     tenant_id: str,
@@ -2124,6 +2207,18 @@ def _generate_next_day_plan(
                 params={"t": tenant_id, "incident_id": incident_rows[0][0] if incident_rows else ""},
                 param_types={"t": spanner.param_types.STRING,
                              "incident_id": spanner.param_types.STRING},
+            ))
+            read_phase = "agency_names"
+            # Authoritative display names for the agencies a shortfall names.
+            # Read from today's committed orders rather than derived from an
+            # id, so a candidate stop shows the same name the operator saw.
+            agency_name_rows = list(snapshot.execute_sql(
+                "SELECT DISTINCT destination_agency_id, destination_agency_name "
+                "FROM Orders WHERE tenant_id = @t AND plan_id = @plan_id",
+                params={"t": tenant_id,
+                        "plan_id": f"PLAN-{source_operating_day}"},
+                param_types={"t": spanner.param_types.STRING,
+                             "plan_id": spanner.param_types.STRING},
             ))
             read_phase = "hold"
             hold_rows = list(snapshot.execute_sql(
@@ -2188,6 +2283,11 @@ def _generate_next_day_plan(
             {"code": "NEXT_DAY_AUTHORITATIVE_CONSTRAINTS_INCOMPLETE", "missing": missing},
         )
 
+    agency_names = {row[0]: row[1] for row in agency_name_rows}
+    candidate = _candidate_assignments(
+        shortfalls, safe_lots, fleet, plan_id=plan_id,
+        agency_names=agency_names)
+
     next_day_plan = {
         "operating_date": operating_date.isoformat(),
         "plan_id": plan_id,
@@ -2219,6 +2319,7 @@ def _generate_next_day_plan(
             {"vehicle_id": row[0], "max_cases": row[1], "current_load_cases": row[2]}
             for row in fleet
         ],
+        **candidate,
         "fleet_invariants_enforced": {
             "missing_cases_fabricated": False,
             "infeasible_plan_activated": False,
@@ -2260,6 +2361,11 @@ def _generate_next_day_plan(
                     for row in holds
                 ],
                 "human_approval_required": True,
+                # The exact derived assignments are committed. The ledger
+                # validates them against authoritative state and stores them
+                # as child Orders of the draft; nothing is re-derived on read.
+                "candidate_vehicles": candidate["candidate_vehicles"],
+                "unassigned_demand": candidate["unassigned_demand"],
             },
         )
     except httpx.HTTPStatusError as exc:
@@ -2702,9 +2808,67 @@ def get_demo_beats_projections(
             ))
             if draft_rows:
                 row = draft_rows[0]
+                # Candidate assignments are READ from committed child Orders of
+                # the draft revision, never re-derived here. Scoped to the
+                # draft's own plan_id and revision so a current-day row can
+                # never appear in a candidate schedule, or the reverse.
+                candidate_rows = list(snapshot.execute_sql(
+                    "SELECT order_id, destination_agency_id, "
+                    "destination_agency_name, cases, lot_id, assigned_vehicle_id "
+                    "FROM Orders WHERE tenant_id=@tenant AND plan_id=@plan_id "
+                    "AND revision=@revision AND status='CANDIDATE' "
+                    "ORDER BY assigned_vehicle_id, order_id",
+                    params={"tenant": tenant, "plan_id": next_plan_id,
+                            "revision": row[1]},
+                    param_types={"tenant": str_t, "plan_id": str_t,
+                                 "revision": str_t},
+                ))
+                draft_constraint_rows = list(snapshot.execute_sql(
+                    "SELECT constraint_type, subject_id, details FROM PlanConstraints "
+                    "WHERE tenant_id=@tenant AND plan_id=@plan_id AND revision=@revision "
+                    "ORDER BY priority",
+                    params={"tenant": tenant, "plan_id": next_plan_id,
+                            "revision": row[1]},
+                    param_types={"tenant": str_t, "plan_id": str_t,
+                                 "revision": str_t},
+                ))
+                by_vehicle: Dict[str, List[Dict[str, Any]]] = {}
+                for candidate in candidate_rows:
+                    by_vehicle.setdefault(candidate[5], []).append({
+                        "order_id": candidate[0],
+                        "agency_id": candidate[1],
+                        "agency": candidate[2],
+                        "cases": candidate[3],
+                        "lot_id": candidate[4],
+                        "status": "CANDIDATE",
+                    })
+                unassigned = []
+                for constraint in draft_constraint_rows:
+                    if constraint[0] != "UNASSIGNED_DEMAND":
+                        continue
+                    try:
+                        unassigned.append(json.loads(constraint[2] or "{}"))
+                    except (TypeError, json.JSONDecodeError):
+                        continue
                 next_day_draft = {
                     "plan_id": row[0], "revision": row[1], "status": row[2],
                     "approval_required": row[2] != "ACTIVE",
+                    # A draft is never activatable from this surface.
+                    "activation_supported": False,
+                    "candidate_vehicles": [
+                        {"vehicle_id": vehicle_id,
+                         "stops": [{**stop, "sequence": index + 1}
+                                   for index, stop in enumerate(stops)],
+                         "stop_count": len(stops),
+                         "candidate_load_cases": sum(s["cases"] or 0 for s in stops)}
+                        for vehicle_id, stops in sorted(by_vehicle.items())
+                    ],
+                    "unassigned_demand": unassigned,
+                    "constraints": [
+                        {"constraint_type": c[0], "subject_id": c[1]}
+                        for c in draft_constraint_rows
+                        if c[0] != "UNASSIGNED_DEMAND"
+                    ],
                 }
 
     # --- Incident lifecycle by recomputed identity, never by position -------

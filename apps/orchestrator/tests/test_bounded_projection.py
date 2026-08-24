@@ -166,6 +166,27 @@ PLAN_ROWS = [
 ]
 NEXT_DAY_ROWS = [(NEXT_PLAN, "rev01", "DRAFT_WITH_CONSTRAINTS", T(17, 0))]
 
+# Candidate child Orders of the Saturday draft, as the ledger committed them.
+# Same row shape as ORDER_ROWS plus the agency id the candidate query reads:
+# (revision, order_id, agency_name, cases, lot, vehicle, status, agency_id)
+# Agency 03's 20 cases are deliberately absent: they remain unassigned demand.
+CANDIDATE_ORDER_ROWS = [
+    ("rev01", f"CAND-{NEXT_PLAN}-SF-A01", "Agency 01", 18, "LTC-5090",
+     "TRUCK-02", "CANDIDATE", "AGENCY-01"),
+    ("rev01", f"CAND-{NEXT_PLAN}-SF-A02", "Agency 02", 22, "LTC-5090",
+     "TRUCK-02", "CANDIDATE", "AGENCY-02"),
+]
+
+# Agency 03's carried 20-case obligation, persisted as a visible draft
+# constraint rather than absorbed into a candidate assignment.
+CANDIDATE_UNASSIGNED_ROW = (
+    NEXT_PLAN, "UNASSIGNED_DEMAND", "AGENCY-03", T(17, 0),
+    _json.dumps({"shortfall_id": "SF-A03", "agency_id": "AGENCY-03",
+                 "cases": 20,
+                 "reason": "NO_CONFIRMED_SAFE_LOT_WITH_SUFFICIENT_CASES"},
+                sort_keys=True),
+)
+
 
 def _order_row(revision, order_id, vehicle_id, status="PLANNED"):
     """One Orders row built from the canonical morning-plan seed."""
@@ -277,7 +298,7 @@ def _database(*, include_next_day=False, vehicles=VEHICLE_ROWS,
               work_rows=WORK_ROWS, incident_rows=INCIDENT_ROWS,
               receipts=ALL_RECEIPTS, approval_rows=APPROVAL_ROWS,
               alloc_rows=ALLOC_ROWS, shortfall_rows=SHORTFALL_ROWS,
-              constraint_rows=CONSTRAINT_ROWS):
+              constraint_rows=tuple(CONSTRAINT_ROWS) + (CANDIDATE_UNASSIGNED_ROW,)):
     """Fake Spanner that ENFORCES every predicate the handler actually binds.
 
     A fake that ignores a WHERE clause cannot prove scoping: the adversarial
@@ -314,8 +335,18 @@ def _database(*, include_next_day=False, vehicles=VEHICLE_ROWS,
             rows = NEXT_DAY_ROWS if pid == NEXT_PLAN else PLAN_ROWS
             return scoped(rows, 3, plan_index=0)
         if "FROM Orders" in sql:
-            return [r for r in ORDER_ROWS] if pid is None else [
-                r for r in ORDER_ROWS]
+            # Production scopes every Orders read by plan_id. The fake must
+            # too, or a Saturday candidate row could leak into Friday here and
+            # the isolation tests would be proving nothing.
+            rows = CANDIDATE_ORDER_ROWS if pid == NEXT_PLAN else ORDER_ROWS
+            revision = params.get("revision")
+            if revision is not None:
+                rows = [r for r in rows if r[0] == revision]
+            if "status='CANDIDATE'" in sql.replace(" ", ""):
+                # (order_id, agency_id, agency_name, cases, lot, vehicle)
+                return [(r[1], r[7], r[2], r[3], r[4], r[5])
+                        for r in rows if r[6] == "CANDIDATE"]
+            return [tuple(r[:7]) for r in rows]
         if "FROM Approvals" in sql:
             rows = scoped(approval_rows, 6, plan_index=1)
             # The handler also binds the intended revision transition.
@@ -335,7 +366,13 @@ def _database(*, include_next_day=False, vehicles=VEHICLE_ROWS,
         if "FROM WorkItems" in sql:
             return scoped(work_rows, 3, incident_index=1)
         if "FROM PlanConstraints" in sql:
-            return scoped(constraint_rows, 3, plan_index=0)
+            rows = scoped(constraint_rows, 3, plan_index=0)
+            if "subject_id" in sql:
+                # Draft read projects (constraint_type, subject_id, details).
+                # Seed rows carry the details JSON in an optional 5th slot.
+                return [(r[1], r[2], r[4] if len(r) > 4 else "{}")
+                        for r in rows]
+            return rows
         if "FROM Vehicles" in sql:
             return list(vehicles)
         return []
@@ -446,7 +483,13 @@ def test_6_explicit_tomorrow_returns_rev01_exactly_once():
     body = project(T(23, 59), include_next_day=True).json()
     assert body["next_day_draft"]["revision"] == "rev01"
     assert body["next_day_draft"]["approval_required"] is True
-    assert blob(body).count(NEXT_PLAN) == 1
+    # Tomorrow is confined to next_day_draft. Asserting containment directly
+    # is stronger than counting occurrences, which a candidate order id
+    # legitimately embedding the plan name would otherwise trip.
+    assert body["next_day_draft"]["plan_id"] == NEXT_PLAN
+    for key, value in body.items():
+        if key != "next_day_draft":
+            assert NEXT_PLAN not in blob(value), key
 
 
 # --- 7. carry-forward without unrelated history ----------------------------
@@ -1360,3 +1403,130 @@ def test_repair_aggregate_invariants_still_hold():
     assert recall["terminal_state"] == "PARTIALLY_CONTAINED"
     assert recall["refusal"]["decision"] == "DENIED"
     assert recall["refusal"]["mutations_applied"] == 0
+
+
+# ---------------------------------------------------------------------------
+# B5: candidate next-day schedule, read from committed child Orders.
+# ---------------------------------------------------------------------------
+
+def _draft(as_of=T(17, 0)):
+    return project(as_of, include_next_day=True,
+                   db=_database(include_next_day=True)).json()["next_day_draft"]
+
+
+def test_candidate_assignments_are_absent_before_the_draft_commits():
+    """Requirement 1: nothing candidate is visible before its receipt."""
+    body = project(T(16, 59), include_next_day=True,
+                   db=_database(include_next_day=True)).json()
+    assert "next_day_draft" not in body
+    assert NEXT_PLAN not in blob(body)
+    # Identity tokens, not the bare word: an unrelated agent validation label
+    # ("CANDIDATE_ID_RESOLVED_DETERMINISTICALLY") legitimately contains it.
+    raw = blob(body)
+    for row in CANDIDATE_ORDER_ROWS:
+        assert row[1] not in raw
+
+
+def test_candidate_rows_are_read_not_recomputed():
+    """Requirement 2: the projection reports exactly the stored rows."""
+    draft = _draft()
+    stored = {row[1]: row for row in CANDIDATE_ORDER_ROWS}
+    projected = [stop for vehicle in draft["candidate_vehicles"]
+                 for stop in vehicle["stops"]]
+    assert len(projected) == len(stored)
+    for stop in projected:
+        row = stored[stop["order_id"]]
+        assert (stop["agency"], stop["cases"], stop["lot_id"]) == (
+            row[2], row[3], row[4])
+        assert stop["status"] == "CANDIDATE"
+
+
+def test_current_day_excludes_every_saturday_candidate_row():
+    """Requirement 3: no candidate row may appear in Friday's projection."""
+    body = project(T(23, 59), include_next_day=True,
+                   db=_database(include_next_day=True)).json()
+    current = blob(body["current_day"])
+    assert NEXT_PLAN not in current
+    for row in CANDIDATE_ORDER_ROWS:
+        assert row[1] not in current
+    for commitment in body["current_day"]["commitments"]:
+        assert commitment["status"] != "CANDIDATE"
+    # Friday's own commitments are untouched and still revision-gated.
+    assert {c["order_id"] for c in body["current_day"]["commitments"]} == {
+        "O201", "O202", "O203", "O204", "O205"}
+
+
+def test_current_day_dispatch_never_carries_a_candidate_stop():
+    dispatch = project(T(23, 59), include_next_day=True,
+                       db=_database(include_next_day=True)
+                       ).json()["current_day"]["dispatch"]
+    for vehicle in dispatch["vehicles"]:
+        for stop in vehicle["stops"]:
+            assert stop["status"] != "CANDIDATE"
+            assert not stop["order_id"].startswith("CAND-")
+
+
+def test_excluded_recalled_lot_never_enters_the_candidate_plan():
+    """Requirement 4: LTC-4471 is under an active barrier."""
+    draft = _draft()
+    for vehicle in draft["candidate_vehicles"]:
+        for stop in vehicle["stops"]:
+            assert stop["lot_id"] != "LTC-4471"
+    assert "LTC-4471" not in blob(draft["candidate_vehicles"])
+
+
+def test_candidate_vehicle_load_does_not_exceed_capacity():
+    """Requirement 5: stored loads respect the authoritative capacity."""
+    capacity = {row[0]: row[2] for row in VEHICLE_ROWS}
+    for vehicle in _draft()["candidate_vehicles"]:
+        limit = capacity.get(vehicle["vehicle_id"])
+        if limit is not None:
+            assert vehicle["candidate_load_cases"] <= limit
+        assert vehicle["candidate_load_cases"] == sum(
+            stop["cases"] for stop in vehicle["stops"])
+
+
+def test_agency_03_remains_explicitly_unassigned():
+    """Requirement 9: the canonical carried obligation stays truthful."""
+    draft = _draft()
+    unassigned = draft["unassigned_demand"]
+    assert len(unassigned) == 1
+    assert unassigned[0]["agency_id"] == "AGENCY-03"
+    assert unassigned[0]["cases"] == 20
+    # And it is never quietly scheduled instead.
+    scheduled = {stop["agency_id"] for vehicle in draft["candidate_vehicles"]
+                 for stop in vehicle["stops"]}
+    assert "AGENCY-03" not in scheduled
+
+
+def test_canonical_saturday_candidate_result_is_truthful():
+    """Requirement 9: 18 + 22 scheduled, 20 short, on one refrigerated truck."""
+    draft = _draft()
+    assert draft["status"] == "DRAFT_WITH_CONSTRAINTS"
+    assert draft["approval_required"] is True
+    stops = [stop for vehicle in draft["candidate_vehicles"]
+             for stop in vehicle["stops"]]
+    assert sorted(stop["cases"] for stop in stops) == [18, 22]
+    assert sum(stop["cases"] for stop in stops) == 40
+    assert draft["unassigned_demand"][0]["cases"] == 20
+
+
+def test_draft_exposes_no_activation_path():
+    """Requirement 8: a candidate can never be activated from this surface."""
+    draft = _draft()
+    assert draft["activation_supported"] is False
+    assert draft["status"] != "ACTIVE"
+    for stop in (s for v in draft["candidate_vehicles"] for s in v["stops"]):
+        assert stop["status"] == "CANDIDATE"
+    raw = blob(draft)
+    for token in ("ACTIVATE", "APPROVED", "\"ACTIVE\""):
+        assert token not in raw, token
+    # No control surface: the draft carries no action or endpoint field.
+    assert not any(key.endswith(("_url", "_action", "_endpoint"))
+                   for key in draft)
+
+
+def test_candidate_stop_sequence_is_contiguous_per_vehicle():
+    for vehicle in _draft()["candidate_vehicles"]:
+        sequences = [stop["sequence"] for stop in vehicle["stops"]]
+        assert sequences == list(range(1, len(sequences) + 1))

@@ -1021,6 +1021,62 @@ class SpannerLedgerCommandExecutor:
                 if not hold_matches:
                     raise ValueError("OPEN_ACKNOWLEDGMENT_HOLD_REQUIRED")
 
+            # Candidate rows are validated against authoritative state before
+            # anything is written. Every check below raises, which aborts the
+            # transaction, so a rejected candidate leaves no partial write.
+            if payload.candidate_vehicles:
+                if payload.plan_id != f"PLAN-{payload.operating_date}":
+                    raise ValueError("CANDIDATE_PLAN_IDENTITY_MISMATCH")
+                barred_lots = {barrier.lot_id for barrier in payload.barriers}
+                open_shortfalls = {
+                    shortfall.shortfall_id: shortfall.cases
+                    for shortfall in payload.shortfalls
+                }
+                safe_lots = {
+                    row[0]: row[1]
+                    for row in transaction.execute_sql(
+                        "SELECT lot_id, total_cases FROM Lots "
+                        "WHERE tenant_id = @tenant_id AND hazard_status = 'CLEAR_SAFE'",
+                        params={"tenant_id": command.tenant_id},
+                        param_types={"tenant_id": spanner.param_types.STRING},
+                    )
+                }
+                operational = {
+                    row[0]: (row[1], row[2])
+                    for row in transaction.execute_sql(
+                        "SELECT vehicle_id, max_capacity_cases, current_load_cases "
+                        "FROM Vehicles WHERE tenant_id = @tenant_id "
+                        "AND is_operational = TRUE",
+                        params={"tenant_id": command.tenant_id},
+                        param_types={"tenant_id": spanner.param_types.STRING},
+                    )
+                }
+                drawn: Dict[str, int] = {}
+                for vehicle in payload.candidate_vehicles:
+                    if vehicle.vehicle_id not in operational:
+                        raise ValueError("CANDIDATE_VEHICLE_NOT_OPERATIONAL")
+                    capacity, committed = operational[vehicle.vehicle_id]
+                    if (vehicle.capacity_cases != capacity
+                            or vehicle.committed_load_cases != committed):
+                        raise ValueError("CANDIDATE_VEHICLE_STATE_STALE")
+                    if committed + vehicle.candidate_load_cases > capacity:
+                        raise ValueError("CANDIDATE_LOAD_EXCEEDS_VEHICLE_CAPACITY")
+                    for stop in vehicle.stops:
+                        # A lot under an active movement barrier can never be
+                        # scheduled, and only confirmed-safe stock is eligible.
+                        if stop.lot_id in barred_lots:
+                            raise ValueError("CANDIDATE_LOT_UNDER_MOVEMENT_BARRIER")
+                        if stop.lot_id not in safe_lots:
+                            raise ValueError("CANDIDATE_LOT_NOT_CONFIRMED_SAFE")
+                        if stop.shortfall_id not in open_shortfalls:
+                            raise ValueError("CANDIDATE_STOP_WITHOUT_OPEN_SHORTFALL")
+                        if stop.cases != open_shortfalls[stop.shortfall_id]:
+                            raise ValueError("CANDIDATE_CASES_DO_NOT_MATCH_SHORTFALL")
+                        drawn[stop.lot_id] = drawn.get(stop.lot_id, 0) + stop.cases
+                for lot_id, cases in drawn.items():
+                    if cases > safe_lots[lot_id]:
+                        raise ValueError("CANDIDATE_DRAW_EXCEEDS_CONFIRMED_SAFE_STOCK")
+
             existing_plan = next(iter(transaction.execute_sql(
                 "SELECT status FROM PlanRevisions WHERE tenant_id = @tenant_id "
                 "AND plan_id = @plan_id AND revision = @revision",
@@ -1099,7 +1155,50 @@ class SpannerLedgerCommandExecutor:
                              "DRAFT_WITH_CONSTRAINTS", "HUMAN_APPROVAL_REQUIRED",
                              payload.revision, "[]", spanner.COMMIT_TIMESTAMP]],
                 )
-                mutation_count = 3 + len(constraints)
+                # Candidate stops persist as child Orders of the draft
+                # revision. Orders INTERLEAVE IN PARENT PlanRevisions, so a
+                # candidate row is structurally subordinate to the
+                # DRAFT_WITH_CONSTRAINTS parent and cannot outlive it. Status
+                # is the literal CANDIDATE, never an activatable state, and
+                # exactly the generated assignments are stored: nothing here
+                # re-derives a schedule.
+                candidate_rows = [
+                    [command.tenant_id, payload.plan_id, payload.revision,
+                     stop.order_id, stop.agency_id, stop.agency_name,
+                     stop.cases, stop.lot_id, stop.vehicle_id, stop.status]
+                    for vehicle in payload.candidate_vehicles
+                    for stop in vehicle.stops
+                ]
+                if candidate_rows:
+                    transaction.insert(
+                        table="Orders",
+                        columns=["tenant_id", "plan_id", "revision", "order_id",
+                                 "destination_agency_id", "destination_agency_name",
+                                 "cases", "lot_id", "assigned_vehicle_id", "status"],
+                        values=candidate_rows,
+                    )
+                # Unmet demand is recorded as a constraint on the draft so it
+                # stays visibly open rather than silently disappearing.
+                unassigned_rows = [
+                    [command.tenant_id, payload.plan_id, payload.revision,
+                     "UNASSIGNED_DEMAND", demand.agency_id,
+                     json.dumps({"shortfall_id": demand.shortfall_id,
+                                 "agency_id": demand.agency_id,
+                                 "cases": demand.cases,
+                                 "reason": demand.reason}, sort_keys=True),
+                     len(constraints) + index + 1, spanner.COMMIT_TIMESTAMP]
+                    for index, demand in enumerate(payload.unassigned_demand)
+                ]
+                if unassigned_rows:
+                    transaction.insert(
+                        table="PlanConstraints",
+                        columns=["tenant_id", "plan_id", "revision",
+                                 "constraint_type", "subject_id", "details",
+                                 "priority", "created_at"],
+                        values=unassigned_rows,
+                    )
+                mutation_count = (3 + len(constraints) + len(candidate_rows)
+                                  + len(unassigned_rows))
             return mutation_count
 
         if command.command_type is LedgerCommandType.SET_INCIDENT_STATUS:

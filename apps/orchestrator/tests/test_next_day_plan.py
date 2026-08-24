@@ -24,6 +24,8 @@ def authoritative_rows(sql):
     if "incident_type = 'DEADLINE_HOLD'" in sql:
         return [("HOLD-ALT", '{"parent_incident_id":"INC-ALTERED","site_id":"SITE-X","unconfirmed_cases":3}',
                  "ACKNOWLEDGMENT_HOLD_ACTIVE")]
+    if "DISTINCT destination_agency_id" in sql:
+        return [("AGENCY-X", "Altered Agency X")]
     if "FROM Lots" in sql:
         return [("SAFE-ALTERED", 21)]
     if "FROM Vehicles" in sql:

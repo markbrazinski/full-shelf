@@ -1151,13 +1151,17 @@
       }
     },
     "next_day_draft": {
-      "description": "OPTIONAL top-level block. Absent unless include_next_day_draft=true and a next-day revision committed at or before the boundary.",
+      "description": "Candidate next-day schedule, present only when a next-day revision was committed at or before the boundary. Every value is READ from committed child Orders and PlanConstraints of the draft revision, never re-derived. A candidate is subordinate to DRAFT_WITH_CONSTRAINTS and is never an active commitment.",
       "type": "object",
       "required": [
         "plan_id",
         "revision",
         "status",
-        "approval_required"
+        "approval_required",
+        "activation_supported",
+        "candidate_vehicles",
+        "unassigned_demand",
+        "constraints"
       ],
       "properties": {
         "plan_id": {
@@ -1171,6 +1175,147 @@
         },
         "approval_required": {
           "type": "boolean"
+        },
+        "activation_supported": {
+          "type": "boolean",
+          "enum": [
+            false
+          ],
+          "description": "Always false. No activation path exists for a draft."
+        },
+        "candidate_vehicles": {
+          "type": "array",
+          "description": "Vehicles carrying candidate work, read from stored rows.",
+          "items": {
+            "type": "object",
+            "required": [
+              "vehicle_id",
+              "stops",
+              "stop_count",
+              "candidate_load_cases"
+            ],
+            "properties": {
+              "vehicle_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "stops": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "order_id",
+                    "agency_id",
+                    "agency",
+                    "cases",
+                    "lot_id",
+                    "status",
+                    "sequence"
+                  ],
+                  "properties": {
+                    "order_id": {
+                      "type": "string"
+                    },
+                    "agency_id": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "agency": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "cases": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    },
+                    "lot_id": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "CANDIDATE"
+                      ]
+                    },
+                    "sequence": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  }
+                }
+              },
+              "stop_count": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "candidate_load_cases": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        },
+        "unassigned_demand": {
+          "type": "array",
+          "description": "Demand the draft could not meet from confirmed-safe supply. Stays visibly open rather than being absorbed.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "shortfall_id": {
+                "type": "string"
+              },
+              "agency_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "cases": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "constraints": {
+          "type": "array",
+          "description": "Safety and continuity constraints inherited by the draft.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "constraint_type": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "subject_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
         }
       }
     },

@@ -680,10 +680,47 @@
     "receipts_committed": 10
   },
   "next_day_draft": {
+    "activation_supported": false,
     "approval_required": true,
+    "candidate_vehicles": [
+      {
+        "candidate_load_cases": 40,
+        "stop_count": 2,
+        "stops": [
+          {
+            "agency": "Agency 01",
+            "agency_id": "AGENCY-01",
+            "cases": 18,
+            "lot_id": "LTC-5090",
+            "order_id": "CAND-PLAN-2026-08-15-SF-A01",
+            "sequence": 1,
+            "status": "CANDIDATE"
+          },
+          {
+            "agency": "Agency 02",
+            "agency_id": "AGENCY-02",
+            "cases": 22,
+            "lot_id": "LTC-5090",
+            "order_id": "CAND-PLAN-2026-08-15-SF-A02",
+            "sequence": 2,
+            "status": "CANDIDATE"
+          }
+        ],
+        "vehicle_id": "TRUCK-02"
+      }
+    ],
+    "constraints": [],
     "plan_id": "PLAN-2026-08-15",
     "revision": "rev01",
-    "status": "DRAFT_WITH_CONSTRAINTS"
+    "status": "DRAFT_WITH_CONSTRAINTS",
+    "unassigned_demand": [
+      {
+        "agency_id": "AGENCY-03",
+        "cases": 20,
+        "reason": "NO_CONFIRMED_SAFE_LOT_WITH_SUFFICIENT_CASES",
+        "shortfall_id": "SF-A03"
+      }
+    ]
   },
   "operating_day": "2026-08-14",
   "projection_boundary": {

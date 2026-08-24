@@ -7,7 +7,7 @@ import json
 from enum import Enum
 from typing import Any, Dict, Literal, Type
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class LedgerCommandType(str, Enum):
@@ -220,6 +220,45 @@ class NextDayAcknowledgmentHoldPayload(StrictPayload):
     unconfirmed_cases: int = Field(gt=0)
 
 
+class NextDayCandidateStopPayload(StrictPayload):
+    """One deterministic candidate stop, persisted as a child Order row.
+
+    A candidate is subordinate to the DRAFT_WITH_CONSTRAINTS revision and is
+    never an active commitment. Its status is fixed so no caller can smuggle
+    an activatable state through this path.
+    """
+
+    order_id: str = Field(min_length=1, max_length=64)
+    agency_id: str = Field(min_length=1, max_length=64)
+    agency_name: str = Field(min_length=1, max_length=128)
+    cases: int = Field(gt=0)
+    lot_id: str = Field(min_length=1, max_length=64)
+    vehicle_id: str = Field(min_length=1, max_length=64)
+    sequence: int = Field(ge=1)
+    shortfall_id: str = Field(min_length=1, max_length=64)
+    status: Literal["CANDIDATE"]
+
+
+class NextDayCandidateVehiclePayload(StrictPayload):
+    vehicle_id: str = Field(min_length=1, max_length=64)
+    capacity_cases: int = Field(gt=0)
+    committed_load_cases: int = Field(ge=0)
+    candidate_load_cases: int = Field(ge=0)
+    stops: list[NextDayCandidateStopPayload] = Field(min_length=1)
+
+
+class NextDayUnassignedDemandPayload(StrictPayload):
+    """Demand the draft could not meet from confirmed-safe supply."""
+
+    shortfall_id: str = Field(min_length=1, max_length=64)
+    agency_id: str = Field(min_length=1, max_length=64)
+    cases: int = Field(gt=0)
+    reason: Literal[
+        "NO_CONFIRMED_SAFE_LOT_WITH_SUFFICIENT_CASES",
+        "NO_REMAINING_TRANSPORT_CAPACITY",
+    ]
+
+
 class CreateNextDayDraftPayload(StrictPayload):
     source_event_id: str = Field(min_length=1, max_length=256)
     source_operating_day: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
@@ -233,6 +272,48 @@ class CreateNextDayDraftPayload(StrictPayload):
     shortfalls: list[NextDayShortfallPayload] = Field(min_length=1)
     acknowledgment_holds: list[NextDayAcknowledgmentHoldPayload] = Field(min_length=1)
     human_approval_required: Literal[True]
+    # Deterministic candidate schedule. Optional so an existing caller that
+    # commits constraints alone stays valid; the executor persists these as
+    # child Orders of the draft revision and re-derives nothing.
+    candidate_vehicles: list[NextDayCandidateVehiclePayload] = Field(
+        default_factory=list
+    )
+    unassigned_demand: list[NextDayUnassignedDemandPayload] = Field(
+        default_factory=list
+    )
+
+    @model_validator(mode="after")
+    def _candidate_arithmetic_holds(self):
+        """Fail closed on any payload whose own arithmetic does not hold.
+
+        Capacity and load are checked here so a tampered payload is rejected
+        before the executor opens a transaction. The executor re-checks against
+        authoritative rows; this is the cheap first gate, not the only one.
+        """
+        seen_orders: set[str] = set()
+        seen_shortfalls: set[str] = set()
+        for vehicle in self.candidate_vehicles:
+            declared = sum(stop.cases for stop in vehicle.stops)
+            if declared != vehicle.candidate_load_cases:
+                raise ValueError("CANDIDATE_LOAD_DOES_NOT_MATCH_STOPS")
+            if (vehicle.committed_load_cases + vehicle.candidate_load_cases
+                    > vehicle.capacity_cases):
+                raise ValueError("CANDIDATE_LOAD_EXCEEDS_VEHICLE_CAPACITY")
+            expected = list(range(1, len(vehicle.stops) + 1))
+            if [stop.sequence for stop in vehicle.stops] != expected:
+                raise ValueError("CANDIDATE_STOP_SEQUENCE_NOT_CONTIGUOUS")
+            for stop in vehicle.stops:
+                if stop.vehicle_id != vehicle.vehicle_id:
+                    raise ValueError("CANDIDATE_STOP_VEHICLE_MISMATCH")
+                if stop.order_id in seen_orders:
+                    raise ValueError("CANDIDATE_ORDER_ID_NOT_UNIQUE")
+                seen_orders.add(stop.order_id)
+                seen_shortfalls.add(stop.shortfall_id)
+        # One shortfall is either scheduled or unassigned, never both.
+        for demand in self.unassigned_demand:
+            if demand.shortfall_id in seen_shortfalls:
+                raise ValueError("SHORTFALL_BOTH_SCHEDULED_AND_UNASSIGNED")
+        return self
 
 
 class SetIncidentStatusPayload(StrictPayload):
