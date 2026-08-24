@@ -449,24 +449,55 @@
                   "object",
                   "null"
                 ],
-                "required": [
-                  "decision",
-                  "mutations_applied",
-                  "receipt_id",
-                  "committed_at"
-                ],
+                "description": "A deterministic-policy refusal. requested_action names what the coordinator actually asked for (a closure eligibility check) and policy_action names the ledger command that answered it. No DECLARE_CONTAINED command exists; naming one would describe an action the backend cannot perform.",
                 "properties": {
                   "decision": {
-                    "type": "string"
+                    "type": [
+                      "string",
+                      "null"
+                    ]
                   },
                   "mutations_applied": {
-                    "type": "integer"
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
                   },
                   "receipt_id": {
-                    "type": "string"
+                    "type": [
+                      "string",
+                      "null"
+                    ]
                   },
                   "committed_at": {
-                    "type": "string"
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "requested_action": {
+                    "type": "string",
+                    "enum": [
+                      "CLOSURE_ELIGIBILITY_CHECK"
+                    ]
+                  },
+                  "policy_action": {
+                    "type": "string",
+                    "enum": [
+                      "RECORD_REFUSAL"
+                    ]
+                  },
+                  "requested_by_role": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "decided_by": {
+                    "type": "string",
+                    "enum": [
+                      "DETERMINISTIC_POLICY"
+                    ]
                   }
                 }
               }
@@ -1431,6 +1462,39 @@
                   "PENDING"
                 ]
               }
+            }
+          }
+        },
+        "source": {
+          "type": "object",
+          "description": "What arrived. A representative FDA-format regulatory notice delivered as an event. monitoring_claimed is always false: Full Shelf does not poll or monitor the FDA, and no such integration exists.",
+          "properties": {
+            "channel": {
+              "type": "string",
+              "enum": [
+                "REGULATORY_FEED"
+              ]
+            },
+            "notice_format": {
+              "type": "string",
+              "enum": [
+                "FDA_FORMAT"
+              ]
+            },
+            "received_at": {
+              "type": "string"
+            },
+            "monitoring_claimed": {
+              "type": "boolean",
+              "enum": [
+                false
+              ]
+            },
+            "classification": {
+              "type": "string",
+              "enum": [
+                "REPRESENTATIVE_REGULATORY_EVENT"
+              ]
             }
           }
         }

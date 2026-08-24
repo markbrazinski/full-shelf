@@ -1638,3 +1638,61 @@ def test_repair_proposal_is_not_reported_as_a_plan_constraint():
     """A proposal is not a committed constraint on the plan."""
     constraints = project(T(8, 21)).json()["current_day"]["plan_constraints"]
     assert all(c["constraint_type"] != "REPAIR_PROPOSAL" for c in constraints)
+
+
+# ---------------------------------------------------------------------------
+# Recall arrival, ordering, and truthful refusal terminology.
+# ---------------------------------------------------------------------------
+
+def test_regulatory_event_precedes_screening_and_extraction():
+    """Authority order: event arrives, Model Armor screens, then extraction."""
+    intake = project(T(10, 13)).json()["recall_intake_as_of"]
+    steps = [s["step"] for s in intake["steps"]]
+    assert steps.index("REGULATORY_EVENT_RECEIVED") < steps.index("NOTICE_SCREENED")
+    assert steps.index("NOTICE_SCREENED") < steps.index("NOTICE_EXTRACTED")
+    assert steps.index("NOTICE_EXTRACTED") < steps.index("INCIDENT_OPENED")
+
+
+def test_recall_source_is_a_delivered_event_not_claimed_monitoring():
+    """The demo input is a representative FDA-format notice, not a feed poll."""
+    source = project(T(10, 13)).json()["recall_intake_as_of"]["source"]
+    assert source["channel"] == "REGULATORY_FEED"
+    assert source["notice_format"] == "FDA_FORMAT"
+    assert source["classification"] == "REPRESENTATIVE_REGULATORY_EVENT"
+    # Full Shelf does not poll or monitor the FDA and must never say it does.
+    assert source["monitoring_claimed"] is False
+
+
+def test_recall_source_records_the_committed_arrival_time():
+    source = project(T(10, 13)).json()["recall_intake_as_of"]["source"]
+    assert source["received_at"].startswith("2026-08-14T09:36")
+
+
+def test_model_armor_is_a_boundary_not_a_sixth_agent():
+    """Screening is an intake step; the fleet stays at five agents."""
+    body = project(T(10, 13)).json()
+    steps = [s["step"] for s in body["recall_intake_as_of"]["steps"]]
+    assert "NOTICE_SCREENED" in steps
+    agents = body["agent_activity_as_of"]["agents"]
+    assert len(agents) == 5
+    names = " ".join(a["display_name"] for a in agents).lower()
+    assert "armor" not in names
+
+
+def test_refusal_names_the_real_backend_action():
+    """No DECLARE_CONTAINED: that command does not exist in the ledger."""
+    incidents = project(T(10, 13)).json()["current_day"]["incidents"]
+    refusal = next(i["refusal"] for i in incidents if i["refusal"])
+    assert refusal["requested_action"] == "CLOSURE_ELIGIBILITY_CHECK"
+    assert refusal["policy_action"] == "RECORD_REFUSAL"
+    assert refusal["decided_by"] == "DETERMINISTIC_POLICY"
+    assert refusal["decision"] == "DENIED"
+    assert refusal["mutations_applied"] == 0
+    assert "DECLARE_CONTAINED" not in blob(project(T(10, 13)).json())
+
+
+def test_refused_closure_leaves_the_incident_partially_contained():
+    incidents = project(T(23, 59)).json()["current_day"]["incidents"]
+    recall = next(i for i in incidents if i["incident_id"] == RECALL_INC)
+    assert recall["status"] == "PARTIALLY_CONTAINED"
+    assert recall["terminal_state"] == "PARTIALLY_CONTAINED"

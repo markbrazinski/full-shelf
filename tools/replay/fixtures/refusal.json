@@ -372,9 +372,13 @@
         },
         "refusal": {
           "committed_at": "2026-08-14T10:12:00+00:00",
+          "decided_by": "DETERMINISTIC_POLICY",
           "decision": "DENIED",
           "mutations_applied": 0,
-          "receipt_id": "fixture-RCT-containment-refusal"
+          "policy_action": "RECORD_REFUSAL",
+          "receipt_id": "fixture-RCT-containment-refusal",
+          "requested_action": "CLOSURE_ELIGIBILITY_CHECK",
+          "requested_by_role": "INCIDENT_COORDINATOR"
         },
         "status": "PARTIALLY_CONTAINED",
         "terminal_state": "PARTIALLY_CONTAINED"
@@ -688,7 +692,18 @@
   },
   "recall_intake_as_of": {
     "incident_id": "INC-2231",
+    "source": {
+      "channel": "REGULATORY_FEED",
+      "classification": "SYNTHETIC_TEST",
+      "monitoring_claimed": false,
+      "notice_format": "FDA_FORMAT",
+      "received_at": "2026-08-14T09:36:00Z"
+    },
     "steps": [
+      {
+        "state": "COMPLETED",
+        "step": "REGULATORY_EVENT_RECEIVED"
+      },
       {
         "state": "COMPLETED",
         "step": "NOTICE_SCREENED"

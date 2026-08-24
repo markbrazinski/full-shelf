@@ -3068,7 +3068,16 @@ def get_demo_beats_projections(
                 {"decision": refusal["status"],
                  "mutations_applied": refusal["mutations_applied"],
                  "receipt_id": refusal["receipt_id"],
-                 "committed_at": refusal["committed_at"]}
+                 "committed_at": refusal["committed_at"],
+                 # The real sequence. The coordinator requested the closure
+                 # eligibility check that policy requires; deterministic
+                 # policy evaluated it and refused. There is no
+                 # DECLARE_CONTAINED command in the ledger enum, so naming
+                 # one would describe an action the backend cannot perform.
+                 "requested_action": "CLOSURE_ELIGIBILITY_CHECK",
+                 "policy_action": "RECORD_REFUSAL",
+                 "requested_by_role": "INCIDENT_COORDINATOR",
+                 "decided_by": "DETERMINISTIC_POLICY"}
                 if refusal else None
             ),
         })
@@ -3210,6 +3219,9 @@ def get_demo_beats_projections(
         details = json.loads(recall_incident[4] or "{}")
         incident_id = recall_incident[0]
         proven = {
+            # The incident exists because a regulatory notice was delivered
+            # and accepted, so its presence is the arrival evidence.
+            "regulatory_event": True,
             "model_armor": bool(details.get("model_armor_correlation_id")),
             "extraction": bool((details.get("agent_fleet") or {}).get("proposal_hash")),
             "fleet": fleet_evidence is not None,
@@ -3227,7 +3239,21 @@ def get_demo_beats_projections(
                 "step": step,
                 "state": "COMPLETED" if complete else "PENDING",
             })
-        recall_intake = {"incident_id": incident_id, "steps": steps}
+        recall_intake = {
+            "incident_id": incident_id,
+            "steps": steps,
+            # What actually arrived, stated plainly. This is a delivered
+            # regulatory event in FDA notice format, NOT a claim that Full
+            # Shelf monitors or polls the FDA. No such integration exists.
+            "source": {
+                "channel": "REGULATORY_FEED",
+                "notice_format": "FDA_FORMAT",
+                "received_at": _normalize_receipt_timestamp(
+                    recall_incident[6]).isoformat().replace("+00:00", "Z"),
+                "monitoring_claimed": False,
+                "classification": "REPRESENTATIVE_REGULATORY_EVENT",
+            },
+        }
 
     # --- Dispatch, from committed assignments and authoritative capacity ----
     # Stops are the order-to-vehicle relationships the plan actually records.
@@ -3460,7 +3486,16 @@ PROJECTED_AGENT_SEQUENCE = (
 # retained anywhere the projection can read, and recomputing it from a guessed
 # value would be fabrication. A recall incident visible at the boundary was
 # necessarily opened at or before it.
+# Intake order is the authority order, and it is enforced by what each step
+# is gated on rather than by list position: the regulatory event must have
+# arrived before Model Armor can have screened it, and screening must have
+# passed before extraction is permitted to read it.
+#
+# REGULATORY_EVENT_RECEIVED describes the inbound notice this runtime was
+# given. Full Shelf does not poll or monitor the FDA; the demo input is a
+# representative FDA-format regulatory notice delivered as an event.
 RECALL_INTAKE_STEPS = (
+    ("REGULATORY_EVENT_RECEIVED", "regulatory_event"),
     ("NOTICE_SCREENED", "model_armor"),
     ("NOTICE_EXTRACTED", "extraction"),
     ("INCIDENT_OPENED", "incident_row"),

@@ -662,7 +662,18 @@
   },
   "recall_intake_as_of": {
     "incident_id": "INC-2231",
+    "source": {
+      "channel": "REGULATORY_FEED",
+      "classification": "SYNTHETIC_TEST",
+      "monitoring_claimed": false,
+      "notice_format": "FDA_FORMAT",
+      "received_at": "2026-08-14T09:36:00Z"
+    },
     "steps": [
+      {
+        "state": "COMPLETED",
+        "step": "REGULATORY_EVENT_RECEIVED"
+      },
       {
         "state": "COMPLETED",
         "step": "NOTICE_SCREENED"
