@@ -1490,7 +1490,7 @@
                 false
               ]
             },
-            "classification": {
+            "input_kind": {
               "type": "string",
               "enum": [
                 "REPRESENTATIVE_REGULATORY_EVENT"

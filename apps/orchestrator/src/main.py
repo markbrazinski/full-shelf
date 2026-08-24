@@ -3251,7 +3251,7 @@ def get_demo_beats_projections(
                 "received_at": _normalize_receipt_timestamp(
                     recall_incident[6]).isoformat().replace("+00:00", "Z"),
                 "monitoring_claimed": False,
-                "classification": "REPRESENTATIVE_REGULATORY_EVENT",
+                "input_kind": "REPRESENTATIVE_REGULATORY_EVENT",
             },
         }
 

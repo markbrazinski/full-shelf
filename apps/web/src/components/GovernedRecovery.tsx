@@ -7,7 +7,16 @@ export function GovernedRecovery({ recovery, onOpenEvidence }: { recovery: Recov
     <>
       <div style={css("margin-bottom:14px")}>
         <div className="mono" style={css("font-size:11px;letter-spacing:.12em;color:#74848a;font-weight:600")}>GOVERNED RECOVERY</div>
-        <h1 style={css("font-size:24px;font-weight:600;letter-spacing:-.01em;margin-top:5px")}>{recovery.question}</h1>
+        {/* The benefit leads: what service was preserved, and what stays short. */}
+        <h1
+          style={css("font-size:24px;font-weight:600;letter-spacing:-.01em;margin-top:5px")}
+          data-testid="recovery-headline"
+        >
+          {recovery.headline}
+        </h1>
+        <div style={css("font-size:13px;color:#5c6b71;margin-top:5px;line-height:1.5;max-width:640px")}>
+          {recovery.headlineDetail}
+        </div>
       </div>
       <div style={css("display:grid;grid-template-columns:1fr 340px;gap:18px;align-items:start")}>
         <div style={css("background:#fff;border:1px solid #d5d8d2;border-radius:10px;overflow:hidden")}>

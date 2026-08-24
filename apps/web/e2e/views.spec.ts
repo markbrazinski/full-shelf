@@ -408,3 +408,49 @@ test("21 · custody exception and the governed refusal", async ({ page }) => {
   await expect(body).not.toContainText(/DECLARE_CONTAINED/);
   await shot(page, "story-7-recovery-and-refusal");
 });
+
+test("22 · custody and recovery lead with projected benefit", async ({ page }) => {
+  await open(page);
+  await page.getByTestId("nav-incident").click();
+  await settle(page);
+
+  await page.getByTestId("tab-custody").click();
+  await settle(page);
+  // The headline is composed from projected quantities, so it must agree
+  // with the canonical custody totals rather than be prose.
+  const custody = page.getByTestId("custody-headline");
+  await expect(custody).toContainText("96");
+  await expect(custody).toContainText("8");
+  await expect(custody).toContainText(/downstream site/i);
+  // Human-readable roles are present alongside projected identities.
+  await expect(page.locator("body")).toContainText(/Distribution site|Partner pantry|In transit/);
+
+  await page.getByTestId("tab-response").click();
+  await settle(page);
+  const recovery = page.getByTestId("recovery-headline");
+  await expect(recovery).toContainText("40");
+  await expect(recovery).toContainText(/programs/i);
+  // The gap stays visible rather than being filled.
+  await expect(page.locator("body")).toContainText("20");
+});
+
+test("23 · the recall source is a delivered event, not claimed monitoring", async ({ page }) => {
+  await open(page);
+  await page.getByTestId("nav-incident").click();
+  await settle(page);
+  await page.getByTestId("tab-scope").click();
+  await settle(page);
+
+  const source = page.getByTestId("recall-source");
+  await expect(source).toBeVisible();
+  await expect(source).toContainText(/Regulatory feed/i);
+  await expect(source).toContainText(/FDA-format notice/i);
+  // The committed arrival time, read from the ledger. The canonical seed
+  // records the incident at 09:36; 09:35 is the boundary just before it.
+  await expect(source).toContainText("09:36");
+  // Never a claim of continuous monitoring or polling.
+  const text = (await page.locator("body").innerText()).toLowerCase();
+  expect(text).not.toContain("monitors the fda");
+  expect(text).not.toContain("continuously monitor");
+  expect(text).not.toContain("polling the fda");
+});

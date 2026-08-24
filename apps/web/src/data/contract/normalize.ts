@@ -101,6 +101,21 @@ const INTAKE_BODY: Record<string, string> = {
 
 const NODE_ORDER = ["N-WH", "N-TR2", "N-STG", "N-AG01", "N-ST01", "N-RESC"];
 
+// Human-readable roles for the custody network. PRESENTATION METADATA ONLY:
+// quantities, identifiers, custody states and locations all come from the
+// projection. If a node is not listed here it renders with its projected
+// name alone rather than an invented role.
+const NODE_ROLE: Record<string, string> = {
+  "N-WH": "On hand",
+  "N-TR2": "In transit",
+  "N-STG": "Movement blocked",
+  "N-AG01": "Partner pantry",
+  "N-AG02": "Partner pantry",
+  "N-AG03": "Partner program",
+  "N-ST01": "Distribution site",
+  "N-RESC": "Direct rescue",
+};
+
 /** Contract agent states map 1:1; nothing transient is representable. */
 function agentStatus(state: string): AgentDisplayStatus {
   if (state === "COMPLETED") return "COMPLETED";
@@ -263,7 +278,7 @@ export function normalize(raw: RawProjection, beatId: BeatId): FullShelfProjecti
       noticeFormat: intakeSource.notice_format,
       receivedAt: intakeSource.received_at,
       monitoringClaimed: intakeSource.monitoring_claimed === true,
-      classification: intakeSource.classification,
+      inputKind: intakeSource.input_kind,
     };
     projection.recallSource = source;
   }
@@ -613,12 +628,28 @@ function buildCustody(cg: NonNullable<RawProjection["execution_evidence_as_of"][
     return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
   });
 
+  // The exception is what matters: how many positions are actually
+  // unresolved. Counted from the projection, never asserted.
+  const unconfirmedSites = all.filter(
+    (n) => n.acknowledgment_status !== "CONFIRMED" && n.on_hand_cases > 0,
+  ).length;
+
   return {
     question: `Where is lot ${cg.lot_id} right now?`,
+    headline:
+      `${cg.unique_current_cases} cases traced → ${cg.unconfirmed_cases} unconfirmed ` +
+      `at ${unconfirmedSites} downstream site${unconfirmedSites === 1 ? "" : "s"}`,
+    headlineDetail:
+      `Every recorded hand-off was traversed. ${cg.confirmed_cases} of ` +
+      `${cg.unique_current_cases} cases have a known location and disposition.`,
     totalUnique: cg.unique_current_cases,
+    confirmed: cg.confirmed_cases,
+    unconfirmed: cg.unconfirmed_cases,
+    unconfirmedSites,
     nodes: all.map((n) => ({
       key: n.node_id,
       label: n.name,
+      roleLabel: NODE_ROLE[n.node_id],
       value: n.on_hand_cases,
       status: n.acknowledgment_status === "CONFIRMED" ? "CONFIRMED" : "UNCONFIRMED",
       note: n.acknowledgment_status === "CONFIRMED" ? undefined : "Awaiting acknowledgment",
@@ -656,8 +687,24 @@ function buildRecovery(raw: RawProjection): RecoveryView {
 
   const short = raw.current_day.recovery.shortfalls.find((s) => s.cases != null);
 
+  // Programs preserved = agencies fully allocated. Programs total = every
+  // agency this recovery had to answer for. Both counted from the
+  // projection's own explanation, not asserted.
+  const programsPreserved = e.agencies_allocated;
+  const programsTotal = e.agencies_allocated + e.agencies_short;
+
   return {
     question: "What can actually be replaced from safe stock?",
+    headline:
+      `${e.cases_allocated} safe replacements preserve service for ` +
+      `${programsPreserved} of ${programsTotal} programs`,
+    headlineDetail:
+      e.cases_short > 0
+        ? `The remaining ${e.cases_short}-case gap stays visible rather than ` +
+          "being filled with stock the evidence does not support."
+        : "Every program was covered from confirmed-safe stock.",
+    programsPreserved,
+    programsTotal,
     items,
     safeReplacements: { total: e.cases_allocated, breakdown: byAgency || `${e.agencies_allocated} agencies` },
     shortfall: {

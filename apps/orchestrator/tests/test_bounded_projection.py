@@ -1658,7 +1658,7 @@ def test_recall_source_is_a_delivered_event_not_claimed_monitoring():
     source = project(T(10, 13)).json()["recall_intake_as_of"]["source"]
     assert source["channel"] == "REGULATORY_FEED"
     assert source["notice_format"] == "FDA_FORMAT"
-    assert source["classification"] == "REPRESENTATIVE_REGULATORY_EVENT"
+    assert source["input_kind"] == "REPRESENTATIVE_REGULATORY_EVENT"
     # Full Shelf does not poll or monitor the FDA and must never say it does.
     assert source["monitoring_claimed"] is False
 

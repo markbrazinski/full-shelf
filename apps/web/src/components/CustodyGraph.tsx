@@ -8,7 +8,16 @@ export function CustodyGraph({ custody, onOpenEvidence }: { custody: CustodyView
       <div style={css("display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:14px")}>
         <div>
           <div className="mono" style={css("font-size:11px;letter-spacing:.12em;color:#74848a;font-weight:600")}>CUSTODY IMPACT · NON-GEOGRAPHIC GRAPH</div>
-          <h1 style={css("font-size:24px;font-weight:600;letter-spacing:-.01em;margin-top:5px")}>{custody.question}</h1>
+          {/* The benefit leads. The question it answers is the subhead. */}
+          <h1
+            style={css("font-size:24px;font-weight:600;letter-spacing:-.01em;margin-top:5px")}
+            data-testid="custody-headline"
+          >
+            {custody.headline}
+          </h1>
+          <div style={css("font-size:13px;color:#5c6b71;margin-top:5px;line-height:1.5;max-width:640px")}>
+            {custody.headlineDetail}
+          </div>
         </div>
         <div style={css("text-align:right")}>
           <div className="mono" style={css("font-size:12px;color:#74848a")}>CURRENT-POSITION UNIQUE</div>
@@ -46,7 +55,14 @@ export function CustodyGraph({ custody, onOpenEvidence }: { custody: CustodyView
               return (
                 <div key={n.key} style={css(`position:absolute;left:${pos.left}px;top:${pos.top}px;width:${width}px;background:#fff;border:1px solid ${st.border};border-left:4px solid ${st.accent};border-radius:9px;padding:9px 12px`)}>
                   <div style={css("display:flex;justify-content:space-between;align-items:center")}>
-                    <span style={css("font-size:12px;font-weight:600")}>{n.label}</span>
+                    <span style={css("font-size:12px;font-weight:600")}>
+                      {n.label}
+                      {/* Role is presentation metadata; the name, quantity
+                          and custody state all come from the projection. */}
+                      {n.roleLabel ? (
+                        <span style={css("font-weight:400;color:#74848a")}> · {n.roleLabel}</span>
+                      ) : null}
+                    </span>
                     <span className="mono" style={css("font-size:17px;font-weight:600")}>{n.value}</span>
                   </div>
                   {n.note && <div className="mono" style={css("font-size:11px;color:#a85f12;margin-top:3px")}>{n.note}</div>}

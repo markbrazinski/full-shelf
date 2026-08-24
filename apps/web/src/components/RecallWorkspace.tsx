@@ -1,15 +1,17 @@
 import { css } from "../styles/css";
 import { INTAKE_ST } from "../styles/tokens";
-import type { BeatId, RecallView } from "../types/fullShelf";
+import type { BeatId, RecallSourceView, RecallView } from "../types/fullShelf";
 
 interface Props {
   recall: RecallView;
+  /** What arrived. Absent when the contract did not record a source. */
+  source?: RecallSourceView;
   onToday: () => void;
   onGo: (b: BeatId) => void;
   onOpenEvidence: () => void;
 }
 
-export function RecallWorkspace({ recall, onToday, onGo, onOpenEvidence }: Props) {
+export function RecallWorkspace({ recall, source, onToday, onGo, onOpenEvidence }: Props) {
   const armorPass = recall.modelArmor === "PASS";
   const affectedResolved = recall.affectedCommitments === "O202 · O203";
   return (
@@ -51,6 +53,22 @@ export function RecallWorkspace({ recall, onToday, onGo, onOpenEvidence }: Props
         <div style={css("display:flex;flex-direction:column;gap:14px")}>
           <div style={css("background:#fff;border:1px solid #d5d8d2;border-radius:10px;overflow:hidden")}>
             <div className="mono" style={css("font-size:11px;letter-spacing:.1em;color:#74848a;font-weight:600;padding:13px 16px;border-bottom:1px solid #eceee9")}>SOURCE NOTICE · EXCERPT</div>
+            {/* What arrived, stated plainly. A delivered regulatory event in
+                FDA notice format — never a claim that Full Shelf monitors
+                or polls the FDA. No such integration exists. */}
+            {source ? (
+              <div
+                className="mono"
+                data-testid="recall-source"
+                style={css(
+                  "font-size:11px;color:#16536a;background:#e0eef1;border-bottom:1px solid #bcdae2;" +
+                    "padding:9px 16px;line-height:1.5",
+                )}
+              >
+                Regulatory feed · FDA-format notice · received{" "}
+                {/T(\d{2}:\d{2})/.exec(source.receivedAt)?.[1] ?? source.receivedAt}
+              </div>
+            ) : null}
             <div style={css("padding:14px 16px;background:#faf9f5;border-bottom:1px solid #eceee9")}>
               <div className="mono" style={css("font-size:12px;color:#2b3b41;line-height:1.6")}>{recall.sourceExcerpt}</div>
             </div>

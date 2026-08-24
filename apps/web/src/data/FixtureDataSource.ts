@@ -569,7 +569,13 @@ P.custodyEstablished = {
   incident: { ref: "INC-2231", banner: { tone: "warn", title: "Recall INC-2231 · lot LTC-4471", body: "" }, posture: "PARTIALLY_CONTAINED" },
   custody: {
     question: "Where did lot LTC-4471 move?",
+    headline: "96 cases traced → 8 unconfirmed at 1 downstream site",
+    headlineDetail:
+      "Every recorded hand-off was traversed. 88 of 96 cases have a known location and disposition.",
     totalUnique: 96,
+    confirmed: 88,
+    unconfirmed: 8,
+    unconfirmedSites: 1,
     nodes: [
       { key: "wh", label: "Warehouse", value: 24, status: "CONFIRMED" },
       { key: "t2", label: "Truck 2 · O202", value: 22, status: "BLOCKED" },
@@ -622,6 +628,11 @@ P.governedRecovery = {
   incident: { ref: "INC-2231", banner: { tone: "warn", title: "Recall INC-2231 · lot LTC-4471", body: "" }, posture: "PARTIALLY_CONTAINED" },
   recovery: {
     question: "What is being done, and who authorized it?",
+    headline: "40 safe replacements preserve service for 2 of 3 programs",
+    headlineDetail:
+      "The remaining 20-case gap stays visible rather than being filled with stock the evidence does not support.",
+    programsPreserved: 2,
+    programsTotal: 3,
     items: [
       { text: "Lot-level movement barrier active for LTC-4471", tone: "crit", authorityClass: "DETERMINISTIC_POLICY" },
       { text: "Affected movement (O202, O203) held / stopped", tone: "crit", authorityClass: "COMMITTED_LEDGER" },

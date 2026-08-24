@@ -307,7 +307,7 @@ export interface RawRecallIntake {
     received_at: string;
     /** Always false. Full Shelf does not poll or monitor the FDA. */
     monitoring_claimed: boolean;
-    classification: string;
+    input_kind: string;
   };
 }
 

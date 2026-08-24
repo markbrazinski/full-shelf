@@ -282,7 +282,7 @@
     "incident_id": "INC-2231",
     "source": {
       "channel": "REGULATORY_FEED",
-      "classification": "SYNTHETIC_TEST",
+      "input_kind": "REPRESENTATIVE_REGULATORY_EVENT",
       "monitoring_claimed": false,
       "notice_format": "FDA_FORMAT",
       "received_at": "2026-08-14T09:36:00Z"

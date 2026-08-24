@@ -253,6 +253,8 @@ export interface AgentActivityView {
 export interface CustodyNode {
   key: string;
   label: string;
+  /** Human-readable role, e.g. "Partner pantry". Presentation metadata. */
+  roleLabel?: string;
   value: number;
   status: CustodyStatus;
   note?: string;
@@ -260,7 +262,16 @@ export interface CustodyNode {
 
 export interface CustodyView {
   question: string;
+  /**
+   * The primary message, composed from projected quantities only.
+   * e.g. "96 cases traced -> 8 unconfirmed at 1 downstream site".
+   */
+  headline: string;
+  headlineDetail: string;
   totalUnique: number;
+  confirmed: number;
+  unconfirmed: number;
+  unconfirmedSites: number;
   nodes: CustodyNode[];
   reconciliation: { label: string; value: string; tone: Tone; muted?: boolean }[];
   sumExpression: string;
@@ -277,6 +288,14 @@ export interface RecoveryItem {
 
 export interface RecoveryView {
   question: string;
+  /**
+   * e.g. "40 safe replacements preserve service for 4 of 5 programs".
+   * Every number is projected; only the sentence shape is presentation.
+   */
+  headline: string;
+  headlineDetail: string;
+  programsPreserved: number;
+  programsTotal: number;
   items: RecoveryItem[];
   safeReplacements: { total: number; breakdown: string };
   shortfall: { value: number; agency: string; note: string };
@@ -477,7 +496,7 @@ export interface RecallSourceView {
   receivedAt: string;
   /** Always false. Full Shelf does not poll or monitor the FDA. */
   monitoringClaimed: boolean;
-  classification: string;
+  inputKind: string;
 }
 
 export interface FullShelfProjection {

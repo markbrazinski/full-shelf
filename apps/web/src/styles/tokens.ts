@@ -111,13 +111,25 @@ export const CUS_ST: Record<CustodyStatus, CustodyStatusToken> = {
 };
 
 // Custody graph node positions (presentation geometry only).
+// Keyed by the contract's node ids. The short v4 slugs are kept as aliases so
+// the preserved reference fixture still lays out; a node with no entry falls
+// back to a stacked default rather than being dropped.
 export const CUS_POS: Record<string, { left: number; top: number; width?: number }> = {
-  wh: { left: 212, top: 14 },
-  t2: { left: 212, top: 82 },
-  part: { left: 212, top: 150 },
-  dr: { left: 212, top: 218 },
-  a01: { left: 490, top: 286, width: 180 },
-  s01: { left: 490, top: 372, width: 180 },
+  // Column 1 clears the lot-source card (left:0, width:146). Column 3 stays
+  // inside the 900px panel so the downstream site is never clipped.
+  "N-WH": { left: 168, top: 178, width: 172 },
+  "N-TR2": { left: 372, top: 20, width: 172 },
+  "N-STG": { left: 372, top: 106, width: 172 },
+  "N-RESC": { left: 372, top: 192, width: 172 },
+  "N-AG01": { left: 372, top: 278, width: 172 },
+  "N-ST01": { left: 372, top: 372, width: 172 },
+  // v4 reference aliases
+  wh: { left: 168, top: 178, width: 172 },
+  t2: { left: 372, top: 20, width: 172 },
+  part: { left: 372, top: 106, width: 172 },
+  dr: { left: 372, top: 192, width: 172 },
+  a01: { left: 372, top: 278, width: 172 },
+  s01: { left: 372, top: 372, width: 172 },
 };
 
 export interface ConnToken {

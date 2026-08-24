@@ -476,6 +476,7 @@ export default function App() {
                     {incidentTab === "scope" && p.recall ? (
                       <RecallWorkspace
                         recall={p.recall}
+                        source={p.recallSource}
                         onToday={() => setView("today")}
                         onGo={() => setView("today")}
                         onOpenEvidence={() => setExecOpen(true)}
