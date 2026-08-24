@@ -69,6 +69,12 @@ export interface RawRefusal {
   mutations_applied: number;
   receipt_id: string;
   committed_at: string;
+  /** What the coordinator asked for: a closure eligibility check. */
+  requested_action: string;
+  /** The ledger command that answered it: RECORD_REFUSAL. */
+  policy_action: string;
+  requested_by_role: string | null;
+  decided_by: string;
 }
 
 export interface RawIncident {
@@ -164,6 +170,36 @@ export interface RawDispatch {
   sequence_basis: string;
 }
 
+export interface RawRepairProposalDiff {
+  reroute_order_id: string;
+  reroute_cases: number;
+  reroute_target_vehicle: string;
+  pickup_order_id: string;
+  pickup_cases: number;
+}
+
+export interface RawRepairProposal {
+  proposal_id: string | null;
+  source_event_id: string | null;
+  plan_id: string | null;
+  source_revision: string | null;
+  proposed_revision: string | null;
+  failed_vehicle_id: string | null;
+  plan_diff: RawRepairProposalDiff | null;
+  plan_diff_hash: string | null;
+  absorbing_vehicle: {
+    vehicle_id: string | null;
+    capacity_cases: number | null;
+    committed_cases: number | null;
+    projected_cases: number | null;
+  } | null;
+  /** Always AGENT_PROPOSAL. Never an authorization. */
+  authority: string;
+  approval_required: boolean;
+  /** Always false. Approval runs through verified-human -> KMS -> ledger. */
+  activation_supported: boolean;
+}
+
 export interface RawCurrentDay {
   plan_id: string;
   plan_revisions: RawPlanRevision[];
@@ -175,6 +211,7 @@ export interface RawCurrentDay {
   plan_constraints: RawPlanConstraint[];
   recovery: RawRecovery;
   dispatch: RawDispatch | null;
+  repair_proposal: RawRepairProposal | null;
 }
 
 export interface RawAgent {
@@ -264,6 +301,14 @@ export interface RawRecallIntakeStep {
 export interface RawRecallIntake {
   incident_id: string;
   steps: RawRecallIntakeStep[];
+  source?: {
+    channel: string;
+    notice_format: string;
+    received_at: string;
+    /** Always false. Full Shelf does not poll or monitor the FDA. */
+    monitoring_claimed: boolean;
+    classification: string;
+  };
 }
 
 export interface RawCarryForwardObligation {

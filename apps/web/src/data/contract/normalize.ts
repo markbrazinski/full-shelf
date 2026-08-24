@@ -39,6 +39,8 @@ import {
   type TomorrowView,
   type CandidateVehicle,
   type IncidentSummary,
+  type RepairProposalView,
+  type RecallSourceView,
 } from "../../types/fullShelf";
 import type {
   RawAgent,
@@ -222,6 +224,49 @@ export function normalize(raw: RawProjection, beatId: BeatId): FullShelfProjecti
     },
     omittedFields,
   };
+
+  // A pending repair proposal. Bound straight from the contract: the diff
+  // shown to an operator is the diff KMS will sign.
+  const rp = cd.repair_proposal;
+  if (rp && rp.plan_diff && rp.proposal_id) {
+    const proposal: RepairProposalView = {
+      proposalId: rp.proposal_id,
+      sourceEventId: rp.source_event_id,
+      planId: rp.plan_id,
+      sourceRevision: rp.source_revision,
+      proposedRevision: rp.proposed_revision,
+      failedVehicleId: rp.failed_vehicle_id,
+      rerouteOrderId: rp.plan_diff.reroute_order_id,
+      rerouteCases: rp.plan_diff.reroute_cases,
+      rerouteTargetVehicle: rp.plan_diff.reroute_target_vehicle,
+      pickupOrderId: rp.plan_diff.pickup_order_id,
+      pickupCases: rp.plan_diff.pickup_cases,
+      planDiffHash: rp.plan_diff_hash,
+      absorbing: {
+        vehicleId: rp.absorbing_vehicle?.vehicle_id ?? null,
+        capacityCases: rp.absorbing_vehicle?.capacity_cases ?? null,
+        committedCases: rp.absorbing_vehicle?.committed_cases ?? null,
+        projectedCases: rp.absorbing_vehicle?.projected_cases ?? null,
+      },
+      authority: rp.authority,
+      approvalRequired: rp.approval_required,
+      // Read from the contract, never assumed.
+      activationSupported: rp.activation_supported === true,
+    };
+    projection.repairProposal = proposal;
+  }
+
+  const intakeSource = raw.recall_intake_as_of?.source;
+  if (intakeSource) {
+    const source: RecallSourceView = {
+      channel: intakeSource.channel,
+      noticeFormat: intakeSource.notice_format,
+      receivedAt: intakeSource.received_at,
+      monitoringClaimed: intakeSource.monitoring_claimed === true,
+      classification: intakeSource.classification,
+    };
+    projection.recallSource = source;
+  }
 
   const cdv = projection.currentDay;
 

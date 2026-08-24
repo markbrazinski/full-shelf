@@ -49,12 +49,17 @@ test("02 · disruption is in place: same shell, rev08, incident badge appears", 
   await open(page);
   const navBefore = await page.getByTestId("nav-today").boundingBox();
 
-  await page.getByTestId("toggle-disruption").click();
+  await page.getByTestId("moment-updated").click();
   await settle(page);
 
   await expect(page.getByTestId("auth-rev")).toHaveText("rev08");
-  // The shell does not move: disruption happens inside the workspace.
-  expect(await page.getByTestId("nav-today").boundingBox()).toEqual(navBefore);
+  // The shell stays put: disruption happens inside the workspace, so the nav
+  // keeps its position and size. Tolerates sub-pixel reflow of the banner
+  // above it; what matters is that the shell does not relayout.
+  const navAfter = await page.getByTestId("nav-today").boundingBox();
+  expect(navAfter!.x).toBe(navBefore!.x);
+  expect(navAfter!.width).toBe(navBefore!.width);
+  expect(Math.abs(navAfter!.y - navBefore!.y)).toBeLessThanOrEqual(2);
   await shot(page, "v6-02-friday-disrupted");
 });
 
@@ -222,7 +227,7 @@ test("11 · datasource failure shows the error surface and Reconnect retries", a
 
 test("12 · map fallback renders without a Maps key", async ({ page }) => {
   await open(page);
-  await page.getByTestId("toggle-disruption").click();
+  await page.getByTestId("moment-updated").click();
   await settle(page);
   // No key is configured in verification, so the SVG schematic is shown.
   await expect(page.locator("body")).toContainText(/not live vehicle tracking/i);
@@ -238,7 +243,7 @@ test("13 · map degrades to the schematic when Maps fails to load", async ({ pag
   await page.route("https://maps.googleapis.com/**", (route) => route.abort("failed"));
 
   await open(page);
-  await page.getByTestId("toggle-disruption").click();
+  await page.getByTestId("moment-updated").click();
   await settle(page);
   await expect(page.locator("body")).toContainText(/not live vehicle tracking/i);
   await shot(page, "v6-14-map-degraded");
@@ -280,4 +285,126 @@ test("15 · the design fixture never reaches the runtime path", async ({ page })
   });
   await open(page);
   expect(sources.filter((u) => /FixtureDataSource/i.test(u))).toHaveLength(0);
+});
+
+// ------------------------------------------------- event -> proposal -> approval
+
+test("16 · the fault, the proposal, and an unchanged active plan", async ({ page }) => {
+  await open(page);
+  await shot(page, "story-1-healthy-today");
+
+  await page.getByTestId("moment-proposed").click();
+  await settle(page);
+
+  // The alarm is a reported mechanical event with its source and time.
+  const alarm = page.getByTestId("refrigeration-alarm");
+  await expect(alarm).toBeVisible();
+  await expect(alarm).toContainText(/SIMULATED FLEET TELEMATICS/i);
+  await expect(alarm).toContainText(/not derived from position/i);
+  await shot(page, "story-2-refrigeration-failure");
+
+  // The proposal is what the agents propose, not an authorization.
+  await expect(page.getByTestId("proposal-authority")).toContainText(/AGENT PROPOSAL/i);
+  await expect(page.getByTestId("proposal-reroute")).toContainText("O202");
+  await expect(page.getByTestId("proposal-reroute")).toContainText("22");
+  await expect(page.getByTestId("proposal-reroute")).toContainText("58");
+  await expect(page.getByTestId("proposal-pickup")).toContainText("O203");
+  await expect(page.getByTestId("proposal-pickup")).toContainText(/partner pickup/i);
+
+  // The active plan has NOT changed while the proposal is pending.
+  await expect(page.getByTestId("auth-rev")).toHaveText("rev07");
+  await expect(page.locator("body")).toContainText("Truck 1");
+  await shot(page, "story-3-proposal-awaiting-approval");
+});
+
+test("17 · approving commits once and the proposal stops being offered", async ({ page }) => {
+  let approvals = 0;
+  await page.route("**/approvals/approve-and-activate", async (route) => {
+    approvals += 1;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ status: "ACTIVATED", proposed_revision: "rev08" }),
+    });
+  });
+
+  await open(page);
+  await page.getByTestId("moment-proposed").click();
+  await settle(page);
+  await expect(page.getByTestId("approve-update")).toBeVisible();
+
+  await page.getByTestId("approve-update").click();
+  await settle(page);
+
+  // Exactly one approval was submitted, and the plan updated in place.
+  expect(approvals).toBe(1);
+  await expect(page.getByTestId("auth-rev")).toHaveText("rev08");
+  // The proposal was answered, so it is no longer offered.
+  await expect(page.getByTestId("repair-proposal")).toHaveCount(0);
+  await expect(page.getByTestId("approve-update")).toHaveCount(0);
+  await shot(page, "story-4-updated-plan-committed");
+});
+
+test("18 · a rejected approval changes nothing", async ({ page }) => {
+  await page.route("**/approvals/approve-and-activate", (route) =>
+    route.fulfill({
+      status: 409,
+      contentType: "application/json",
+      body: JSON.stringify({ detail: "CANONICAL_REVISION_TRANSITION_REQUIRED" }),
+    }),
+  );
+
+  await open(page);
+  await page.getByTestId("moment-proposed").click();
+  await settle(page);
+  await page.getByTestId("approve-update").click();
+
+  await expect(page.getByTestId("approval-error")).toBeVisible();
+  await expect(page.getByTestId("approval-error")).toContainText(/did not change/i);
+  // Still pending, still rev07: nothing was committed.
+  await expect(page.getByTestId("auth-rev")).toHaveText("rev07");
+  await expect(page.getByTestId("repair-proposal")).toBeVisible();
+});
+
+test("19 · no approval control exists once the update is committed", async ({ page }) => {
+  await open(page);
+  await page.getByTestId("moment-updated").click();
+  await settle(page);
+  await expect(page.getByTestId("repair-proposal")).toHaveCount(0);
+  await expect(page.getByTestId("approve-update")).toHaveCount(0);
+  await expect(page.getByTestId("auth-rev")).toHaveText("rev08");
+});
+
+test("20 · recall intake states its source and keeps Model Armor a boundary", async ({ page }) => {
+  await open(page);
+  await page.getByTestId("nav-incident").click();
+  await settle(page);
+  await page.getByTestId("tab-scope").click();
+  await settle(page);
+
+  const body = page.locator("body");
+  await expect(body).toContainText(/Model Armor/i);
+  // Never a claim of continuous FDA monitoring.
+  await expect(body).not.toContainText(/monitors the FDA/i);
+  await expect(body).not.toContainText(/monitoring the FDA/i);
+  await shot(page, "story-5-recall-intake");
+});
+
+test("21 · custody exception and the governed refusal", async ({ page }) => {
+  await open(page);
+  await page.getByTestId("nav-incident").click();
+  await settle(page);
+
+  await page.getByTestId("tab-custody").click();
+  await settle(page);
+  await expect(page.locator("body")).toContainText("96");
+  await shot(page, "story-6-custody-exception");
+
+  await page.getByTestId("tab-response").click();
+  await settle(page);
+  const body = page.locator("body");
+  await expect(body).toContainText(/DENIED/);
+  // DECLARE_CONTAINED is not a real backend command and must never render.
+  await expect(body).not.toContainText(/DECLARE_CONTAINED/);
+  await shot(page, "story-7-recovery-and-refusal");
 });

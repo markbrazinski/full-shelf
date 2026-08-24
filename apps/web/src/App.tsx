@@ -36,6 +36,7 @@ import { ExecutionRecordDrawer } from "./components/ExecutionRecordDrawer";
 import { SaturdayCandidatePlan } from "./components/SaturdayCandidatePlan";
 import { ConnectionError } from "./components/ConnectionError";
 import { ActivitySidecar } from "./components/ActivitySidecar";
+import { RepairProposal } from "./components/RepairProposal";
 
 const dataSource: FullShelfDataSource = createDataSource();
 const MAPS_API_KEY = googleMapsApiKey();
@@ -48,13 +49,22 @@ type Day = "fri" | "sat";
 type IncidentTab = "scope" | "custody" | "response" | "evidence";
 
 /** Which boundary each surface reads. Every value is an explicit as_of. */
+// Three Friday moments: the healthy plan, the moment the fault has been
+// reported and a proposal is pending approval, and the committed update.
 const FRIDAY_HEALTHY: BeatId = "healthy";
+const FRIDAY_PROPOSED: BeatId = "revisionReview";
 const FRIDAY_DISRUPTED: BeatId = "rev08Active";
 const SATURDAY: BeatId = "tomorrowsDraft";
 // Each tab reads the first boundary at which its evidence is actually
 // committed. Custody reconciliation commits at 10:10, not at the 10:05
 // beat label: asking earlier truthfully returns
 // custody_graph = NOT_COMMITTED_AS_OF_BOUNDARY.
+// Scope the approval to the tenant and day this client is bound to. The
+// operator identity is NEVER hardcoded: it comes from the verified token the
+// orchestrator checks, not from anything here.
+const TENANT_ID = "east-bay-food-bank";
+const OPERATING_DAY = "2026-08-14";
+
 const INCIDENT_TAB_BEAT: Record<IncidentTab, BeatId> = {
   scope: "recallProcessing",
   custody: "governedRecovery",
@@ -65,7 +75,7 @@ const INCIDENT_TAB_BEAT: Record<IncidentTab, BeatId> = {
 export default function App() {
   const [view, setView] = useState<View>("today");
   const [day, setDay] = useState<Day>("fri");
-  const [disrupted, setDisrupted] = useState(false);
+  const [friday, setFriday] = useState<BeatId>(FRIDAY_HEALTHY);
   const [incidentTab, setIncidentTab] = useState<IncidentTab>("scope");
   const [projection, setProjection] = useState<FullShelfProjection | null>(null);
   const [loading, setLoading] = useState(true);
@@ -81,9 +91,7 @@ export default function App() {
         ? INCIDENT_TAB_BEAT[incidentTab]
         : day === "sat"
           ? SATURDAY
-          : disrupted
-            ? FRIDAY_DISRUPTED
-            : FRIDAY_HEALTHY;
+          : friday;
 
   const load = useCallback((next: BeatId) => {
     pending.current = next;
@@ -112,6 +120,37 @@ export default function App() {
 
   /** A real retry against the same boundary, not a cosmetic reset. */
   const reconnect = useCallback(() => load(beat), [beat, load]);
+
+  /**
+   * Approve the pending proposal through the real verified-human -> KMS ->
+   * ledger path, then reload this boundary exactly once. On success the
+   * proposal disappears because the revision it repairs is no longer active;
+   * on failure the error surfaces and nothing changed.
+   */
+  const approveRepair = useCallback(async () => {
+    const proposal = projection?.repairProposal;
+    if (!proposal?.planId || !proposal.sourceRevision || !proposal.proposedRevision) {
+      throw new Error("PROPOSAL_INCOMPLETE — nothing was submitted.");
+    }
+    await dataSource.approveRepair({
+      proposalId: proposal.proposalId,
+      tenantId: TENANT_ID,
+      operatingDay: OPERATING_DAY,
+      incidentId: projection?.incidentSummary.incidents[0]?.id ?? "",
+      planId: proposal.planId,
+      sourceRevision: proposal.sourceRevision,
+      proposedRevision: proposal.proposedRevision,
+      planDiff: {
+        rerouteOrderId: proposal.rerouteOrderId,
+        rerouteCases: proposal.rerouteCases,
+        rerouteTargetVehicle: proposal.rerouteTargetVehicle,
+        pickupOrderId: proposal.pickupOrderId,
+        pickupCases: proposal.pickupCases,
+      },
+    });
+    // One reload after commitment: the map and manifests update once.
+    setFriday(FRIDAY_DISRUPTED);
+  }, [projection, load]);
 
   const p = projection;
   const activeIncidents = p?.incidentSummary.activeCount ?? 0;
@@ -296,17 +335,32 @@ export default function App() {
                       </button>
                     </div>
                     {day === "fri" ? (
-                      <button
-                        type="button"
-                        onClick={() => setDisrupted((d) => !d)}
-                        data-testid="toggle-disruption"
-                        style={css(
-                          "background:#fff;border:1px solid #dfe4e0;color:#3a4a50;border-radius:7px;" +
-                            "padding:6px 11px;font-size:11px;font-weight:600;cursor:pointer",
-                        )}
-                      >
-                        {disrupted ? "Show 08:05 · healthy" : "Show 08:24 · after disruption"}
-                      </button>
+                      <div style={css("display:flex;background:#e2e6df;border-radius:9px;padding:3px")}>
+                        {(
+                          [
+                            [FRIDAY_HEALTHY, "08:05 · healthy", "moment-healthy"],
+                            [FRIDAY_PROPOSED, "08:21 · fault reported", "moment-proposed"],
+                            [FRIDAY_DISRUPTED, "08:24 · updated plan", "moment-updated"],
+                          ] as [BeatId, string, string][]
+                        ).map(([id, label, tid]) => {
+                          const on = friday === id;
+                          return (
+                            <button
+                              key={id}
+                              type="button"
+                              onClick={() => setFriday(id)}
+                              aria-pressed={on}
+                              data-testid={tid}
+                              style={css(
+                                `background:${on ? "#16323b" : "transparent"};color:${on ? "#eef4f4" : "#5c6b71"};` +
+                                  "border:none;border-radius:7px;padding:6px 11px;font-size:11px;font-weight:600;cursor:pointer",
+                              )}
+                            >
+                              {label}
+                            </button>
+                          );
+                        })}
+                      </div>
                     ) : null}
                   </div>
 
@@ -337,6 +391,17 @@ export default function App() {
                     <div style={css("margin-top:12px;display:flex;flex-direction:column;gap:14px")}>
                       {p.agentActivity ? (
                         <AgentActivityRail view={p.agentActivity} onOpenEvidence={() => setExecOpen(true)} />
+                      ) : null}
+                      {p.repairProposal ? (
+                        <RepairProposal
+                          proposal={p.repairProposal}
+                          alarm={{
+                            vehicleId: p.repairProposal.failedVehicleId,
+                            receivedAt: p.currentDay.clock,
+                            source: "SIMULATED FLEET TELEMATICS",
+                          }}
+                          onApprove={approveRepair}
+                        />
                       ) : null}
                       {p.currentDay.commitments ? (
                         <CommitmentsBoard

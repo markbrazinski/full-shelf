@@ -858,6 +858,14 @@ export function createFixtureDataSource(opts: { latencyMs?: number } = {}): Full
         }, latencyMs);
       });
     },
+
+    approveRepair(): Promise<void> {
+      // Reference material has no ledger behind it. Refusing is the honest
+      // answer: a fixture must never simulate a committed approval.
+      return Promise.reject(
+        new Error("FIXTURE_DATA_SOURCE_CANNOT_APPROVE — no ledger is bound."),
+      );
+    },
   };
 }
 

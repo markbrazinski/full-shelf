@@ -439,11 +439,54 @@ export interface IncidentSummary {
   }[];
 }
 
+/**
+ * A pending repair proposal: what the agents propose, not what anyone
+ * authorized. Present only while the plan it repairs is still active.
+ *
+ * `activationSupported` is always false. Approving runs the existing
+ * verified-human -> KMS -> ledger path; this object never activates anything.
+ */
+export interface RepairProposalView {
+  proposalId: string;
+  sourceEventId: string | null;
+  planId: string | null;
+  /** Raw revision ids stay for evidence surfaces; primary UI says "Active plan". */
+  sourceRevision: string | null;
+  proposedRevision: string | null;
+  failedVehicleId: string | null;
+  rerouteOrderId: string;
+  rerouteCases: number;
+  rerouteTargetVehicle: string;
+  pickupOrderId: string;
+  pickupCases: number;
+  planDiffHash: string | null;
+  absorbing: {
+    vehicleId: string | null;
+    capacityCases: number | null;
+    committedCases: number | null;
+    projectedCases: number | null;
+  };
+  authority: string;
+  approvalRequired: boolean;
+  activationSupported: boolean;
+}
+
+export interface RecallSourceView {
+  channel: string;
+  noticeFormat: string;
+  receivedAt: string;
+  /** Always false. Full Shelf does not poll or monitor the FDA. */
+  monitoringClaimed: boolean;
+  classification: string;
+}
+
 export interface FullShelfProjection {
   beatId: BeatId;
   asOf: string;
   dataMode: DataMode;
   incidentSummary: IncidentSummary;
+  repairProposal?: RepairProposalView;
+  recallSource?: RecallSourceView;
   currentDay: CurrentDayView;
   incident?: IncidentView;
   recall?: RecallView;

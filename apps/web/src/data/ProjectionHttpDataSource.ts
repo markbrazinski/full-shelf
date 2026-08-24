@@ -7,12 +7,75 @@
 // =====================================================================
 
 import type { BeatId, DataMode, FullShelfProjection } from "../types/fullShelf";
-import type { FullShelfDataSource } from "./FullShelfDataSource";
+import type { FullShelfDataSource, RepairApprovalRequest } from "./FullShelfDataSource";
 import { boundaryFor } from "./contract/beats";
 import { normalize } from "./contract/normalize";
 import { ContractViolation, validateProjection } from "./contract/validate";
 
 const PROJECTION_PATH = "/api/v1/projections/demo-beats";
+// The existing verified-human approval route. There is deliberately no
+// second approval surface: one authority path, one place to audit.
+const APPROVAL_PATH = "/api/v1/orchestrator/approvals/approve-and-activate";
+
+/** POST the approval and surface any rejection verbatim. */
+async function postApproval(
+  request: RepairApprovalRequest,
+  opts: Options,
+): Promise<void> {
+  const url = new URL(APPROVAL_PATH, opts.baseUrl);
+  let res: Response;
+  try {
+    res = await fetch(url.toString(), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        ...(opts.authToken ? { Authorization: `Bearer ${opts.authToken}` } : {}),
+      },
+      credentials: opts.credentials ?? "omit",
+      // Identity is derived from the proposal, so a browser cannot approve
+      // a diff the agents never proposed. The orchestrator re-verifies the
+      // operator token and the ledger re-signs the diff independently.
+      body: JSON.stringify({
+        command_id: `CMD-APPROVE-${request.proposalId}`.slice(0, 48),
+        idempotency_key:
+          `${request.tenantId}:${request.planId}:${request.proposedRevision}:approve`,
+        tenant_id: request.tenantId,
+        operating_day: request.operatingDay,
+        incident_id: request.incidentId,
+        plan_id: request.planId,
+        source_revision: request.sourceRevision,
+        proposed_revision: request.proposedRevision,
+        approval_id: `APR-${request.proposedRevision}`,
+        expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
+        plan_diff: {
+          reroute_order_id: request.planDiff.rerouteOrderId,
+          reroute_cases: request.planDiff.rerouteCases,
+          reroute_target_vehicle: request.planDiff.rerouteTargetVehicle,
+          pickup_order_id: request.planDiff.pickupOrderId,
+          pickup_cases: request.planDiff.pickupCases,
+        },
+      }),
+    });
+  } catch (e) {
+    throw new ProjectionUnavailable(
+      `Cannot reach the approval service at ${opts.baseUrl}. Nothing was committed.`,
+      e,
+    );
+  }
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`;
+    try {
+      const body = (await res.json()) as { detail?: unknown };
+      if (body?.detail) detail = typeof body.detail === "string"
+        ? body.detail
+        : JSON.stringify(body.detail);
+    } catch {
+      /* non-JSON error body; the status is enough */
+    }
+    throw new ProjectionUnavailable(`Approval rejected: ${detail}`);
+  }
+}
 
 export class ProjectionUnavailable extends Error {
   constructor(message: string, public readonly cause?: unknown) {
@@ -94,6 +157,10 @@ export class ReplayHttpDataSource implements FullShelfDataSource {
       credentials: "omit",
     });
   }
+
+  approveRepair(request: RepairApprovalRequest): Promise<void> {
+    return postApproval(request, { baseUrl: this.baseUrl, credentials: "omit" });
+  }
 }
 
 /**
@@ -105,6 +172,14 @@ export class LiveOrchestratorDataSource implements FullShelfDataSource {
 
   getProjection(beatId: BeatId): Promise<FullShelfProjection> {
     return fetchProjection(beatId, {
+      baseUrl: this.baseUrl,
+      credentials: "include",
+      authToken: this.authToken,
+    });
+  }
+
+  approveRepair(request: RepairApprovalRequest): Promise<void> {
+    return postApproval(request, {
       baseUrl: this.baseUrl,
       credentials: "include",
       authToken: this.authToken,
