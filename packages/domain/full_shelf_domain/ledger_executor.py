@@ -16,6 +16,7 @@ from .ledger_commands import (
     ActivateApprovedRepairPlanPayload,
     ActivateMovementBarrierPayload,
     CreateNextDayDraftPayload,
+    PersistRepairProposalPayload,
     InvalidatePlanPayload,
     LedgerCommand,
     LedgerCommandType,
@@ -72,6 +73,7 @@ class SpannerLedgerCommandExecutor:
         LedgerCommandType.ACTIVATE_MOVEMENT_BARRIER: {"INCIDENT_COORDINATOR"},
         LedgerCommandType.RECORD_REFUSAL: {"INCIDENT_COORDINATOR"},
         LedgerCommandType.CREATE_NEXT_DAY_DRAFT: {"FULFILLMENT_RECOVERY_PLANNER"},
+        LedgerCommandType.PERSIST_REPAIR_PROPOSAL: {"FULFILLMENT_RECOVERY_PLANNER"},
     }
 
     def __init__(self, database: Any, *, allowed_tenant_ids: set[str]) -> None:
@@ -965,6 +967,86 @@ class SpannerLedgerCommandExecutor:
                     ),
                     spanner.COMMIT_TIMESTAMP,
                 ]],
+            )
+            return 2
+
+        if command.command_type is LedgerCommandType.PERSIST_REPAIR_PROPOSAL:
+            assert isinstance(payload, PersistRepairProposalPayload)
+            # A proposal is only meaningful against the revision that is
+            # actually active. Binding to it here means a proposal cannot be
+            # replayed onto a plan that has already moved on.
+            if payload.source_revision != active_revision:
+                raise ValueError("PROPOSAL_SOURCE_REVISION_NOT_ACTIVE")
+            source_status = self._revision_status(
+                transaction, command.tenant_id, payload.source_revision
+            )
+            if source_status != "ACTIVE":
+                raise ValueError("PROPOSAL_REQUIRES_AN_ACTIVE_SOURCE_REVISION")
+            # The proposed revision must not already exist. If it does, this
+            # is an activation attempt wearing a proposal's clothes.
+            if self._revision_status(
+                transaction, command.tenant_id, payload.proposed_revision
+            ) is not None:
+                raise ValueError("PROPOSED_REVISION_ALREADY_EXISTS")
+
+            # Written as a constraint on the SOURCE revision. Nothing here
+            # inserts a PlanRevision, mutates Orders, or touches Vehicles, so
+            # the active plan is untouched and stays authoritative.
+            diff = payload.plan_diff
+            transaction.insert(
+                table="PlanConstraints",
+                columns=["tenant_id", "plan_id", "revision", "constraint_type",
+                         "subject_id", "details", "priority", "created_at"],
+                values=[[
+                    command.tenant_id, payload.plan_id, payload.source_revision,
+                    "REPAIR_PROPOSAL", payload.proposal_id,
+                    json.dumps({
+                        "proposal_id": payload.proposal_id,
+                        "source_event_id": payload.source_event_id,
+                        "proposed_revision": payload.proposed_revision,
+                        "failed_vehicle_id": payload.vehicle_id,
+                        "absorbing_vehicle_capacity_cases":
+                            payload.absorbing_vehicle_capacity_cases,
+                        "absorbing_vehicle_committed_cases":
+                            payload.absorbing_vehicle_committed_cases,
+                        "absorbing_vehicle_projected_cases":
+                            payload.absorbing_vehicle_committed_cases + diff.reroute_cases,
+                        "plan_diff": {
+                            "reroute_order_id": diff.reroute_order_id,
+                            "reroute_cases": diff.reroute_cases,
+                            "reroute_target_vehicle": diff.reroute_target_vehicle,
+                            "pickup_order_id": diff.pickup_order_id,
+                            "pickup_cases": diff.pickup_cases,
+                        },
+                        # The hash an approval must reproduce. If the operator
+                        # approves something else, the hashes diverge and the
+                        # approval fails closed.
+                        "plan_diff_hash": compute_plan_diff_hash(PlanDiff(
+                            source_revision=payload.source_revision,
+                            proposed_revision=payload.proposed_revision,
+                            reroute_order_id=diff.reroute_order_id,
+                            reroute_cases=diff.reroute_cases,
+                            reroute_target_vehicle=diff.reroute_target_vehicle,
+                            pickup_order_id=diff.pickup_order_id,
+                            pickup_cases=diff.pickup_cases,
+                            plan_diff_hash="",
+                        )),
+                        "authority": "AGENT_PROPOSAL",
+                        "activation_supported": False,
+                    }, sort_keys=True, separators=(",", ":")),
+                    1, spanner.COMMIT_TIMESTAMP,
+                ]],
+            )
+            transaction.insert(
+                table="InboundEvents",
+                columns=["tenant_id", "source_event_id", "event_type", "status",
+                         "payload", "occurred_at"],
+                values=[[command.tenant_id, payload.source_event_id,
+                         "VEHICLE_REFRIGERATION_FAILURE", "ACCEPTED",
+                         json.dumps({"proposal_id": payload.proposal_id,
+                                     "vehicle_id": payload.vehicle_id,
+                                     "plan_id": payload.plan_id}, sort_keys=True),
+                         spanner.COMMIT_TIMESTAMP]],
             )
             return 2
 

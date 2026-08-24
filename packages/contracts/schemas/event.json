@@ -4,18 +4,45 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "event_id": { "type": "string", "minLength": 1 },
+    "event_id": {
+      "type": "string",
+      "minLength": 1
+    },
     "event_type": {
       "type": "string",
       "enum": [
-        "TRUCK_BREAKDOWN", "RECALL_NOTICE_RECEIVED", "APPROVAL_SUBMITTED",
-        "PARTNER_ACKNOWLEDGED", "PLAN_DAY_REQUESTED", "PLAN_NEXT_DAY_REQUESTED"
+        "TRUCK_BREAKDOWN",
+        "RECALL_NOTICE_RECEIVED",
+        "APPROVAL_SUBMITTED",
+        "PARTNER_ACKNOWLEDGED",
+        "PLAN_DAY_REQUESTED",
+        "PLAN_NEXT_DAY_REQUESTED",
+        "VEHICLE_REFRIGERATION_FAILURE",
+        "REGULATORY_RECALL_NOTICE"
       ]
     },
-    "tenant_id": { "type": "string", "minLength": 1 },
-    "timestamp": { "type": "string", "format": "date-time" },
-    "payload": { "type": "object" },
-    "trace_id": { "type": "string", "pattern": "^[0-9a-f]{32}$" }
+    "tenant_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "payload": {
+      "type": "object"
+    },
+    "trace_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{32}$"
+    }
   },
-  "required": ["event_id", "event_type", "tenant_id", "timestamp", "payload", "trace_id"]
+  "required": [
+    "event_id",
+    "event_type",
+    "tenant_id",
+    "timestamp",
+    "payload",
+    "trace_id"
+  ]
 }

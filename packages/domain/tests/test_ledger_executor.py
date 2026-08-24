@@ -934,3 +934,221 @@ def test_candidate_order_ids_are_deterministic_across_regeneration():
     first = _candidate_command().request_fingerprint()
     second = _candidate_command().request_fingerprint()
     assert first == second
+
+
+# ---------------------------------------------------------------------------
+# Repair proposal: what the agents propose, never what anyone authorized.
+# ---------------------------------------------------------------------------
+
+def _proposal_transaction(active="rev07", statuses=None):
+    """Authoritative state a repair proposal is validated against."""
+    known = statuses if statuses is not None else {"rev07": "ACTIVE"}
+
+    class ProposalTransaction(FakeTransaction):
+        def __init__(self):
+            super().__init__(active_revision=active)
+
+        def execute_sql(self, sql, params, param_types):
+            if "idempotency_key" in sql:
+                return []
+            if "SELECT status FROM PlanRevisions" in sql:
+                status = known.get(params.get("revision"))
+                return [(status,)] if status else []
+            if "FROM PlanRevisions" in sql:
+                return [(self.active_revision,)] if self.active_revision else []
+            raise AssertionError(f"Unexpected SQL: {sql}")
+
+    return ProposalTransaction()
+
+
+def _proposal_payload(**overrides):
+    diff = {
+        "reroute_order_id": "O202", "reroute_cases": 22,
+        "reroute_target_vehicle": "TRUCK-02",
+        "pickup_order_id": "O203", "pickup_cases": 20,
+    }
+    diff.update(overrides.pop("plan_diff", {}))
+    payload = {
+        "proposal_id": "PROP-ALT-1",
+        "source_event_id": "telematics-evt-alt-1",
+        "plan_id": "PLAN-ALT",
+        "source_revision": "rev07",
+        "proposed_revision": "rev08",
+        "vehicle_id": "TRUCK-01",
+        "absorbing_vehicle_capacity_cases": 60,
+        "absorbing_vehicle_committed_cases": 36,
+        "plan_diff": diff,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _proposal_command(**overrides):
+    return coordinator_command(
+        command_id="CMD-PROPOSAL-ALT",
+        idempotency_key="audit:PLAN-ALT:rev07:repair-proposal",
+        agent_role="FULFILLMENT_RECOVERY_PLANNER",
+        command_type=LedgerCommandType.PERSIST_REPAIR_PROPOSAL,
+        expected_plan_revision="rev07",
+        payload=_proposal_payload(**overrides),
+    )
+
+
+def _execute_proposal(transaction, **overrides):
+    return SpannerLedgerCommandExecutor(
+        FakeDatabase(transaction), allowed_tenant_ids={"audit-tenant"}
+    ).execute(_proposal_command(**overrides), IDENTITY)
+
+
+def test_repair_proposal_never_touches_the_active_plan():
+    """The whole point: a proposal is not an activation."""
+    transaction = _proposal_transaction()
+    _execute_proposal(transaction)
+
+    tables = [item["table"] for item in transaction.inserts]
+    # No PlanRevisions row, no Orders row, no Vehicles update: the active
+    # plan is untouched and rev07 stays authoritative.
+    assert "PlanRevisions" not in tables
+    assert "Orders" not in tables
+    assert transaction.updates == []
+    assert set(tables) == {"PlanConstraints", "InboundEvents", "Receipts"}
+
+
+def test_repair_proposal_is_written_against_the_revision_it_repairs():
+    transaction = _proposal_transaction()
+    _execute_proposal(transaction)
+    constraint = next(i for i in transaction.inserts if i["table"] == "PlanConstraints")
+    row = constraint["values"][0]
+    assert row[2] == "rev07"           # written on the SOURCE revision
+    assert row[3] == "REPAIR_PROPOSAL"
+    detail = json.loads(row[5])
+    assert detail["authority"] == "AGENT_PROPOSAL"
+    assert detail["activation_supported"] is False
+    assert detail["proposed_revision"] == "rev08"
+
+
+def test_repair_proposal_binds_the_exact_diff_the_approval_will_sign():
+    """Proposal and approval must hash the same diff, or approval fails."""
+    from full_shelf_domain.kms import compute_plan_diff_hash
+    from full_shelf_domain.models import PlanDiff
+
+    transaction = _proposal_transaction()
+    _execute_proposal(transaction)
+    detail = json.loads(
+        next(i for i in transaction.inserts if i["table"] == "PlanConstraints")["values"][0][5]
+    )
+    expected = compute_plan_diff_hash(PlanDiff(
+        source_revision="rev07", proposed_revision="rev08",
+        reroute_order_id="O202", reroute_cases=22,
+        reroute_target_vehicle="TRUCK-02",
+        pickup_order_id="O203", pickup_cases=20,
+        plan_diff_hash="",
+    ))
+    assert detail["plan_diff_hash"] == expected
+    assert detail["plan_diff"]["reroute_cases"] == 22
+    assert detail["plan_diff"]["pickup_cases"] == 20
+
+
+def test_repair_proposal_records_projected_capacity_arithmetic():
+    """36 committed + 22 rerouted = 58, within Truck 2's 60."""
+    transaction = _proposal_transaction()
+    _execute_proposal(transaction)
+    detail = json.loads(
+        next(i for i in transaction.inserts if i["table"] == "PlanConstraints")["values"][0][5]
+    )
+    assert detail["absorbing_vehicle_committed_cases"] == 36
+    assert detail["absorbing_vehicle_projected_cases"] == 58
+    assert detail["absorbing_vehicle_capacity_cases"] == 60
+
+
+def test_infeasible_repair_proposal_fails_closed():
+    """A reroute that overruns the absorbing vehicle is not a proposal."""
+    transaction = _proposal_transaction()
+    with pytest.raises(ValueError, match="PROPOSED_REROUTE_EXCEEDS_ABSORBING_CAPACITY"):
+        _execute_proposal(transaction, absorbing_vehicle_committed_cases=50)
+    assert transaction.inserts == []
+    assert transaction.upserts == []
+    assert transaction.updates == []
+
+
+def test_proposal_cannot_reroute_onto_the_failed_vehicle():
+    transaction = _proposal_transaction()
+    with pytest.raises(ValueError, match="CANNOT_REROUTE_ONTO_THE_FAILED_VEHICLE"):
+        _execute_proposal(transaction, plan_diff={"reroute_target_vehicle": "TRUCK-01"})
+    assert transaction.inserts == []
+
+
+def test_proposal_whose_target_revision_already_exists_fails_closed():
+    """An 'already activated' proposal is an activation attempt."""
+    transaction = _proposal_transaction(
+        statuses={"rev07": "ACTIVE", "rev08": "ACTIVE"})
+    with pytest.raises(ValueError, match="PROPOSED_REVISION_ALREADY_EXISTS"):
+        _execute_proposal(transaction)
+    assert transaction.inserts == []
+
+
+def test_proposal_against_a_superseded_revision_fails_closed():
+    """A proposal for rev07 cannot land once rev08 is active.
+
+    The generic stale-revision guard catches this before the proposal's own
+    check, which is the stronger outcome: it writes a DENIED receipt and no
+    constraint, so a replayed proposal cannot reappear against a plan that
+    already moved on.
+    """
+    transaction = _proposal_transaction(active="rev08",
+                                        statuses={"rev08": "ACTIVE"})
+    result = _execute_proposal(transaction)
+    assert result.receipt["status"] == "DENIED"
+    assert result.additional_mutations == 0
+    assert [i["table"] for i in transaction.inserts] == ["Receipts"]
+    assert transaction.upserts == []
+    assert transaction.updates == []
+
+
+def test_duplicate_fleet_event_is_idempotent():
+    """A redelivered fault applies no further mutations."""
+    command = _proposal_command()
+    timestamp = datetime(2026, 8, 14, 8, 21, tzinfo=timezone.utc)
+    existing = (
+        "RCT-PROP-STABLE", command.command_id, "rev07",
+        "PERSIST_REPAIR_PROPOSAL", "SUCCESS", 2,
+        "PERSIST_REPAIR_PROPOSAL committed", "0123456789abcdef0123456789abcdef",
+        timestamp, IDENTITY.subject, IDENTITY.email,
+        "FULFILLMENT_RECOVERY_PLANNER", command.request_fingerprint(),
+    )
+
+    class ReplayTransaction(type(_proposal_transaction())):
+        def execute_sql(self, sql, params, param_types):
+            if "idempotency_key" in sql:
+                return [existing]
+            return super().execute_sql(sql, params, param_types)
+
+    transaction = ReplayTransaction()
+    result = SpannerLedgerCommandExecutor(
+        FakeDatabase(transaction), allowed_tenant_ids={"audit-tenant"}
+    ).execute(command, IDENTITY)
+
+    assert result.idempotent_replay is True
+    assert result.additional_mutations == 0
+    assert transaction.inserts == []
+    assert transaction.upserts == []
+
+
+def test_only_the_recovery_planner_may_propose_a_repair():
+    transaction = _proposal_transaction()
+    result = SpannerLedgerCommandExecutor(
+        FakeDatabase(transaction), allowed_tenant_ids={"audit-tenant"}
+    ).execute(
+        coordinator_command(
+            command_id="CMD-PROPOSAL-WRONG-ROLE",
+            idempotency_key="audit:PLAN-ALT:rev07:repair-proposal",
+            agent_role="PARTNER_OPERATIONS_AGENT",
+            command_type=LedgerCommandType.PERSIST_REPAIR_PROPOSAL,
+            expected_plan_revision="rev07",
+            payload=_proposal_payload(),
+        ),
+        IDENTITY,
+    )
+    assert result.receipt["status"] == "DENIED"
+    assert result.additional_mutations == 0
+    assert [i["table"] for i in transaction.inserts] == ["Receipts"]

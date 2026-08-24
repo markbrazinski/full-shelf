@@ -23,6 +23,7 @@ class LedgerCommandType(str, Enum):
     ACTIVATE_MOVEMENT_BARRIER = "ACTIVATE_MOVEMENT_BARRIER"
     RECORD_REFUSAL = "RECORD_REFUSAL"
     CREATE_NEXT_DAY_DRAFT = "CREATE_NEXT_DAY_DRAFT"
+    PERSIST_REPAIR_PROPOSAL = "PERSIST_REPAIR_PROPOSAL"
 
 
 class StrictPayload(BaseModel):
@@ -119,6 +120,44 @@ class SignedRepairDiffPayload(StrictPayload):
     reroute_target_vehicle: str = Field(min_length=1, max_length=64)
     pickup_order_id: str = Field(min_length=1, max_length=64)
     pickup_cases: int = Field(gt=0)
+
+
+class PersistRepairProposalPayload(StrictPayload):
+    """A non-authoritative repair proposal awaiting human approval.
+
+    Deliberately carries NO approver, NO KMS signature and NO activation
+    intent: it is what the agents propose, not what anyone authorized. The
+    executor writes it as a constraint on the SOURCE revision, so the active
+    plan is untouched and rev07 stays authoritative until approval.
+
+    plan_diff is the same shape the approval later signs, so the proposal an
+    operator sees and the diff KMS binds cannot diverge.
+    """
+
+    proposal_id: str = Field(min_length=1, max_length=64)
+    source_event_id: str = Field(min_length=1, max_length=256)
+    plan_id: str = Field(min_length=1, max_length=64)
+    source_revision: str = Field(min_length=1, max_length=32)
+    proposed_revision: str = Field(min_length=1, max_length=32)
+    vehicle_id: str = Field(min_length=1, max_length=64)
+    absorbing_vehicle_capacity_cases: int = Field(gt=0)
+    absorbing_vehicle_committed_cases: int = Field(ge=0)
+    plan_diff: SignedRepairDiffPayload
+
+    @model_validator(mode="after")
+    def _proposal_is_feasible_and_not_an_activation(self):
+        if self.source_revision == self.proposed_revision:
+            raise ValueError("PROPOSAL_MUST_ADVANCE_A_REVISION")
+        # The absorbing vehicle must actually fit the rerouted cases. A
+        # proposal that cannot be executed is not a proposal.
+        after = self.absorbing_vehicle_committed_cases + self.plan_diff.reroute_cases
+        if after > self.absorbing_vehicle_capacity_cases:
+            raise ValueError("PROPOSED_REROUTE_EXCEEDS_ABSORBING_CAPACITY")
+        if self.plan_diff.reroute_order_id == self.plan_diff.pickup_order_id:
+            raise ValueError("REROUTE_AND_PICKUP_MUST_BE_DISTINCT_ORDERS")
+        if self.plan_diff.reroute_target_vehicle == self.vehicle_id:
+            raise ValueError("CANNOT_REROUTE_ONTO_THE_FAILED_VEHICLE")
+        return self
 
 
 class PersistRepairApprovalPayload(StrictPayload):
@@ -352,6 +391,7 @@ PAYLOAD_MODELS: Dict[LedgerCommandType, Type[StrictPayload]] = {
     LedgerCommandType.ACTIVATE_MOVEMENT_BARRIER: ActivateMovementBarrierPayload,
     LedgerCommandType.RECORD_REFUSAL: RecordRefusalPayload,
     LedgerCommandType.CREATE_NEXT_DAY_DRAFT: CreateNextDayDraftPayload,
+    LedgerCommandType.PERSIST_REPAIR_PROPOSAL: PersistRepairProposalPayload,
 }
 
 

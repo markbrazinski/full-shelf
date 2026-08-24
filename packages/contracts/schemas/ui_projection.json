@@ -104,7 +104,8 @@
         "incidents",
         "plan_constraints",
         "recovery",
-        "dispatch"
+        "dispatch",
+        "repair_proposal"
       ],
       "properties": {
         "plan_id": {
@@ -884,6 +885,84 @@
               "description": "Provenance of stop.sequence. COMMITTED_MANIFEST_ORDER means the sequence is a deterministic 1-based ordering of committed manifest rows for each vehicle. It is never a routing, distance, or travel-time optimization, and must not be presented as one.",
               "enum": [
                 "COMMITTED_MANIFEST_ORDER"
+              ]
+            }
+          }
+        },
+        "repair_proposal": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "A pending repair proposal: what the agents propose, not what anyone authorized. Present only while the revision it repairs is still active. authority is always AGENT_PROPOSAL and activation_supported is always false; approval runs through the verified-human -> KMS -> ledger path.",
+          "properties": {
+            "proposal_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "source_event_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "plan_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "source_revision": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "proposed_revision": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "failed_vehicle_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "plan_diff": {
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "plan_diff_hash": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "absorbing_vehicle": {
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "authority": {
+              "type": "string",
+              "enum": [
+                "AGENT_PROPOSAL"
+              ]
+            },
+            "approval_required": {
+              "type": "boolean"
+            },
+            "activation_supported": {
+              "type": "boolean",
+              "enum": [
+                false
               ]
             }
           }

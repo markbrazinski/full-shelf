@@ -6,7 +6,7 @@ import base64
 import asyncio
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Literal, Optional, List
 from zoneinfo import ZoneInfo
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -124,6 +124,7 @@ ROUTE_AUTHENTICATION_MATRIX = {
     ("POST", "/api/v1/orchestrator/recall/trigger"): INTERNAL_WORKLOAD,
     ("GET", "/api/v1/orchestrator/recall/incident-status"): INTERNAL_WORKLOAD,
     ("POST", "/api/v1/orchestrator/next-day-plan/generate"): INTERNAL_WORKLOAD,
+    ("POST", "/api/v1/orchestrator/fleet/refrigeration-failure"): INTERNAL_WORKLOAD,
     ("GET", "/api/v1/evidence/system"): INTERNAL_WORKLOAD,
     ("GET", "/api/v1/demo/export-evidence"): INTERNAL_WORKLOAD,
     ("POST", "/api/v1/orchestrator/s2s-dispatch"): DISABLED_OR_REMOVED,
@@ -345,6 +346,23 @@ class RecallTriggerRequest(BaseModel):
     incident_id: str = Field(min_length=1, max_length=64)
     lot_id: str = Field(min_length=1, max_length=64)
     notice_text: str = Field(min_length=1, max_length=20000)
+
+
+class VehicleRefrigerationFailureRequest(BaseModel):
+    """A mechanical fleet-system fault report.
+
+    This is a reported EVENT, not an inference. Refrigeration status is a
+    separate mechanical signal from position: no amount of missing, stalled or
+    repeated location data may place a vehicle in a failed state, and nothing
+    here reads a coordinate.
+    """
+
+    source_event_id: str = Field(min_length=1, max_length=256)
+    vehicle_id: str = Field(min_length=1, max_length=64)
+    occurred_at: str = Field(min_length=1, max_length=64)
+    fault_type: Literal["REFRIGERATION_UNIT_FAILURE"]
+    refrigeration_status: Literal["FAILED"]
+    source_system: Literal["SIMULATED_FLEET_TELEMATICS"]
 
 
 class PersistWaitingCoordinatorRequest(BaseModel):
@@ -1996,6 +2014,133 @@ def extraction_preflight(
     }
 
 
+def _derive_repair_proposal(
+    *, tenant_id: str, vehicle_id: str, source_event_id: str,
+    operating_day: str, correlation_trace_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Derive one repair proposal from committed state and persist it.
+
+    Reads the active plan, the failed vehicle's commitments, and the fleet.
+    Orders that fit the absorbing vehicle are proposed as a reroute; the
+    remainder is proposed as a refrigerated partner pickup, because a
+    proposal that overruns capacity is not a proposal.
+
+    Nothing here activates anything. The result is an AGENT_PROPOSAL that the
+    existing verified-human -> KMS -> ledger path may later approve.
+    """
+    trace_id = correlation_trace_id or generate_trace_id()
+    scope = _resolve_authority_scope(tenant_id)
+    db = get_spanner_database(scope.database_id)
+    plan_id = f"PLAN-{operating_day}"
+
+    with db.snapshot(multi_use=True) as snapshot:
+        active = list(snapshot.execute_sql(
+            "SELECT revision FROM PlanRevisions WHERE tenant_id=@t "
+            "AND plan_id=@p AND status='ACTIVE'",
+            params={"t": tenant_id, "p": plan_id},
+            param_types={"t": spanner.param_types.STRING,
+                         "p": spanner.param_types.STRING},
+        ))
+        if len(active) != 1:
+            raise HTTPException(409, "NO_SINGLE_ACTIVE_PLAN_REVISION")
+        source_revision = active[0][0]
+        stranded = list(snapshot.execute_sql(
+            "SELECT order_id, cases, status FROM Orders WHERE tenant_id=@t "
+            "AND plan_id=@p AND revision=@r AND assigned_vehicle_id=@v "
+            "ORDER BY order_id",
+            params={"t": tenant_id, "p": plan_id, "r": source_revision,
+                    "v": vehicle_id},
+            param_types={"t": spanner.param_types.STRING,
+                         "p": spanner.param_types.STRING,
+                         "r": spanner.param_types.STRING,
+                         "v": spanner.param_types.STRING},
+        ))
+        fleet = list(snapshot.execute_sql(
+            "SELECT vehicle_id, max_capacity_cases, current_load_cases FROM Vehicles "
+            "WHERE tenant_id=@t AND is_operational=TRUE AND vehicle_id!=@v "
+            "ORDER BY vehicle_id",
+            params={"t": tenant_id, "v": vehicle_id},
+            param_types={"t": spanner.param_types.STRING,
+                         "v": spanner.param_types.STRING},
+        ))
+
+    # Undelivered commitments only: what is already delivered is not stranded.
+    pending = [row for row in stranded if row[2] != "DELIVERED"]
+    if len(pending) < 2 or not fleet:
+        raise HTTPException(409, "NO_FEASIBLE_REPAIR_FROM_AUTHORITATIVE_STATE")
+    absorbing_id, capacity, committed = fleet[0]
+    headroom = (capacity or 0) - (committed or 0)
+    reroute = next((row for row in pending if (row[1] or 0) <= headroom), None)
+    if reroute is None:
+        raise HTTPException(409, "NO_OPERATIONAL_VEHICLE_HAS_HEADROOM")
+    pickup = next((row for row in pending if row[0] != reroute[0]), None)
+    if pickup is None:
+        raise HTTPException(409, "NO_SECOND_COMMITMENT_TO_ROUTE_TO_A_PARTNER")
+
+    proposal_id = "PROP-" + hashlib.sha256(
+        f"{tenant_id}\x00{plan_id}\x00{source_revision}\x00{source_event_id}".encode()
+    ).hexdigest()[:24].upper()
+    ledger_result = execute_ledger_command(
+        command_id=f"CMD-PROPOSAL-{proposal_id}",
+        idempotency_key=f"{tenant_id}:{plan_id}:{source_revision}:repair-proposal",
+        tenant_id=tenant_id,
+        incident_id=None,
+        agent_role="FULFILLMENT_RECOVERY_PLANNER",
+        command_type="PERSIST_REPAIR_PROPOSAL",
+        expected_plan_revision=source_revision,
+        trace_id=trace_id,
+        payload={
+            "proposal_id": proposal_id,
+            "source_event_id": source_event_id,
+            "plan_id": plan_id,
+            "source_revision": source_revision,
+            "proposed_revision": CANONICAL_APPROVAL_PROPOSED_REVISION,
+            "vehicle_id": vehicle_id,
+            "absorbing_vehicle_capacity_cases": capacity,
+            "absorbing_vehicle_committed_cases": committed,
+            "plan_diff": {
+                "reroute_order_id": reroute[0],
+                "reroute_cases": reroute[1],
+                "reroute_target_vehicle": absorbing_id,
+                "pickup_order_id": pickup[0],
+                "pickup_cases": pickup[1],
+            },
+        },
+    )
+    return {
+        "status": "REPAIR_PROPOSAL_PERSISTED",
+        "proposal_id": proposal_id,
+        "authority": "AGENT_PROPOSAL",
+        "activation_supported": False,
+        "idempotent_replay": ledger_result["idempotent_replay"],
+        "ledger_receipt": ledger_result["receipt"],
+        "trace_id": trace_id,
+    }
+
+
+@app.post(
+    "/api/v1/orchestrator/fleet/refrigeration-failure",
+    dependencies=[Depends(require_internal_workload)],
+)
+def report_refrigeration_failure(
+    event: VehicleRefrigerationFailureRequest,
+    tenant_id: str = Query("east-bay-food-bank"),
+    operating_day: str = Query(...),
+):
+    """Accept a mechanical fleet fault and persist the resulting proposal.
+
+    Idempotent on source_event_id: InboundEvents is keyed by
+    (tenant_id, source_event_id), so a redelivered fault reports the same
+    proposal and applies no further mutations.
+    """
+    return _derive_repair_proposal(
+        tenant_id=tenant_id,
+        vehicle_id=event.vehicle_id,
+        source_event_id=event.source_event_id,
+        operating_day=operating_day,
+    )
+
+
 @app.post(
     "/api/v1/orchestrator/recall/trigger",
     dependencies=[Depends(require_internal_workload)],
@@ -2928,6 +3073,48 @@ def get_demo_beats_projections(
             ),
         })
 
+    # --- Pending repair proposal, never an authorization --------------------
+    # A proposal is written against the revision it repairs. It is "pending"
+    # only while that revision is still the active one: once the approved
+    # revision supersedes it, the proposal was answered and must stop being
+    # offered. That check is what keeps an approved plan from re-rendering an
+    # approval control for work already committed.
+    repair_proposal = None
+    active_as_of = revisions[-1] if revisions else None
+    for row in constraint_rows:
+        if row[1] != "REPAIR_PROPOSAL":
+            continue
+        try:
+            detail = json.loads(row[2] or "{}")
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if detail.get("proposed_revision") in revisions:
+            continue  # already approved and activated at this boundary
+        if active_as_of is not None and detail.get("proposed_revision") == active_as_of:
+            continue
+        repair_proposal = {
+            "proposal_id": detail.get("proposal_id"),
+            "source_event_id": detail.get("source_event_id"),
+            "plan_id": row[0],
+            "source_revision": active_as_of,
+            "proposed_revision": detail.get("proposed_revision"),
+            "failed_vehicle_id": detail.get("failed_vehicle_id"),
+            "plan_diff": detail.get("plan_diff"),
+            "plan_diff_hash": detail.get("plan_diff_hash"),
+            "absorbing_vehicle": {
+                "vehicle_id": (detail.get("plan_diff") or {}).get(
+                    "reroute_target_vehicle"),
+                "capacity_cases": detail.get("absorbing_vehicle_capacity_cases"),
+                "committed_cases": detail.get("absorbing_vehicle_committed_cases"),
+                "projected_cases": detail.get("absorbing_vehicle_projected_cases"),
+            },
+            # An operator surface must never present this as authorized.
+            "authority": "AGENT_PROPOSAL",
+            "approval_required": True,
+            "activation_supported": False,
+        }
+        break
+
     # --- Commitments, gated per revision by its own committed receipt -------
     commitments = []
     for row in order_rows:
@@ -3187,7 +3374,13 @@ def get_demo_beats_projections(
             "plan_constraints": [
                 {"plan_id": c[0], "constraint_type": c[1], "description": c[2]}
                 for c in constraint_rows
+                if c[1] != "REPAIR_PROPOSAL"
             ],
+            # A pending repair proposal: what the agents propose, not what
+            # anyone authorized. Present only while its source revision is
+            # still active; once the approved revision supersedes it the
+            # proposal has been answered and stops being pending.
+            "repair_proposal": repair_proposal,
             "recovery": {
                 "allocations": [
                     {"allocation_id": a[0], "incident_id": a[1], "status": a[2],

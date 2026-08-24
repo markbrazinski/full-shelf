@@ -239,6 +239,35 @@ ALLOC_ROWS = [
 ]
 CONSTRAINT_ROWS = [(PLAN, "LOT_EXCLUSION", "LTC-4471 excluded", T(10, 5))]
 
+# The repair proposal the fleet produced at 08:21, after the 08:20 fault and
+# before the 08:24 approval. Its diff is read from the SAME canonical approval
+# seed the KMS envelope binds, so the proposal an operator sees and the diff
+# that gets signed cannot drift apart.
+REPAIR_PROPOSAL_ROW = (
+    PLAN, "REPAIR_PROPOSAL", _json.dumps({
+        "proposal_id": "PROP-FIXTURE-REV08",
+        "source_event_id": "fixture-telematics-evt-1",
+        "proposed_revision": CANONICAL_APPROVAL["proposed_revision"],
+        "failed_vehicle_id": TRUCK_BREAKDOWN["incident"]["failed_vehicle_id"],
+        "absorbing_vehicle_capacity_cases": CANONICAL_CAPACITY["capacity_limit"],
+        "absorbing_vehicle_committed_cases":
+            CANONICAL_CAPACITY["truck_2_existing_cases"],
+        "absorbing_vehicle_projected_cases": (
+            CANONICAL_CAPACITY["truck_2_existing_cases"]
+            + CANONICAL_APPROVAL["reroute_cases"]),
+        "plan_diff": {
+            "reroute_order_id": CANONICAL_APPROVAL["reroute_order_id"],
+            "reroute_cases": CANONICAL_APPROVAL["reroute_cases"],
+            "reroute_target_vehicle": CANONICAL_APPROVAL["reroute_target_vehicle"],
+            "pickup_order_id": CANONICAL_APPROVAL["pickup_order_id"],
+            "pickup_cases": CANONICAL_APPROVAL["pickup_cases"],
+        },
+        "plan_diff_hash": "fixture-diffhash-rev08",
+        "authority": "AGENT_PROPOSAL",
+        "activation_supported": False,
+    }, sort_keys=True), T(8, 21),
+)
+
 # The canonical six-node custody topology. Site 01 sits downstream of Agency 01,
 # which is why Agency 01's current position is 10 and not its historical
 # 18-case receipt.
@@ -298,7 +327,8 @@ def _database(*, include_next_day=False, vehicles=VEHICLE_ROWS,
               work_rows=WORK_ROWS, incident_rows=INCIDENT_ROWS,
               receipts=ALL_RECEIPTS, approval_rows=APPROVAL_ROWS,
               alloc_rows=ALLOC_ROWS, shortfall_rows=SHORTFALL_ROWS,
-              constraint_rows=tuple(CONSTRAINT_ROWS) + (CANDIDATE_UNASSIGNED_ROW,)):
+              constraint_rows=tuple(CONSTRAINT_ROWS) + (CANDIDATE_UNASSIGNED_ROW,
+                                                        REPAIR_PROPOSAL_ROW)):
     """Fake Spanner that ENFORCES every predicate the handler actually binds.
 
     A fake that ignores a WHERE clause cannot prove scoping: the adversarial
@@ -1530,3 +1560,81 @@ def test_candidate_stop_sequence_is_contiguous_per_vehicle():
     for vehicle in _draft()["candidate_vehicles"]:
         sequences = [stop["sequence"] for stop in vehicle["stops"]]
         assert sequences == list(range(1, len(sequences) + 1))
+
+
+# ---------------------------------------------------------------------------
+# Repair proposal lifecycle: proposed, pending, then answered.
+# ---------------------------------------------------------------------------
+
+def _proposal_at(as_of):
+    return project(as_of).json()["current_day"]["repair_proposal"]
+
+
+def test_repair_proposal_is_absent_before_the_fleet_proposes_one():
+    """08:20 is the fault. The proposal does not exist yet."""
+    assert _proposal_at(T(8, 20)) is None
+
+
+def test_repair_proposal_is_pending_while_the_active_plan_is_unchanged():
+    """At 08:21 the proposal exists and rev07 is STILL authoritative."""
+    body = project(T(8, 21)).json()["current_day"]
+    proposal = body["repair_proposal"]
+    assert proposal is not None
+    assert proposal["authority"] == "AGENT_PROPOSAL"
+    assert proposal["approval_required"] is True
+    assert proposal["activation_supported"] is False
+    # The plan the operator is working from has not moved.
+    assert body["active_plan_revision"] == "rev07"
+    assert {c["revision"] for c in body["commitments"]} == {"rev07"}
+
+
+def test_repair_proposal_carries_the_exact_candidate_diff():
+    """O202/22 -> Truck 2 (36 + 22 = 58 of 60), O203/20 -> partner pickup."""
+    proposal = _proposal_at(T(8, 21))
+    diff = proposal["plan_diff"]
+    assert diff["reroute_order_id"] == CANONICAL_APPROVAL["reroute_order_id"]
+    assert diff["reroute_cases"] == CANONICAL_APPROVAL["reroute_cases"]
+    assert diff["reroute_target_vehicle"] == CANONICAL_APPROVAL["reroute_target_vehicle"]
+    assert diff["pickup_order_id"] == CANONICAL_APPROVAL["pickup_order_id"]
+    assert diff["pickup_cases"] == CANONICAL_APPROVAL["pickup_cases"]
+    absorbing = proposal["absorbing_vehicle"]
+    assert absorbing["committed_cases"] == CANONICAL_CAPACITY["truck_2_existing_cases"]
+    assert absorbing["projected_cases"] == TRUCK2_LOAD  # 58
+    assert absorbing["capacity_cases"] == CANONICAL_CAPACITY["capacity_limit"]
+    assert absorbing["projected_cases"] <= absorbing["capacity_cases"]
+
+
+def test_repair_proposal_stops_being_offered_once_approved_and_activated():
+    """After rev08 activates at 08:24 the proposal has been answered."""
+    assert _proposal_at(T(8, 24)) is None
+    assert _proposal_at(T(23, 59)) is None
+    assert project(T(8, 24)).json()["current_day"]["active_plan_revision"] == "rev08"
+
+
+def test_repair_proposal_binds_the_same_diff_the_approval_signs():
+    """Proposal and approval must not be able to drift apart."""
+    proposal = _proposal_at(T(8, 21))
+    approval = project(T(8, 24)).json()["current_day"]["approvals"][0]
+    signed = {(d["change_type"], d["order_id"], d["cases"]) for d in approval["plan_diff"]}
+    assert ("REROUTE", proposal["plan_diff"]["reroute_order_id"],
+            proposal["plan_diff"]["reroute_cases"]) in signed
+    assert ("PICKUP", proposal["plan_diff"]["pickup_order_id"],
+            proposal["plan_diff"]["pickup_cases"]) in signed
+
+
+def test_refrigeration_failure_is_independent_of_simulated_position():
+    """A mechanical fault is not derived from position, and carries none.
+
+    The projection must expose no coordinate, bearing, speed or heading
+    anywhere near the incident or the proposal it produced.
+    """
+    raw = blob(project(T(8, 21)).json())
+    for token in ("latitude", "longitude", "bearing", "heading",
+                  "speed", "gps", "coordinate"):
+        assert token not in raw.lower(), token
+
+
+def test_repair_proposal_is_not_reported_as_a_plan_constraint():
+    """A proposal is not a committed constraint on the plan."""
+    constraints = project(T(8, 21)).json()["current_day"]["plan_constraints"]
+    assert all(c["constraint_type"] != "REPAIR_PROPOSAL" for c in constraints)

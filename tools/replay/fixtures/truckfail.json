@@ -155,6 +155,7 @@
       "explanation": null,
       "shortfalls": []
     },
+    "repair_proposal": null,
     "vehicles": null
   },
   "execution_evidence_as_of": {

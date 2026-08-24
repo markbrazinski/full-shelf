@@ -4,11 +4,31 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "command_id": { "type": "string", "minLength": 1, "maxLength": 64 },
-    "idempotency_key": { "type": "string", "minLength": 1, "maxLength": 128 },
-    "tenant_id": { "type": "string", "minLength": 1, "maxLength": 64 },
-    "incident_id": { "type": "string", "minLength": 1, "maxLength": 64 },
-    "agent_role": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "command_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "idempotency_key": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "tenant_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "incident_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "agent_role": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
     "command_type": {
       "type": "string",
       "enum": [
@@ -23,12 +43,25 @@
         "SET_INCIDENT_STATUS",
         "ACTIVATE_MOVEMENT_BARRIER",
         "RECORD_REFUSAL",
-        "CREATE_NEXT_DAY_DRAFT"
+        "CREATE_NEXT_DAY_DRAFT",
+        "PERSIST_REPAIR_PROPOSAL"
       ]
     },
-    "expected_plan_revision": { "type": ["string", "null"], "maxLength": 32 },
-    "trace_id": { "type": "string", "minLength": 16, "maxLength": 128 },
-    "payload": { "type": "object" }
+    "expected_plan_revision": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 32
+    },
+    "trace_id": {
+      "type": "string",
+      "minLength": 16,
+      "maxLength": 128
+    },
+    "payload": {
+      "type": "object"
+    }
   },
   "required": [
     "command_id",

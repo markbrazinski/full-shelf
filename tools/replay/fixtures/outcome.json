@@ -443,6 +443,7 @@
         }
       ]
     },
+    "repair_proposal": null,
     "vehicles": [
       {
         "assigned_cases": 58,

@@ -155,6 +155,31 @@
       "explanation": null,
       "shortfalls": []
     },
+    "repair_proposal": {
+      "absorbing_vehicle": {
+        "capacity_cases": 60,
+        "committed_cases": 36,
+        "projected_cases": 58,
+        "vehicle_id": "TRUCK-02"
+      },
+      "activation_supported": false,
+      "approval_required": true,
+      "authority": "AGENT_PROPOSAL",
+      "failed_vehicle_id": "TRUCK-01",
+      "plan_diff": {
+        "pickup_cases": 20,
+        "pickup_order_id": "O203",
+        "reroute_cases": 22,
+        "reroute_order_id": "O202",
+        "reroute_target_vehicle": "TRUCK-02"
+      },
+      "plan_diff_hash": "fixture-diffhash-rev08",
+      "plan_id": "PLAN-2026-08-14",
+      "proposal_id": "PROP-FIXTURE-REV08",
+      "proposed_revision": "rev08",
+      "source_event_id": "fixture-telematics-evt-1",
+      "source_revision": "rev07"
+    },
     "vehicles": null
   },
   "execution_evidence_as_of": {
