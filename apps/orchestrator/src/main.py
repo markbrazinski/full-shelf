@@ -3027,7 +3027,14 @@ def get_demo_beats_projections(
             "recovery": {
                 "allocations": [
                     {"allocation_id": a[0], "incident_id": a[1], "status": a[2],
-                     "agency_id": a[4], "lot_id": a[5], "cases": a[6]}
+                     "agency_id": a[4], "lot_id": a[5], "cases": a[6],
+                     # The lot is authoritative. The facility is tenant
+                     # configuration describing where that lot is stocked, and
+                     # is null when the tenant configured none. It is never
+                     # custody evidence: no hand-off of a replacement case is
+                     # recorded anywhere, which source_facility_basis states.
+                     "source_facility": _configured_source_facility(a[5]),
+                     "source_facility_basis": SOURCE_FACILITY_BASIS}
                     for a in allocation_rows
                 ],
                 "shortfalls": [
@@ -3258,6 +3265,35 @@ VEHICLE_FAILURE_INCIDENT_TYPES = frozenset({"TRUCK_BREAKDOWN", "VEHICLE_FAILURE"
 
 def _is_vehicle_failure(incident_type: Optional[str]) -> bool:
     return incident_type in VEHICLE_FAILURE_INCIDENT_TYPES
+
+
+# Where a replacement lot is stocked is deployment configuration, in the same
+# sense as a warehouse address on a printed pick sheet. It is NOT custody
+# evidence: no hand-off of a replacement case is recorded, and the projection
+# says so explicitly rather than letting a client infer a chain of custody
+# that was never committed.
+SOURCE_FACILITY_BASIS = "CONFIGURED_TENANT_REFERENCE"
+
+
+def _configured_source_facilities() -> Dict[str, str]:
+    """Parse LOT_SOURCE_FACILITIES ("LOT-A=Facility A,LOT-B=Facility B")."""
+    mapping: Dict[str, str] = {}
+    for entry in os.getenv("LOT_SOURCE_FACILITIES", "").split(","):
+        lot, sep, facility = entry.partition("=")
+        if sep and lot.strip() and facility.strip():
+            mapping[lot.strip()] = facility.strip()
+    return mapping
+
+
+def _configured_source_facility(lot_id: Optional[str]) -> Optional[str]:
+    """Configured stocking facility for a lot, or None when unconfigured.
+
+    Returning None is the honest answer for an unconfigured tenant. A
+    placeholder here would read as a located fact on the operator surface.
+    """
+    if not lot_id:
+        return None
+    return _configured_source_facilities().get(lot_id)
 
 # The Execution Record is a bounded operator surface, not an audit export. The
 # canonical day commits far fewer receipts than this; the cap exists so the

@@ -518,7 +518,9 @@
                 "required": [
                   "allocation_id",
                   "incident_id",
-                  "status"
+                  "status",
+                  "source_facility",
+                  "source_facility_basis"
                 ],
                 "properties": {
                   "allocation_id": {
@@ -553,6 +555,20 @@
                       "integer",
                       "null"
                     ]
+                  },
+                  "source_facility": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "Configured facility where this replacement lot is stocked, or null when the tenant configured none. Reference configuration, never custody evidence: no hand-off of a replacement case is recorded."
+                  },
+                  "source_facility_basis": {
+                    "type": "string",
+                    "enum": [
+                      "CONFIGURED_TENANT_REFERENCE"
+                    ],
+                    "description": "Provenance of source_facility. The lot_id is authoritative; the facility is deployment configuration. Replacement custody is unsupported."
                   }
                 }
               }

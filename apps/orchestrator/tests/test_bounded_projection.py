@@ -521,6 +521,47 @@ def test_amendment2_same_action_type_different_targets_do_not_unlock():
     assert truck["terminal_state"] == "NONE"
 
 
+def test_replacement_lot_maps_to_a_configured_source_facility(monkeypatch):
+    """The lot is authoritative; the facility is tenant configuration."""
+    monkeypatch.setenv("LOT_SOURCE_FACILITIES", "LTC-5090=Central Warehouse")
+    recovery = project(T(10, 10)).json()["current_day"]["recovery"]
+    assert recovery["allocations"], "canonical day allocates replacement stock"
+    for allocation in recovery["allocations"]:
+        assert allocation["lot_id"] == "LTC-5090"
+        assert allocation["source_facility"] == "Central Warehouse"
+        assert allocation["source_facility_basis"] == "CONFIGURED_TENANT_REFERENCE"
+
+
+def test_unconfigured_replacement_lot_projects_no_facility(monkeypatch):
+    """An unconfigured tenant gets null, never a placeholder.
+
+    A placeholder would render as a located fact on the operator surface.
+    """
+    monkeypatch.setenv("LOT_SOURCE_FACILITIES", "")
+    recovery = project(T(10, 10)).json()["current_day"]["recovery"]
+    for allocation in recovery["allocations"]:
+        assert allocation["source_facility"] is None
+        # The basis still states what the field would have meant.
+        assert allocation["source_facility_basis"] == "CONFIGURED_TENANT_REFERENCE"
+
+
+def test_source_facility_configuration_never_invents_custody(monkeypatch):
+    """Configuring a facility must not add a custody node or edge.
+
+    Replacement custody is unsupported: no hand-off of a replacement case is
+    recorded, so the custody graph must stay at its canonical 96 unique cases.
+    """
+    monkeypatch.setenv("LOT_SOURCE_FACILITIES", "LTC-5090=Central Warehouse")
+    body = project(T(10, 10)).json()
+    custody = body["execution_evidence_as_of"]["custody_graph"]
+    # The custody graph tracks the recalled lot only, at its canonical totals.
+    assert custody["lot_id"] == "LTC-4471"
+    assert (custody["unique_current_cases"], custody["confirmed_cases"],
+            custody["unconfirmed_cases"]) == (96, 88, 8)
+    # The replacement lot appears nowhere in the custody evidence.
+    assert "LTC-5090" not in _json.dumps(custody)
+
+
 def test_stop_sequence_matches_the_canonical_ordered_manifest():
     """Sequence is the committed manifest order, read from the seed.
 
