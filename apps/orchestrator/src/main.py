@@ -2594,12 +2594,22 @@ def get_demo_beats_projections(
             "SELECT approval_id, plan_id, source_revision, proposed_revision, "
             "plan_diff_hash, kms_key_version, verified_at, plan_diff_json, "
             "approver_email, authority_scope, expires_at FROM Approvals "
-            "WHERE tenant_id=@tenant AND operating_day=@day AND verified_at<=@as_of",
+            "WHERE tenant_id=@tenant AND operating_day=@day AND verified_at<=@as_of "
+            # A same-day approval of a DIFFERENT plan is somebody else's
+            # authority. Day and time alone do not scope it out, so the exact
+            # selected plan and the intended revision transition do.
+            "AND plan_id=@plan_id "
+            "AND source_revision=@source_revision "
+            "AND proposed_revision=@proposed_revision",
             params={"tenant": tenant,
                     "day": datetime.fromisoformat(operating_day).date(),
-                    "as_of": boundary_at},
+                    "as_of": boundary_at,
+                    "plan_id": current_plan_id,
+                    "source_revision": CANONICAL_APPROVAL_SOURCE_REVISION,
+                    "proposed_revision": CANONICAL_APPROVAL_PROPOSED_REVISION},
             param_types={"tenant": str_t, "day": spanner.param_types.DATE,
-                         "as_of": ts_t},
+                         "as_of": ts_t, "plan_id": str_t,
+                         "source_revision": str_t, "proposed_revision": str_t},
         ))
 
         incident_rows = list(snapshot.execute_sql(
@@ -2616,31 +2626,56 @@ def get_demo_beats_projections(
             params={"tenant": tenant, "as_of": boundary_at},
             param_types={"tenant": str_t, "as_of": ts_t},
         ))
-        allocation_rows = list(snapshot.execute_sql(
-            "SELECT allocation_id, incident_id, status, created_at, agency_id, "
-            "lot_id, cases FROM RecoveryAllocations "
-            "WHERE tenant_id=@tenant AND created_at<=@as_of",
-            params={"tenant": tenant, "as_of": boundary_at},
-            param_types={"tenant": str_t, "as_of": ts_t},
-        ))
-        shortfall_rows = list(snapshot.execute_sql(
-            "SELECT shortfall_id, incident_id, status, created_at, agency_id, "
-            "cases FROM RecoveryShortfalls "
-            "WHERE tenant_id=@tenant AND created_at<=@as_of",
-            params={"tenant": tenant, "as_of": boundary_at},
-            param_types={"tenant": str_t, "as_of": ts_t},
-        ))
-        work_rows = list(snapshot.execute_sql(
-            "SELECT work_item_id, incident_id, status, created_at, completed_at "
-            "FROM WorkItems WHERE tenant_id=@tenant AND created_at<=@as_of",
-            params={"tenant": tenant, "as_of": boundary_at},
-            param_types={"tenant": str_t, "as_of": ts_t},
-        ))
+        # Recovery is scoped to the incidents this projection actually selected,
+        # through the authoritative incident_id foreign key. A same-tenant
+        # allocation belonging to another incident is another incident's truth
+        # and must never reach these quantities or the derivation over them.
+        selected_incident_ids = [row[0] for row in incident_rows]
+        incident_list_t = spanner.param_types.Array(str_t)
+        allocation_rows = []
+        shortfall_rows = []
+        if selected_incident_ids:
+            allocation_rows = list(snapshot.execute_sql(
+                "SELECT allocation_id, incident_id, status, created_at, agency_id, "
+                "lot_id, cases FROM RecoveryAllocations "
+                "WHERE tenant_id=@tenant AND created_at<=@as_of "
+                "AND incident_id IN UNNEST(@incident_ids)",
+                params={"tenant": tenant, "as_of": boundary_at,
+                        "incident_ids": selected_incident_ids},
+                param_types={"tenant": str_t, "as_of": ts_t,
+                             "incident_ids": incident_list_t},
+            ))
+            shortfall_rows = list(snapshot.execute_sql(
+                "SELECT shortfall_id, incident_id, status, created_at, agency_id, "
+                "cases FROM RecoveryShortfalls "
+                "WHERE tenant_id=@tenant AND created_at<=@as_of "
+                "AND incident_id IN UNNEST(@incident_ids)",
+                params={"tenant": tenant, "as_of": boundary_at,
+                        "incident_ids": selected_incident_ids},
+                param_types={"tenant": str_t, "as_of": ts_t,
+                             "incident_ids": incident_list_t},
+            ))
+        work_rows = []
+        if selected_incident_ids:
+            work_rows = list(snapshot.execute_sql(
+                "SELECT work_item_id, incident_id, status, created_at, completed_at "
+                "FROM WorkItems WHERE tenant_id=@tenant AND created_at<=@as_of "
+                "AND incident_id IN UNNEST(@incident_ids)",
+                params={"tenant": tenant, "as_of": boundary_at,
+                        "incident_ids": selected_incident_ids},
+                param_types={"tenant": str_t, "as_of": ts_t,
+                             "incident_ids": incident_list_t},
+            ))
         constraint_rows = list(snapshot.execute_sql(
             "SELECT plan_id, constraint_type, details, created_at "
-            "FROM PlanConstraints WHERE tenant_id=@tenant AND created_at<=@as_of",
-            params={"tenant": tenant, "as_of": boundary_at},
-            param_types={"tenant": str_t, "as_of": ts_t},
+            "FROM PlanConstraints WHERE tenant_id=@tenant AND created_at<=@as_of "
+            # Tomorrow's constraints are committed during today and would
+            # otherwise pass the time predicate. Exact plan identity is what
+            # keeps the next day out of the current day.
+            "AND plan_id=@plan_id",
+            params={"tenant": tenant, "as_of": boundary_at,
+                    "plan_id": current_plan_id},
+            param_types={"tenant": str_t, "as_of": ts_t, "plan_id": str_t},
         ))
 
         vehicle_rows = []
@@ -2835,17 +2870,29 @@ def get_demo_beats_projections(
     dispatch = None
     if revisions:
         active_revision = revisions[-1]
+        # A null assigned_vehicle_id is evidence of the partner-pickup path, not
+        # a row to discard: dropping it would hide an approved commitment and
+        # silently understate the plan. The assignment type is read from the
+        # authoritative row rather than inferred from any display string.
         assignments = {}
+        partner_pickups = []
         for row in order_rows:
-            if row[0] != active_revision or not row[5]:
+            if row[0] != active_revision:
                 continue
-            assignments.setdefault(row[5], []).append({
+            stop = {
                 "order_id": row[1],
                 "agency": row[2],
                 "cases": row[3],
                 "lot_id": row[4],
                 "status": row[6],
-            })
+            }
+            if row[5]:
+                assignments.setdefault(row[5], []).append(
+                    {**stop, "assignment_type": "VEHICLE_ROUTED"})
+            else:
+                partner_pickups.append(
+                    {**stop, "assignment_type": "PARTNER_PICKUP",
+                     "assigned_vehicle_id": None})
         vehicles_by_id = {v[0]: v for v in vehicle_rows}
         dispatch_vehicles = []
         for vehicle_id in sorted(set(assignments) | set(vehicles_by_id)):
@@ -2879,10 +2926,33 @@ def get_demo_beats_projections(
                 "stop_count": len(stops),
             })
         dispatch = {"plan_id": current_plan_id, "revision": active_revision,
-                    "vehicles": dispatch_vehicles}
+                    "vehicles": dispatch_vehicles,
+                    "partner_pickups": sorted(partner_pickups,
+                                              key=lambda p: p["order_id"])}
 
-    # --- Execution Record, bounded and never past the boundary -------------
-    history = boundary.history()
+    # --- Execution Record, relevance by identity then bounded --------------
+    # The relevance set is built from stable target identities: the lifecycle,
+    # containment, recovery, refusal and plan commands of the incidents this
+    # projection selected, recomputed with the same _command_identity used to
+    # write them. Nothing is admitted by action type, position, or prose, and
+    # a receipt whose target cannot be recomputed is left out.
+    relevant_action_ids = set()
+    for row in incident_rows:
+        incident_id = row[0]
+        for status in ("SCOPING", "CONTAINMENT_IN_PROGRESS", "PARTIALLY_CONTAINED",
+                       "CONTAINED", "CLOSED"):
+            relevant_action_ids.add(
+                _incident_status_action_id(tenant, incident_id, status))
+        for action in ("movement-barrier", "plan:invalidate", "safe-recovery",
+                       "containment-refusal", "acknowledgment-hold"):
+            relevant_action_ids.add(
+                _incident_action_id(tenant, incident_id, action))
+        # Plan revisions of the selected day are committed against the truck
+        # incident under the same deterministic identity scheme.
+        for revision in revisions:
+            relevant_action_ids.add(
+                _incident_action_id(tenant, incident_id, f"plan:{revision}"))
+    history = boundary.history(relevant_action_ids)
 
     response = {
         "tenant_id": tenant,
@@ -3143,6 +3213,13 @@ def _recovery_explanation(allocation_rows, shortfall_rows):
     }
 
 
+# The only approval transition this projection recognizes. The orchestrator and
+# the ledger both already refuse any other transition with
+# CANONICAL_REVISION_TRANSITION_REQUIRED, so binding the read to the same pair
+# keeps the projection consistent with the write path it reports on.
+CANONICAL_APPROVAL_SOURCE_REVISION = "rev07"
+CANONICAL_APPROVAL_PROPOSED_REVISION = "rev08"
+
 PRE_BOUNDARY_STATE_NOT_RETAINED = "PRE_BOUNDARY_STATE_NOT_RETAINED"
 
 # The Execution Record is a bounded operator surface, not an audit export. The
@@ -3199,15 +3276,21 @@ class ProjectionBoundary:
     def has_committed(self, action_id: str) -> bool:
         return action_id in self._by_action_id
 
-    def history(self, limit: int = HISTORY_MAX_EVENTS) -> List[Dict[str, Any]]:
-        """Committed receipts in commit order, bounded and never post-boundary.
+    def history(self, relevant_action_ids, limit: int = HISTORY_MAX_EVENTS):
+        """Committed receipts for an explicit set of target identities.
 
-        Only receipts already admitted by the boundary are eligible, so a
-        post-boundary commit can never appear. The tail is kept rather than the
-        head: the operator record is read backwards from the boundary, and an
-        unbounded all-time scan is exactly what this projection must not do.
+        Relevance is decided by recomputed command identity, never by action
+        type, receipt position, substring, or prose. A receipt that cannot be
+        mechanically linked to the selected plan or incident is omitted rather
+        than guessed at, so an unrelated same-tenant commit cannot appear even
+        when its action type and timestamp look plausible.
+
+        Filtering happens before the cap, so the bound trims genuinely relevant
+        history rather than silently deciding relevance by truncation.
         """
-        return self._committed_in_order[-limit:]
+        relevant = [entry for entry in self._committed_in_order
+                    if entry["action_id"] in relevant_action_ids]
+        return relevant[-limit:]
 
     def timeless_row_is_safe(self, table_key: str) -> bool:
         """True only when no later mutation of this table exists past the boundary."""

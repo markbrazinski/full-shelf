@@ -193,7 +193,21 @@ paths:
         contains no coordinate, position, bearing, or route geometry.
         execution_evidence_as_of.history is a bounded, tenant-scoped receipt
         sequence at or before the boundary and never contains a post-boundary
-        event.
+        event. Its relevance set is built from recomputed command identities
+        for the selected plan and incidents, never from action type, receipt
+        position, or substring matching, and relevance is applied before the
+        output cap.
+
+
+        Every block is scoped to its exact target, not merely to the tenant and
+        day: approvals bind to the selected plan_id and the intended revision
+        transition, recovery and work items bind to the selected incidents
+        through their authoritative incident_id, and current_day.plan_constraints
+        binds to the current-day plan_id so a next-day constraint committed
+        earlier in the day cannot appear. current_day.dispatch.partner_pickups
+        carries approved commitments that have no assigned vehicle; a null
+        vehicle id is the partner-pickup path and is retained as evidence rather
+        than dropped.
       security: [{ googleHumanOperatorOidc: [] }]
       parameters:
         - in: query

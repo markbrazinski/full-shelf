@@ -660,7 +660,8 @@
           "required": [
             "plan_id",
             "revision",
-            "vehicles"
+            "vehicles",
+            "partner_pickups"
           ],
           "properties": {
             "plan_id": {
@@ -743,7 +744,8 @@
                         "agency",
                         "cases",
                         "lot_id",
-                        "status"
+                        "status",
+                        "assignment_type"
                       ],
                       "properties": {
                         "order_id": {
@@ -772,9 +774,70 @@
                             "string",
                             "null"
                           ]
+                        },
+                        "assignment_type": {
+                          "type": "string",
+                          "enum": [
+                            "VEHICLE_ROUTED",
+                            "PARTNER_PICKUP"
+                          ]
                         }
                       }
                     }
+                  }
+                }
+              }
+            },
+            "partner_pickups": {
+              "description": "Approved commitments with no assigned vehicle, carried on the partner-pickup path. Retained as evidence rather than discarded for a null vehicle id.",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "order_id",
+                  "agency",
+                  "cases",
+                  "lot_id",
+                  "status",
+                  "assignment_type",
+                  "assigned_vehicle_id"
+                ],
+                "properties": {
+                  "order_id": {
+                    "type": "string"
+                  },
+                  "agency": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "cases": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "lot_id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "status": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "assignment_type": {
+                    "type": "string",
+                    "enum": [
+                      "PARTNER_PICKUP"
+                    ]
+                  },
+                  "assigned_vehicle_id": {
+                    "type": "null"
                   }
                 }
               }

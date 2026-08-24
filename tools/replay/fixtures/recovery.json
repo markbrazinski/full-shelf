@@ -192,9 +192,9 @@
             "target_vehicle": "TRUCK-02"
           },
           {
-            "cases": 21,
+            "cases": 20,
             "change_type": "PICKUP",
-            "order_id": "O205",
+            "order_id": "O203",
             "target_vehicle": null
           }
         ],
@@ -212,6 +212,24 @@
         "cases": 18,
         "lot_id": "LTC-4471",
         "order_id": "O201",
+        "revision": "rev07",
+        "status": "DELIVERED",
+        "vehicle": "TRUCK-01"
+      },
+      {
+        "agency": "Agency 02",
+        "cases": 22,
+        "lot_id": "LTC-4471",
+        "order_id": "O202",
+        "revision": "rev07",
+        "status": "PLANNED",
+        "vehicle": "TRUCK-01"
+      },
+      {
+        "agency": "Agency 03",
+        "cases": 20,
+        "lot_id": "LTC-4471",
+        "order_id": "O203",
         "revision": "rev07",
         "status": "PLANNED",
         "vehicle": "TRUCK-01"
@@ -242,9 +260,47 @@
         "revision": "rev08",
         "status": "PLANNED",
         "vehicle": "TRUCK-02"
+      },
+      {
+        "agency": "Agency 03",
+        "cases": 20,
+        "lot_id": "LTC-4471",
+        "order_id": "O203",
+        "revision": "rev08",
+        "status": "PARTNER_PICKUP",
+        "vehicle": null
+      },
+      {
+        "agency": "Agency 04",
+        "cases": 15,
+        "lot_id": "LTC-5090",
+        "order_id": "O204",
+        "revision": "rev08",
+        "status": "PLANNED",
+        "vehicle": "TRUCK-02"
+      },
+      {
+        "agency": "Agency 05",
+        "cases": 21,
+        "lot_id": "LTC-5090",
+        "order_id": "O205",
+        "revision": "rev08",
+        "status": "PLANNED",
+        "vehicle": "TRUCK-02"
       }
     ],
     "dispatch": {
+      "partner_pickups": [
+        {
+          "agency": "Agency 03",
+          "assigned_vehicle_id": null,
+          "assignment_type": "PARTNER_PICKUP",
+          "cases": 20,
+          "lot_id": "LTC-4471",
+          "order_id": "O203",
+          "status": "PARTNER_PICKUP"
+        }
+      ],
       "plan_id": "PLAN-2026-08-14",
       "revision": "rev08",
       "vehicles": [
@@ -255,13 +311,30 @@
           "is_operational": true,
           "name": "Refrigerated Truck 2",
           "remaining_cases": 2,
-          "stop_count": 1,
+          "stop_count": 3,
           "stops": [
             {
               "agency": "Agency 02",
+              "assignment_type": "VEHICLE_ROUTED",
               "cases": 22,
               "lot_id": "LTC-4471",
               "order_id": "O202",
+              "status": "PLANNED"
+            },
+            {
+              "agency": "Agency 04",
+              "assignment_type": "VEHICLE_ROUTED",
+              "cases": 15,
+              "lot_id": "LTC-5090",
+              "order_id": "O204",
+              "status": "PLANNED"
+            },
+            {
+              "agency": "Agency 05",
+              "assignment_type": "VEHICLE_ROUTED",
+              "cases": 21,
+              "lot_id": "LTC-5090",
+              "order_id": "O205",
               "status": "PLANNED"
             }
           ],
@@ -315,17 +388,17 @@
     "recovery": {
       "allocations": [
         {
-          "agency_id": "AGY-01",
+          "agency_id": "AGENCY-01",
           "allocation_id": "ALLOC-1",
-          "cases": 22,
+          "cases": 18,
           "incident_id": "INC-2231",
           "lot_id": "LTC-5090",
           "status": "COMMITTED"
         },
         {
-          "agency_id": "AGY-02",
+          "agency_id": "AGENCY-02",
           "allocation_id": "ALLOC-2",
-          "cases": 18,
+          "cases": 22,
           "incident_id": "INC-2231",
           "lot_id": "LTC-5090",
           "status": "COMMITTED"
@@ -343,7 +416,7 @@
       },
       "shortfalls": [
         {
-          "agency_id": "AGY-03",
+          "agency_id": "AGENCY-03",
           "cases": 20,
           "incident_id": "INC-2231",
           "shortfall_id": "SF-A03",
@@ -368,51 +441,93 @@
       "current_positions": [
         {
           "acknowledgment_status": "CONFIRMED",
-          "name": "Central Warehouse",
-          "node_id": "WH-01",
+          "name": "Warehouse",
+          "node_id": "N-WH",
           "node_type": "WAREHOUSE",
-          "on_hand_cases": 30,
+          "on_hand_cases": 24,
           "path_depth": 0
         },
         {
           "acknowledgment_status": "CONFIRMED",
-          "name": "Agency 01",
-          "node_id": "AGY-01",
-          "node_type": "AGENCY",
+          "name": "Truck 2",
+          "node_id": "N-TR2",
+          "node_type": "VEHICLE",
+          "on_hand_cases": 22,
+          "path_depth": 1
+        },
+        {
+          "acknowledgment_status": "CONFIRMED",
+          "name": "Pickup Staging",
+          "node_id": "N-STG",
+          "node_type": "STAGING",
           "on_hand_cases": 20,
           "path_depth": 1
         },
         {
           "acknowledgment_status": "CONFIRMED",
-          "name": "Agency 02",
-          "node_id": "AGY-02",
+          "name": "Agency 01",
+          "node_id": "N-AG01",
           "node_type": "AGENCY",
-          "on_hand_cases": 18,
-          "path_depth": 1
-        },
-        {
-          "acknowledgment_status": "CONFIRMED",
-          "name": "Agency 04",
-          "node_id": "AGY-04",
-          "node_type": "AGENCY",
-          "on_hand_cases": 12,
+          "on_hand_cases": 10,
           "path_depth": 1
         },
         {
           "acknowledgment_status": "UNCONFIRMED",
           "name": "Site 01",
-          "node_id": "SITE-01",
-          "node_type": "SUB_SITE",
+          "node_id": "N-ST01",
+          "node_type": "SUBSITE",
           "on_hand_cases": 8,
           "path_depth": 2
         },
         {
           "acknowledgment_status": "CONFIRMED",
-          "name": "Agency 05",
-          "node_id": "AGY-05",
-          "node_type": "AGENCY",
-          "on_hand_cases": 8,
+          "name": "Direct Rescue",
+          "node_id": "N-RESC",
+          "node_type": "DIRECT_RESCUE",
+          "on_hand_cases": 12,
           "path_depth": 1
+        }
+      ],
+      "edges": [
+        {
+          "case_count": 22,
+          "edge_id": "E-N-TR2",
+          "is_sub_distribution": false,
+          "lot_id": "LTC-4471",
+          "source_node_id": "N-WH",
+          "target_node_id": "N-TR2"
+        },
+        {
+          "case_count": 20,
+          "edge_id": "E-N-STG",
+          "is_sub_distribution": false,
+          "lot_id": "LTC-4471",
+          "source_node_id": "N-WH",
+          "target_node_id": "N-STG"
+        },
+        {
+          "case_count": 18,
+          "edge_id": "E-N-AG01",
+          "is_sub_distribution": false,
+          "lot_id": "LTC-4471",
+          "source_node_id": "N-WH",
+          "target_node_id": "N-AG01"
+        },
+        {
+          "case_count": 8,
+          "edge_id": "E-N-ST01",
+          "is_sub_distribution": true,
+          "lot_id": "LTC-4471",
+          "source_node_id": "N-AG01",
+          "target_node_id": "N-ST01"
+        },
+        {
+          "case_count": 12,
+          "edge_id": "E-N-RESC",
+          "is_sub_distribution": false,
+          "lot_id": "LTC-4471",
+          "source_node_id": "N-WH",
+          "target_node_id": "N-RESC"
         }
       ],
       "intermediate_subtotals_readded": false,
@@ -421,29 +536,29 @@
       "node_count": 6,
       "paths": [
         {
-          "destination_node_id": "AGY-01",
+          "destination_node_id": "N-TR2",
           "path_depth": 1,
-          "root_node_id": "WH-01"
+          "root_node_id": "N-WH"
         },
         {
-          "destination_node_id": "AGY-02",
+          "destination_node_id": "N-STG",
           "path_depth": 1,
-          "root_node_id": "WH-01"
+          "root_node_id": "N-WH"
         },
         {
-          "destination_node_id": "AGY-04",
+          "destination_node_id": "N-AG01",
           "path_depth": 1,
-          "root_node_id": "WH-01"
+          "root_node_id": "N-WH"
         },
         {
-          "destination_node_id": "SITE-01",
+          "destination_node_id": "N-ST01",
           "path_depth": 2,
-          "root_node_id": "WH-01"
+          "root_node_id": "N-WH"
         },
         {
-          "destination_node_id": "AGY-05",
+          "destination_node_id": "N-RESC",
           "path_depth": 1,
-          "root_node_id": "WH-01"
+          "root_node_id": "N-WH"
         }
       ],
       "query_engine": "SPANNER_GRAPH_GQL",
@@ -453,8 +568,8 @@
         {
           "acknowledgment_status": "UNCONFIRMED",
           "name": "Site 01",
-          "node_id": "SITE-01",
-          "node_type": "SUB_SITE",
+          "node_id": "N-ST01",
+          "node_type": "SUBSITE",
           "on_hand_cases": 8,
           "path_depth": 2
         }

@@ -13,6 +13,24 @@
         "lot_id": "LTC-4471",
         "order_id": "O201",
         "revision": "rev07",
+        "status": "DELIVERED",
+        "vehicle": "TRUCK-01"
+      },
+      {
+        "agency": "Agency 02",
+        "cases": 22,
+        "lot_id": "LTC-4471",
+        "order_id": "O202",
+        "revision": "rev07",
+        "status": "PLANNED",
+        "vehicle": "TRUCK-01"
+      },
+      {
+        "agency": "Agency 03",
+        "cases": 20,
+        "lot_id": "LTC-4471",
+        "order_id": "O203",
+        "revision": "rev07",
         "status": "PLANNED",
         "vehicle": "TRUCK-01"
       },
@@ -36,6 +54,7 @@
       }
     ],
     "dispatch": {
+      "partner_pickups": [],
       "plan_id": "PLAN-2026-08-14",
       "revision": "rev07",
       "vehicles": [
@@ -46,13 +65,30 @@
           "is_operational": null,
           "name": null,
           "remaining_cases": null,
-          "stop_count": 1,
+          "stop_count": 3,
           "stops": [
             {
               "agency": "Agency 01",
+              "assignment_type": "VEHICLE_ROUTED",
               "cases": 18,
               "lot_id": "LTC-4471",
               "order_id": "O201",
+              "status": "DELIVERED"
+            },
+            {
+              "agency": "Agency 02",
+              "assignment_type": "VEHICLE_ROUTED",
+              "cases": 22,
+              "lot_id": "LTC-4471",
+              "order_id": "O202",
+              "status": "PLANNED"
+            },
+            {
+              "agency": "Agency 03",
+              "assignment_type": "VEHICLE_ROUTED",
+              "cases": 20,
+              "lot_id": "LTC-4471",
+              "order_id": "O203",
               "status": "PLANNED"
             }
           ],
@@ -69,6 +105,7 @@
           "stops": [
             {
               "agency": "Agency 04",
+              "assignment_type": "VEHICLE_ROUTED",
               "cases": 15,
               "lot_id": "LTC-5090",
               "order_id": "O204",
@@ -76,6 +113,7 @@
             },
             {
               "agency": "Agency 05",
+              "assignment_type": "VEHICLE_ROUTED",
               "cases": 21,
               "lot_id": "LTC-5090",
               "order_id": "O205",
@@ -105,16 +143,7 @@
   },
   "execution_evidence_as_of": {
     "custody_graph": null,
-    "history": [
-      {
-        "action_id": "CMD-81337DC1990351BB97F3566E358C",
-        "action_type": "SAVE_PLAN_REVISION",
-        "committed_at": "2026-08-14T07:30:00+00:00",
-        "mutations_applied": 1,
-        "receipt_id": "fixture-RCT-plan:rev07",
-        "status": "SUCCESS"
-      }
-    ],
+    "history": [],
     "receipts_committed": 1
   },
   "operating_day": "2026-08-14",
