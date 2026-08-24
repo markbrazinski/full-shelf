@@ -1,0 +1,116 @@
+{
+  "agent_activity_as_of": null,
+  "authority_scope": "east-bay-food-bank@2026-08-14",
+  "carry_forward_obligations": [],
+  "classification": "SYNTHETIC_TEST",
+  "current_day": {
+    "active_plan_revision": "rev08",
+    "approvals": [],
+    "commitments": [
+      {
+        "agency": "Agency 01",
+        "cases": 18,
+        "lot_id": "LTC-4471",
+        "order_id": "O201",
+        "revision": "rev07",
+        "status": "PLANNED",
+        "vehicle": "TRUCK-01"
+      },
+      {
+        "agency": "Agency 04",
+        "cases": 15,
+        "lot_id": "LTC-5090",
+        "order_id": "O204",
+        "revision": "rev07",
+        "status": "PLANNED",
+        "vehicle": "TRUCK-02"
+      },
+      {
+        "agency": "Agency 05",
+        "cases": 21,
+        "lot_id": "LTC-5090",
+        "order_id": "O205",
+        "revision": "rev07",
+        "status": "PLANNED",
+        "vehicle": "TRUCK-02"
+      },
+      {
+        "agency": "Agency 02",
+        "cases": 22,
+        "lot_id": "LTC-4471",
+        "order_id": "O202",
+        "revision": "rev08",
+        "status": "PLANNED",
+        "vehicle": "TRUCK-02"
+      }
+    ],
+    "incidents": [
+      {
+        "affected_lot_id": null,
+        "incident_id": "INC-2210",
+        "incident_type": "VEHICLE_FAILURE",
+        "model_armor_screening": null,
+        "refusal": null,
+        "status": "SCOPING",
+        "terminal_state": "NONE"
+      },
+      {
+        "affected_lot_id": "LTC-4471",
+        "incident_id": "INC-2231",
+        "incident_type": "FOOD_SAFETY_RECALL",
+        "model_armor_screening": {
+          "correlation_id": "0123456789abcdef0123456789abcdef",
+          "result": "PASS"
+        },
+        "refusal": null,
+        "status": "SCOPING",
+        "terminal_state": "NONE"
+      }
+    ],
+    "plan_constraints": [],
+    "plan_id": "PLAN-2026-08-14",
+    "plan_revisions": [
+      {
+        "plan_id": "PLAN-2026-08-14",
+        "revision": "rev07",
+        "status": "SUPERSEDED"
+      },
+      {
+        "plan_id": "PLAN-2026-08-14",
+        "revision": "rev08",
+        "status": "ACTIVE"
+      }
+    ],
+    "recovery": {
+      "allocations": [],
+      "shortfalls": []
+    },
+    "vehicles": null
+  },
+  "execution_evidence_as_of": {
+    "custody_graph": null,
+    "receipts_committed": 4
+  },
+  "operating_day": "2026-08-14",
+  "projection_boundary": {
+    "as_of": "2026-08-14T09:36:00+00:00",
+    "mode": "EXPLICIT_AS_OF",
+    "omitted_fields": [
+      {
+        "field": "current_day.vehicles",
+        "reason": "PRE_BOUNDARY_STATE_NOT_RETAINED"
+      },
+      {
+        "field": "custody_graph",
+        "reason": "NOT_COMMITTED_AS_OF_BOUNDARY"
+      },
+      {
+        "field": "agent_activity_as_of",
+        "reason": "NOT_COMMITTED_AS_OF_BOUNDARY"
+      }
+    ]
+  },
+  "replay_notice": "Fixture generated from the production handler against a faked snapshot. Not a real execution. No Gemini, ADK, Model Armor, KMS, or ledger evidence.",
+  "tenant_id": "east-bay-food-bank",
+  "verified_principal_subject": "operator-subject"
+}

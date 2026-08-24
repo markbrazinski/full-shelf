@@ -1,0 +1,163 @@
+{
+  "agent_activity_as_of": {
+    "committed_at": "2026-08-14T10:10:00+00:00",
+    "coordination_run_id": "run-coord-1",
+    "coordinator_session_id": "sess-coord-1",
+    "delegation_trace": [
+      {
+        "agent_id": "full-shelf.recall-extraction.v1",
+        "specialist_run_id": "run-recall-1"
+      }
+    ],
+    "manifest_version": "1.1.0",
+    "proposal_status": "PROPOSED",
+    "root_agent_id": "full-shelf.incident-coordinator.v1"
+  },
+  "authority_scope": "east-bay-food-bank@2026-08-14",
+  "carry_forward_obligations": [
+    {
+      "incident_id": "INC-2231",
+      "kind": "ACKNOWLEDGMENT_OBLIGATION",
+      "reference_id": "WORK-SITE01"
+    },
+    {
+      "kind": "MOVEMENT_BARRIER",
+      "lot_id": "LTC-4471",
+      "reference_id": "BARRIER-4471"
+    },
+    {
+      "incident_id": "INC-2231",
+      "kind": "RECOVERY_SHORTFALL",
+      "reference_id": "SF-A03"
+    }
+  ],
+  "classification": "SYNTHETIC_TEST",
+  "current_day": {
+    "active_plan_revision": "rev08",
+    "approvals": [],
+    "commitments": [
+      {
+        "agency": "Agency 01",
+        "cases": 18,
+        "lot_id": "LTC-4471",
+        "order_id": "O201",
+        "revision": "rev07",
+        "status": "PLANNED",
+        "vehicle": "TRUCK-01"
+      },
+      {
+        "agency": "Agency 04",
+        "cases": 15,
+        "lot_id": "LTC-5090",
+        "order_id": "O204",
+        "revision": "rev07",
+        "status": "PLANNED",
+        "vehicle": "TRUCK-02"
+      },
+      {
+        "agency": "Agency 05",
+        "cases": 21,
+        "lot_id": "LTC-5090",
+        "order_id": "O205",
+        "revision": "rev07",
+        "status": "PLANNED",
+        "vehicle": "TRUCK-02"
+      },
+      {
+        "agency": "Agency 02",
+        "cases": 22,
+        "lot_id": "LTC-4471",
+        "order_id": "O202",
+        "revision": "rev08",
+        "status": "PLANNED",
+        "vehicle": "TRUCK-02"
+      }
+    ],
+    "incidents": [
+      {
+        "affected_lot_id": null,
+        "incident_id": "INC-2210",
+        "incident_type": "VEHICLE_FAILURE",
+        "model_armor_screening": null,
+        "refusal": null,
+        "status": "SCOPING",
+        "terminal_state": "NONE"
+      },
+      {
+        "affected_lot_id": "LTC-4471",
+        "incident_id": "INC-2231",
+        "incident_type": "FOOD_SAFETY_RECALL",
+        "model_armor_screening": {
+          "correlation_id": "0123456789abcdef0123456789abcdef",
+          "result": "PASS"
+        },
+        "refusal": null,
+        "status": "CONTAINMENT_IN_PROGRESS",
+        "terminal_state": "NONE"
+      }
+    ],
+    "plan_constraints": [
+      {
+        "constraint_type": "LOT_EXCLUSION",
+        "description": "LTC-4471 excluded",
+        "plan_id": "PLAN-2026-08-14"
+      }
+    ],
+    "plan_id": "PLAN-2026-08-14",
+    "plan_revisions": [
+      {
+        "plan_id": "PLAN-2026-08-14",
+        "revision": "rev07",
+        "status": "SUPERSEDED"
+      },
+      {
+        "plan_id": "PLAN-2026-08-14",
+        "revision": "rev08",
+        "status": "ACTIVE"
+      }
+    ],
+    "recovery": {
+      "allocations": [
+        {
+          "allocation_id": "ALLOC-1",
+          "incident_id": "INC-2231",
+          "status": "COMMITTED"
+        }
+      ],
+      "shortfalls": [
+        {
+          "incident_id": "INC-2231",
+          "shortfall_id": "SF-A03",
+          "status": "OPEN"
+        }
+      ]
+    },
+    "vehicles": [
+      {
+        "assigned_cases": 58,
+        "capacity": 60,
+        "is_operational": true,
+        "name": "Refrigerated Truck 2",
+        "vehicle_id": "TRUCK-02"
+      }
+    ]
+  },
+  "execution_evidence_as_of": {
+    "custody_graph": {
+      "confirmed_cases": 88,
+      "lot_id": "LTC-4471",
+      "unconfirmed_cases": 8,
+      "unique_current_cases": 96
+    },
+    "receipts_committed": 7
+  },
+  "operating_day": "2026-08-14",
+  "projection_boundary": {
+    "as_of": "2026-08-14T10:10:00+00:00",
+    "mode": "EXPLICIT_AS_OF",
+    "omitted_fields": []
+  },
+  "replay_notice": "Fixture generated from the production handler against a faked snapshot. Not a real execution. No Gemini, ADK, Model Armor, KMS, or ledger evidence.",
+  "tenant_id": "east-bay-food-bank",
+  "verified_principal_subject": "operator-subject"
+}

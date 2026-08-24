@@ -1,0 +1,79 @@
+{
+  "operating_day": "2026-08-14",
+  "tenant_id": "east-bay-food-bank",
+  "classification": "SYNTHETIC_TEST",
+  "beats": [
+    {
+      "beat": "healthy",
+      "as_of": "2026-08-14T08:05:00+00:00",
+      "include_next_day_draft": false,
+      "fixture": "healthy.json"
+    },
+    {
+      "beat": "truckfail",
+      "as_of": "2026-08-14T08:20:00+00:00",
+      "include_next_day_draft": false,
+      "fixture": "truckfail.json"
+    },
+    {
+      "beat": "review",
+      "as_of": "2026-08-14T08:21:00+00:00",
+      "include_next_day_draft": false,
+      "fixture": "review.json"
+    },
+    {
+      "beat": "geo",
+      "as_of": "2026-08-14T08:22:00+00:00",
+      "include_next_day_draft": false,
+      "fixture": "geo.json"
+    },
+    {
+      "beat": "rev08",
+      "as_of": "2026-08-14T08:24:00+00:00",
+      "include_next_day_draft": false,
+      "fixture": "rev08.json"
+    },
+    {
+      "beat": "recall_received",
+      "as_of": "2026-08-14T09:36:00+00:00",
+      "include_next_day_draft": false,
+      "fixture": "recall_received.json"
+    },
+    {
+      "beat": "processing",
+      "as_of": "2026-08-14T10:04:00+00:00",
+      "include_next_day_draft": false,
+      "fixture": "processing.json"
+    },
+    {
+      "beat": "custody",
+      "as_of": "2026-08-14T10:05:00+00:00",
+      "include_next_day_draft": false,
+      "fixture": "custody.json"
+    },
+    {
+      "beat": "recovery",
+      "as_of": "2026-08-14T10:10:00+00:00",
+      "include_next_day_draft": false,
+      "fixture": "recovery.json"
+    },
+    {
+      "beat": "refusal",
+      "as_of": "2026-08-14T10:13:00+00:00",
+      "include_next_day_draft": false,
+      "fixture": "refusal.json"
+    },
+    {
+      "beat": "outcome",
+      "as_of": "2026-08-14T16:30:00+00:00",
+      "include_next_day_draft": false,
+      "fixture": "outcome.json"
+    },
+    {
+      "beat": "tomorrow",
+      "as_of": "2026-08-14T17:00:00+00:00",
+      "include_next_day_draft": true,
+      "fixture": "tomorrow.json"
+    }
+  ]
+}
