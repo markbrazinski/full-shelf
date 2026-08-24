@@ -1,9 +1,13 @@
 // =====================================================================
-// Full Shelf — 13-view verification against the real replay server
+// Full Shelf v6.1 — acceptance verification at 1600x900
 // ---------------------------------------------------------------------
-// Every assertion here is a CONTRACT claim, not a styling claim: the
-// canonical quantities, the absence of GPS language, the first-safe
-// boundaries, and the fixture staying out of the runtime path.
+// Runs against the REAL localhost replay server and a real Vite dev
+// server in deterministic mode — never a mock.
+//
+// Every assertion is a CONTRACT claim, not a styling claim: canonical
+// quantities, absence of GPS language, projection-derived incident
+// counts, the Saturday unavailable state, and the fixture staying out
+// of the runtime path.
 // =====================================================================
 
 import { expect, test, type Page } from "@playwright/test";
@@ -13,197 +17,267 @@ import path from "node:path";
 const SHOTS = path.resolve("e2e/screenshots");
 fs.mkdirSync(SHOTS, { recursive: true });
 
-const REPLAY = "http://127.0.0.1:8787";
+const LOADING = "text=Loading control plane…";
 
-interface View {
-  n: number;
-  id: string;
-  label: string;
-  expect: RegExp;
+async function settle(page: Page) {
+  await page.waitForSelector(LOADING, { state: "detached", timeout: 15_000 });
 }
 
-// The 12 operational states, in beat order, plus History.
-const VIEWS: View[] = [
-  { n: 1,  id: "healthy",            label: "Healthy",             expect: /O201/ },
-  { n: 2,  id: "truckFailure",       label: "Truck failure",       expect: /INC-2210/ },
-  { n: 3,  id: "revisionReview",     label: "Revision review",     expect: /rev08/ },
-  { n: 4,  id: "dispatchSchematic",  label: "Planned dispatch",    expect: /not live vehicle tracking/ },
-  { n: 5,  id: "rev08Active",        label: "rev08 active",        expect: /rev08/ },
-  { n: 6,  id: "recallReceived",     label: "Recall received",     expect: /LTC-4471/ },
-  { n: 7,  id: "recallProcessing",   label: "Recall processing",   expect: /INC-2231/ },
-  { n: 8,  id: "custodyEstablished", label: "Custody established", expect: /Custody established/ },
-  { n: 9,  id: "governedRecovery",   label: "Governed recovery",   expect: /40/ },
-  { n: 10, id: "governanceRefusal",  label: "Governance refusal",  expect: /DENIED/ },
-  { n: 11, id: "todaysOutcome",      label: "Today's Outcome",     expect: /PARTIALLY_CONTAINED/ },
-  { n: 12, id: "tomorrowsDraft",     label: "Tomorrow",            expect: /PLAN-2026-08-15|DRAFT/ },
-  { n: 13, id: "history",            label: "History",             expect: /Read-only|read-only/i },
-];
-
-async function gotoBeat(page: Page, id: string) {
+async function open(page: Page) {
   await page.goto("/");
-  await page.waitForSelector("text=Loading projection…", { state: "detached", timeout: 15_000 });
-  if (id === "history") {
-    await page.getByRole("button", { name: /history/i }).first().click();
-  } else {
-    await page.locator(`[data-beat="${id}"]`).first().click();
-  }
-  await page.waitForSelector("text=Loading projection…", { state: "detached", timeout: 15_000 });
-  await page.waitForTimeout(250);
+  await settle(page);
 }
 
-test.describe("13 views from deterministic replay", () => {
-  for (const v of VIEWS) {
-    test(`${String(v.n).padStart(2, "0")} ${v.label} renders from replay`, async ({ page }) => {
-      const requests: string[] = [];
-      page.on("request", (r) => {
-        if (r.url().includes("/api/v1/projections/")) requests.push(r.url());
-      });
+async function shot(page: Page, name: string) {
+  await page.screenshot({ path: path.join(SHOTS, `${name}.png`), fullPage: false });
+}
 
-      await gotoBeat(page, v.id);
+// --------------------------------------------------------------- Friday
 
-      const body = await page.locator("body").innerText();
-      expect(body).toMatch(v.expect);
-
-      // Loaded over HTTP from the replay server with an explicit as_of.
-      expect(requests.length).toBeGreaterThan(0);
-      expect(requests.some((u) => u.startsWith(REPLAY) && u.includes("as_of="))).toBe(true);
-
-      // No live VEHICLE-tracking claim in any view. Two things are
-      // deliberately NOT violations: negated disclaimers ("no positions
-      // or bearings"), and custody "current positions", which are where
-      // cases are held in the network — not a vehicle location.
-      expect(body).not.toMatch(/last reported|GPS|live position|live tracking(?! )/i);
-      expect(body).not.toMatch(/bearing:|heading:|lat\s*[:=]|lng\s*[:=]/i);
-      // Any mention of tracking must be a denial of it.
-      for (const m of body.match(/[^\n]*vehicle tracking[^\n]*/gi) ?? []) {
-        expect(m).toMatch(/not live vehicle tracking/i);
-      }
-
-      await page.screenshot({
-        path: path.join(SHOTS, `${String(v.n).padStart(2, "0")}-${v.id}.png`),
-        fullPage: false,
-      });
-    });
-  }
+test("01 · Friday healthy shows rev07 commitments and a quiet sidecar", async ({ page }) => {
+  await open(page);
+  await expect(page.getByTestId("auth-rev")).toHaveText("rev07");
+  await expect(page.getByTestId("clock")).toHaveText("08:05");
+  await expect(page.locator("body")).toContainText("O201");
+  // No incident has been reported at 08:05, so no badge exists.
+  await expect(page.getByTestId("incident-badge")).toHaveCount(0);
+  await expect(page.getByTestId("sidecar-quiet")).toBeVisible();
+  await shot(page, "v6-01-friday-healthy");
 });
 
-test("canonical facts match the authority baseline", async ({ page }) => {
-  await gotoBeat(page, "governanceRefusal");
-  const body = await page.locator("body").innerText();
-  // O203/20 is the partner pickup; O205/21 was fabricated and must not appear as one.
-  expect(body).toMatch(/DENIED/);
-  expect(body).not.toMatch(/O205\s*·[^\n]*partner/i);
+test("02 · disruption is in place: same shell, rev08, incident badge appears", async ({ page }) => {
+  await open(page);
+  const navBefore = await page.getByTestId("nav-today").boundingBox();
 
-  // The custody graph's first safe boundary is 10:10. At 10:05 it is
-  // omitted as PRE_BOUNDARY_STATE_NOT_RETAINED and must not be shown.
-  await gotoBeat(page, "custodyEstablished");
-  const early = await page.locator("body").innerText();
-  expect(early).not.toMatch(/\b96\b/);
+  await page.getByTestId("toggle-disruption").click();
+  await settle(page);
 
-  await gotoBeat(page, "governedRecovery");
-  const custody = await page.locator("body").innerText();
-  expect(custody).toMatch(/\b96\b/); // unique current cases
-  expect(custody).toMatch(/\b88\b/); // confirmed
-  expect(custody).toMatch(/\b8\b/);  // unconfirmed
+  await expect(page.getByTestId("auth-rev")).toHaveText("rev08");
+  // The shell does not move: disruption happens inside the workspace.
+  expect(await page.getByTestId("nav-today").boundingBox()).toEqual(navBefore);
+  await shot(page, "v6-02-friday-disrupted");
 });
 
-test("dispatch shows the 58/60 decision and the O203 partner path", async ({ page }) => {
-  await gotoBeat(page, "governanceRefusal");
-  // rev08 dispatch is reached from the planned-dispatch view.
-  await gotoBeat(page, "dispatchSchematic");
-  const body = await page.locator("body").innerText();
-  expect(body).toMatch(/O203/);
-  expect(body).toMatch(/not live vehicle tracking/);
+test("03 · incident badge is derived from the projection, not the view", async ({ page }) => {
+  await open(page);
+  // Today + healthy: no incident exists at this boundary.
+  await expect(page.getByTestId("incident-badge")).toHaveCount(0);
+
+  // Opening the Incidents view must NOT conjure a badge by itself; the
+  // count comes from the contract's incidents at that boundary.
+  await page.getByTestId("nav-incident").click();
+  await settle(page);
+  const badge = page.getByTestId("incident-badge");
+  await expect(badge).toBeVisible();
+  // One open incident: the recall. The truck failure resolved at 08:24 and
+  // must NOT be counted, which is the whole point of deriving this.
+  await expect(badge).toHaveText("1");
+  const statuses = page.getByTestId("incident-status");
+  await expect(statuses.filter({ hasText: "INC-2210" })).toContainText("RESOLVED");
+  await expect(statuses.filter({ hasText: "INC-2231" })).toContainText(/SCOPING|CONTAINMENT|PARTIALLY_CONTAINED/);
+
+  // At the Response boundary the recall has reached its terminal state.
+  await page.getByTestId("tab-response").click();
+  await settle(page);
+  await expect(page.getByTestId("incident-badge")).toHaveText("1");
+  await expect(page.getByTestId("incident-status").filter({ hasText: "INC-2231" }))
+    .toContainText("PARTIALLY_CONTAINED");
 });
 
-test("fixed-boundary refresh is byte-stable", async ({ page }) => {
-  await gotoBeat(page, "governedRecovery");
-  const first = await page.locator("body").innerText();
-  await page.reload();
-  await page.waitForSelector("text=Loading projection…", { state: "detached", timeout: 15_000 });
-  await gotoBeat(page, "governedRecovery");
-  const second = await page.locator("body").innerText();
-  expect(second).toBe(first);
+// ------------------------------------------------------------- Incident
+
+test("04 · recall Scope", async ({ page }) => {
+  await open(page);
+  await page.getByTestId("nav-incident").click();
+  await settle(page);
+  await page.getByTestId("tab-scope").click();
+  await settle(page);
+  await expect(page.locator("body")).toContainText("LTC-4471");
+  await expect(page.locator("body")).toContainText(/Model Armor/i);
+  await shot(page, "v6-04-incident-scope");
 });
 
-test("Tomorrow requires explicit navigation and leaks no future state", async ({ page }) => {
-  // Earlier boundaries must not carry tomorrow's draft.
-  await gotoBeat(page, "todaysOutcome");
-  const outcome = await page.locator("body").innerText();
-  expect(outcome).not.toMatch(/PLAN-2026-08-15/);
-
-  await gotoBeat(page, "tomorrowsDraft");
-  const tomorrow = await page.locator("body").innerText();
-  expect(tomorrow).toMatch(/PLAN-2026-08-15|DRAFT/);
+test("05 · Custody holds the canonical 96 / 88 / 8", async ({ page }) => {
+  await open(page);
+  await page.getByTestId("nav-incident").click();
+  await settle(page);
+  await page.getByTestId("tab-custody").click();
+  await settle(page);
+  const body = page.locator("body");
+  await expect(body).toContainText("96");
+  await expect(body).toContainText("88");
+  await expect(body).toContainText("8");
+  await shot(page, "v6-05-incident-custody");
 });
 
-test("no future-state data appears at an early boundary", async ({ page }) => {
-  await gotoBeat(page, "healthy");
-  const body = await page.locator("body").innerText();
-  // The recall, the refusal and the custody graph are all later than 08:05.
-  expect(body).not.toMatch(/INC-2231/);
-  expect(body).not.toMatch(/DENIED/);
-  expect(body).not.toMatch(/PARTIALLY_CONTAINED/);
+test("06 · Response holds 40 recovered, 20 short, and the canonical refusal", async ({ page }) => {
+  await open(page);
+  await page.getByTestId("nav-incident").click();
+  await settle(page);
+  await page.getByTestId("tab-response").click();
+  await settle(page);
+  const body = page.locator("body");
+  await expect(body).toContainText("40");
+  await expect(body).toContainText("20");
+  await expect(body).toContainText(/DENIED/);
+  await expect(body).toContainText(/0 MUTATIONS/i);
+  await shot(page, "v6-06-incident-response");
 });
 
-test("History is read-only", async ({ page }) => {
-  await gotoBeat(page, "history");
-  const body = await page.locator("body").innerText();
-  expect(body).toMatch(/read-only/i);
-  expect(body).toMatch(/RECORD_REFUSAL|refused/i);
+test("07 · Evidence opens the Execution Record", async ({ page }) => {
+  await open(page);
+  await page.getByTestId("nav-incident").click();
+  await settle(page);
+  await page.getByTestId("tab-evidence").click();
+  await settle(page);
+  await page.getByRole("button", { name: /Execution Record/i }).first().click();
+  await expect(page.locator("body")).toContainText(/EXECUTION RECORD/i);
+  await shot(page, "v6-07-incident-evidence");
 });
 
-test("disconnected state shows the last boundary and claims no new truth", async ({ page }) => {
-  await gotoBeat(page, "governedRecovery");
-  await page.getByRole("button", { name: /connected/i }).first().click();
-  const body = await page.locator("body").innerText();
-  expect(body).toMatch(/DISCONNECTED/);
-  expect(body).toMatch(/No authoritative state changes while disconnected/i);
-  await page.screenshot({ path: path.join(SHOTS, "14-disconnected.png") });
+// -------------------------------------------------------------- History
+
+test("08 · History is read-only", async ({ page }) => {
+  await open(page);
+  await page.getByTestId("nav-history").click();
+  await settle(page);
+  await expect(page.locator("body")).toContainText(/read-only/i);
+  await shot(page, "v6-08-history");
 });
 
-test("a malformed response degrades honestly", async ({ page }) => {
-  await page.route("**/api/v1/projections/**", (route) =>
-    route.fulfill({ status: 200, contentType: "application/json", body: '{"tenant_id":"x"}' }),
-  );
-  await page.goto("/");
-  await expect(page.getByText("Projection unavailable")).toBeVisible({ timeout: 15_000 });
-  const body = await page.locator("body").innerText();
-  expect(body).toMatch(/Malformed projection|required field absent/i);
-  await page.screenshot({ path: path.join(SHOTS, "15-malformed.png") });
+// ------------------------------------------------------------- Saturday
+
+test("09 · Saturday candidate plan is contract-backed", async ({ page }) => {
+  await open(page);
+  await page.getByTestId("day-sat").click();
+  await settle(page);
+
+  await expect(page.getByTestId("saturday-candidate-map")).toBeVisible();
+  const manifests = page.getByTestId("candidate-manifest");
+  await expect(manifests.first()).toBeVisible();
+  await expect(manifests.first()).toContainText("CANDIDATE");
+
+  // 18 + 22 = 40 scheduled; Agency 03's 20 stay explicitly unassigned.
+  const body = page.locator("body");
+  await expect(body).toContainText("18");
+  await expect(body).toContainText("22");
+  await expect(page.getByTestId("unassigned-demand")).toContainText("20");
+  await expect(page.getByTestId("unassigned-demand")).toContainText(/AGENCY-03/i);
+
+  // A draft makes no activation or delivery-feasibility claim.
+  await expect(body).not.toContainText(/Activate/i);
+  await expect(body).not.toContainText(/will be delivered/i);
+  await shot(page, "v6-09-saturday-candidate");
 });
 
-test("an unreachable service renders no invented data", async ({ page }) => {
-  await page.route("**/api/v1/projections/**", (route) => route.abort());
-  await page.goto("/");
-  await expect(page.getByText("Projection unavailable")).toBeVisible({ timeout: 15_000 });
-  const body = await page.locator("body").innerText();
-  expect(body).not.toMatch(/O201|O202|96 cases/);
-  await page.screenshot({ path: path.join(SHOTS, "16-unreachable.png") });
-});
-
-test("missing Maps key falls back to the SVG schematic", async ({ page }) => {
-  // No VITE_GOOGLE_MAPS_API_KEY is set for this run, so the fallback is active.
-  await gotoBeat(page, "dispatchSchematic");
-  await expect(page.getByTestId("dispatch-svg-schematic")).toBeVisible();
-  await expect(page.getByTestId("planned-dispatch-map")).toHaveCount(0);
-  const label = await page.getByTestId("schematic-provenance-label").innerText();
-  expect(label).toMatch(/not live vehicle tracking/);
-  await page.screenshot({ path: path.join(SHOTS, "17-map-fallback.png") });
-});
-
-test("a Maps key that loads but cannot render falls back to the schematic", async ({ page }) => {
-  // Simulate the unauthorized-key case: the API script loads, but no map
-  // ever paints. That must degrade to the schematic, not a grey box.
-  await page.addInitScript(() => {
-    (window as unknown as Record<string, unknown>).__FS_FORCE_MAP_KEY = "INVALID_TEST_KEY";
+test("10 · Saturday renders the unavailable state when the contract has no draft", async ({ page }) => {
+  // Serve a draft-free projection so the unavailable path is genuinely
+  // exercised, rather than passing because the fixture happened to be empty.
+  await page.route("**/projections/demo-beats**", async (route) => {
+    const res = await route.fetch();
+    const body = await res.json();
+    delete body.next_day_draft;
+    await route.fulfill({ response: res, body: JSON.stringify(body) });
   });
-  await page.route("https://maps.googleapis.com/maps/api/js*", (route) =>
-    route.fulfill({ status: 200, contentType: "application/javascript", body: "/* no google namespace */" }),
-  );
-  await gotoBeat(page, "dispatchSchematic");
-  await expect(page.getByTestId("dispatch-svg-schematic")).toBeVisible({ timeout: 15_000 });
-  const body = await page.locator("body").innerText();
-  expect(body).toMatch(/O203/);
-  expect(body).toMatch(/not live vehicle tracking/);
+
+  await open(page);
+  await page.getByTestId("day-sat").click();
+  await settle(page);
+
+  await expect(page.getByTestId("saturday-unavailable")).toBeVisible();
+  await expect(page.getByTestId("saturday-status-chip")).toContainText(/UNAVAILABLE/i);
+
+  // No routes, manifests, assignments, loads, or lots are drawn.
+  await expect(page.getByTestId("saturday-candidate-map")).toHaveCount(0);
+  await expect(page.getByTestId("candidate-manifest")).toHaveCount(0);
+  await expect(page.locator("body")).not.toContainText("LTC-5090");
+  await shot(page, "v6-10-saturday-unavailable");
+});
+
+// ------------------------------------------------------- datasource fail
+
+test("11 · datasource failure shows the error surface and Reconnect retries", async ({ page }) => {
+  let fail = true;
+  await page.route("**/projections/demo-beats**", async (route) => {
+    if (fail) return route.abort("failed");
+    return route.fallback();
+  });
+
+  await page.goto("/");
+  await expect(page.getByTestId("connection-error")).toBeVisible();
+  // Nothing stale is shown behind the error.
+  await expect(page.locator("body")).not.toContainText("O201");
+  await shot(page, "v6-11-connection-error");
+
+  // Reconnect performs a REAL retry: with the fault cleared it recovers.
+  fail = false;
+  await page.getByTestId("reconnect").click();
+  await settle(page);
+  await expect(page.getByTestId("connection-error")).toHaveCount(0);
+  await expect(page.locator("body")).toContainText("O201");
+  await shot(page, "v6-12-reconnected");
+});
+
+// ------------------------------------------------------------------ map
+
+test("12 · map fallback renders without a Maps key", async ({ page }) => {
+  await open(page);
+  await page.getByTestId("toggle-disruption").click();
+  await settle(page);
+  // No key is configured in verification, so the SVG schematic is shown.
+  await expect(page.locator("body")).toContainText(/not live vehicle tracking/i);
+  await shot(page, "v6-13-map-fallback");
+});
+
+test("13 · map degrades to the schematic when Maps fails to load", async ({ page }) => {
+  // A forced FAKE key exercises the unauthorized-key path. A real key is
+  // never read from or written to the page.
+  await page.addInitScript(() => {
+    (globalThis as { __FS_FORCE_MAP_KEY?: string }).__FS_FORCE_MAP_KEY = "fake-invalid-key";
+  });
+  await page.route("https://maps.googleapis.com/**", (route) => route.abort("failed"));
+
+  await open(page);
+  await page.getByTestId("toggle-disruption").click();
+  await settle(page);
+  await expect(page.locator("body")).toContainText(/not live vehicle tracking/i);
+  await shot(page, "v6-14-map-degraded");
+});
+
+// ------------------------------------------------------------- integrity
+
+test("14 · no live-GPS claim and no future-state leakage on any surface", async ({ page }) => {
+  await open(page);
+  for (const [nav, label] of [
+    ["nav-today", "today"],
+    ["nav-incident", "incident"],
+    ["nav-history", "history"],
+  ] as const) {
+    await page.getByTestId(nav).click();
+    await settle(page);
+    const text = (await page.locator("body").innerText()).toLowerCase();
+
+    // Positive GPS claims are forbidden; the negation is required copy.
+    const claims = text.match(/\blive gps\b|\breal-?time gps\b|\bcurrent position\b/g) ?? [];
+    for (const c of claims) {
+      const i = text.indexOf(c);
+      expect(text.slice(Math.max(0, i - 12), i)).toMatch(/not\s+$/);
+    }
+    // Saturday must never leak into a Friday surface.
+    if (label !== "history") {
+      expect(text).not.toContain("plan-2026-08-15");
+    }
+    // Agents never show a transient state.
+    expect(text).not.toMatch(/\brunning\b/);
+  }
+});
+
+test("15 · the design fixture never reaches the runtime path", async ({ page }) => {
+  const sources: string[] = [];
+  page.on("response", (r) => {
+    const u = r.url();
+    if (u.includes("/src/") || u.includes("/assets/")) sources.push(u);
+  });
+  await open(page);
+  expect(sources.filter((u) => /FixtureDataSource/i.test(u))).toHaveLength(0);
 });

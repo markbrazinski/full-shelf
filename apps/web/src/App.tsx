@@ -51,9 +51,13 @@ type IncidentTab = "scope" | "custody" | "response" | "evidence";
 const FRIDAY_HEALTHY: BeatId = "healthy";
 const FRIDAY_DISRUPTED: BeatId = "rev08Active";
 const SATURDAY: BeatId = "tomorrowsDraft";
+// Each tab reads the first boundary at which its evidence is actually
+// committed. Custody reconciliation commits at 10:10, not at the 10:05
+// beat label: asking earlier truthfully returns
+// custody_graph = NOT_COMMITTED_AS_OF_BOUNDARY.
 const INCIDENT_TAB_BEAT: Record<IncidentTab, BeatId> = {
   scope: "recallProcessing",
-  custody: "custodyEstablished",
+  custody: "governedRecovery",
   response: "governanceRefusal",
   evidence: "governanceRefusal",
 };

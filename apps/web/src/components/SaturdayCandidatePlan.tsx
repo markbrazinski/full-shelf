@@ -62,6 +62,13 @@ function CandidateMap({ view }: { view: TomorrowView }) {
   const stops = view.candidateVehicles.flatMap((v) =>
     v.stops.map((s) => ({ ...s, vehicleId: v.vehicleId })),
   );
+  // Positions are laid out to fit the viewBox for any stop count, so a
+  // third candidate stop cannot walk off the right edge. Geometry is
+  // presentational; the facts are sequence, agency and cases.
+  const at = (i: number) => {
+    const span = Math.max(stops.length - 1, 1);
+    return { x: 330 + (i - (stops.length - 1) / 2) * Math.min(150, 520 / span), y: 250 - i * 60 };
+  };
   return (
     <div style={css(PANEL)} data-testid="saturday-candidate-map">
       <div style={css("flex:none;display:flex;align-items:baseline;justify-content:space-between")}>
@@ -120,7 +127,7 @@ function CandidateMap({ view }: { view: TomorrowView }) {
           {/* Candidate route: dashed, because it is a draft, not a commitment. */}
           {stops.length > 0 ? (
             <path
-              d={`M176 268 ${stops.map((_, i) => `L${410 + i * 110} ${260 - i * 110}`).join(" ")}`}
+              d={`M176 268 ${stops.map((_, i) => `L${at(i).x} ${at(i).y}`).join(" ")}`}
               fill="none"
               stroke="#4f97b0"
               strokeWidth="3.5"
@@ -145,8 +152,7 @@ function CandidateMap({ view }: { view: TomorrowView }) {
           </g>
           <g fontFamily="IBM Plex Mono">
             {stops.map((s, i) => {
-              const x = 410 + i * 110;
-              const y = 260 - i * 110;
+              const { x, y } = at(i);
               return (
                 <g key={s.orderId}>
                   <circle
@@ -170,8 +176,8 @@ function CandidateMap({ view }: { view: TomorrowView }) {
             {view.unassignedDemand.map((u, i) => (
               <g key={u.shortfallId}>
                 <circle
-                  cx={120 + i * 90}
-                  cy={360}
+                  cx={250 + i * 110}
+                  cy={330}
                   r="15"
                   fill="none"
                   stroke="#c98a2e"
@@ -179,8 +185,8 @@ function CandidateMap({ view }: { view: TomorrowView }) {
                   strokeDasharray="5 4"
                 />
                 <text
-                  x={120 + i * 90}
-                  y={364}
+                  x={250 + i * 110}
+                  y={334}
                   textAnchor="middle"
                   fill="#8a5a12"
                   fontSize="9"
@@ -188,7 +194,7 @@ function CandidateMap({ view }: { view: TomorrowView }) {
                 >
                   !
                 </text>
-                <text x={120 + i * 90} y={388} textAnchor="middle" fill="#8a5a12" fontSize="8.5">
+                <text x={250 + i * 110} y={358} textAnchor="middle" fill="#8a5a12" fontSize="8.5">
                   unassigned · {u.cases ?? "—"}
                 </text>
               </g>
