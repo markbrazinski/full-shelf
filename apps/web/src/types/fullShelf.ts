@@ -165,6 +165,15 @@ export interface DispatchStop {
   title: string;
   sub: string;
   tone: OrderStateTone;
+  // Structured contract facts. Presentation reads these directly; nothing
+  // parses them back out of `title`/`sub`, which are display strings.
+  orderId: string;
+  agency: string | null;
+  cases: number | null;
+  lotId: string | null;
+  /** 1-based committed manifest position; null for a partner pickup. */
+  sequence: number | null;
+  vehicleId: string | null;
 }
 export interface DispatchVehicle {
   label: string;
@@ -322,15 +331,54 @@ export interface OutcomeView {
   }[];
 }
 
+export interface CandidateStop {
+  orderId: string;
+  agency: string | null;
+  agencyId: string | null;
+  cases: number | null;
+  lotId: string | null;
+  sequence: number;
+  /** Always "CANDIDATE" — never an activatable state. */
+  status: string;
+}
+
+export interface CandidateVehicle {
+  vehicleId: string | null;
+  stops: CandidateStop[];
+  stopCount: number;
+  candidateLoadCases: number;
+}
+
+export interface UnassignedDemand {
+  shortfallId: string;
+  agencyId: string | null;
+  cases: number | null;
+  reason: string | null;
+}
+
+/**
+ * Saturday's candidate schedule.
+ *
+ * `available: false` is a first-class state, not an error and not a reason to
+ * substitute a fallback. When the contract returns no candidate plan the UI
+ * renders an explicit unavailable panel: no routes, markers, manifests,
+ * assignments, loads, lots, or feasibility claims.
+ */
 export interface TomorrowView {
+  available: boolean;
   dayLabel: string;
-  preparedNote: string;
-  status: string; // "DRAFT_WITH_CONSTRAINTS"
-  approvalNote: string;
-  draftRows: { tone: Tone; title: string; body: string }[];
+  planId: string | null;
+  revision: string | null;
+  status: string | null; // "DRAFT_WITH_CONSTRAINTS"
+  approvalRequired: boolean;
+  /** Always false. No activation path exists for a draft. */
+  activationSupported: boolean;
+  candidateVehicles: CandidateVehicle[];
+  unassignedDemand: UnassignedDemand[];
+  /** Safety and continuity carry-forwards inherited by the draft. */
   inheritedObligations: { id: string; badge: string; title: string; origin: string }[];
-  planNote: string;
-  carryNote: string;
+  /** Why the candidate plan is unavailable, when it is. */
+  unavailableReason: string | null;
 }
 
 // -------------------------- execution record -------------------------

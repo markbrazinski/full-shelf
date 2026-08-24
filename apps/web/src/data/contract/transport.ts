@@ -94,6 +94,9 @@ export interface RawAllocation {
   agency_id?: string | null;
   lot_id?: string | null;
   cases?: number | null;
+  /** Configured facility reference, or null. NEVER custody evidence. */
+  source_facility: string | null;
+  source_facility_basis: string;
 }
 
 export interface RawShortfall {
@@ -129,6 +132,8 @@ export interface RawDispatchStop {
   lot_id: string | null;
   status: string | null;
   assignment_type: string;
+  /** 1-based committed manifest position; null for a partner pickup. */
+  sequence: number | null;
 }
 
 export interface RawDispatchVehicle {
@@ -152,6 +157,11 @@ export interface RawDispatch {
   revision: string | null;
   vehicles: RawDispatchVehicle[];
   partner_pickups: RawPartnerPickup[];
+  /**
+   * Provenance of stop.sequence. COMMITTED_MANIFEST_ORDER is an ordering of
+   * committed rows, never a routing or travel-time optimization.
+   */
+  sequence_basis: string;
 }
 
 export interface RawCurrentDay {
@@ -264,11 +274,40 @@ export interface RawCarryForwardObligation {
   terminal_state?: string;
 }
 
+export interface RawCandidateStop {
+  order_id: string;
+  agency_id: string | null;
+  agency: string | null;
+  cases: number | null;
+  lot_id: string | null;
+  status: string;
+  sequence: number;
+}
+
+export interface RawCandidateVehicle {
+  vehicle_id: string | null;
+  stops: RawCandidateStop[];
+  stop_count: number;
+  candidate_load_cases: number;
+}
+
+export interface RawUnassignedDemand {
+  shortfall_id: string;
+  agency_id: string | null;
+  cases: number | null;
+  reason: string | null;
+}
+
 export interface RawNextDayDraft {
   plan_id: string;
   revision: string;
   status: string;
   approval_required: boolean;
+  /** Always false. No activation path exists for a draft. */
+  activation_supported: boolean;
+  candidate_vehicles: RawCandidateVehicle[];
+  unassigned_demand: RawUnassignedDemand[];
+  constraints: { constraint_type: string | null; subject_id: string | null }[];
 }
 
 export interface RawProjection {

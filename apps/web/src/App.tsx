@@ -20,7 +20,7 @@ import { CustodyGraph } from "./components/CustodyGraph";
 import { GovernedRecovery } from "./components/GovernedRecovery";
 import { GovernanceRefusal } from "./components/GovernanceRefusal";
 import { TodaysOutcome } from "./components/TodaysOutcome";
-import { TomorrowsDraft } from "./components/TomorrowsDraft";
+import { SaturdayCandidatePlan } from "./components/SaturdayCandidatePlan";
 import { HistoryLedger } from "./components/HistoryLedger";
 import { ExecutionRecordDrawer } from "./components/ExecutionRecordDrawer";
 
@@ -177,7 +177,7 @@ export default function App() {
               {p.governance && <GovernanceRefusal governance={p.governance} onOpenEvidence={openEvidence} />}
 
               {p.outcome && <TodaysOutcome outcome={p.outcome} onGo={loadBeat} />}
-              {p.tomorrow && <TomorrowsDraft tomorrow={p.tomorrow} onGo={loadBeat} />}
+              {p.tomorrow && <SaturdayCandidatePlan view={p.tomorrow} />}
               {p.history && <HistoryLedger history={p.history} onToday={goToday} />}
             </>
           )}

@@ -348,11 +348,11 @@ P.dispatchSchematic = {
     schematicLabel: "Dispatch schematic · not live GPS",
     note: "A schematic of committed assignments — not live positions, bearings, or GPS. Approval still happens in the plan diff.",
     stops: {
-      a01: { title: "Agency 01", sub: "O201 · delivered", tone: "delivered" },
-      a02: { title: "Agency 02", sub: "O202 · next stop", tone: "reassigned" },
-      a03: { title: "Agency 03", sub: "O203 · partner", tone: "partner" },
-      a04: { title: "Agency 04", sub: "O204 · Truck 2", tone: "planned" },
-      a05: { title: "Agency 05", sub: "O205 · Truck 2", tone: "planned" },
+      a01: { title: "Agency 01", sub: "O201 · delivered", tone: "delivered", orderId: "O201", agency: "Agency 01", cases: 18, lotId: "LTC-4471", sequence: 1, vehicleId: "TRUCK-01" },
+      a02: { title: "Agency 02", sub: "O202 · next stop", tone: "reassigned", orderId: "O202", agency: "Agency 02", cases: 22, lotId: "LTC-4471", sequence: 1, vehicleId: "TRUCK-02" },
+      a03: { title: "Agency 03", sub: "O203 · partner", tone: "partner", orderId: "O203", agency: "Agency 03", cases: 20, lotId: "LTC-4471", sequence: null, vehicleId: null },
+      a04: { title: "Agency 04", sub: "O204 · Truck 2", tone: "planned", orderId: "O204", agency: "Agency 04", cases: 15, lotId: "LTC-5090", sequence: 2, vehicleId: "TRUCK-02" },
+      a05: { title: "Agency 05", sub: "O205 · Truck 2", tone: "planned", orderId: "O205", agency: "Agency 05", cases: 21, lotId: "LTC-5090", sequence: 3, vehicleId: "TRUCK-02" },
     },
     vehicles: {
       t1: { label: "Truck 1", status: "Failed · refrigerated load unprotected", tone: "impacted" },
@@ -750,22 +750,32 @@ P.todaysOutcome = {
 P.tomorrowsDraft = {
   currentDay: { clock: "", operatingDate: "", dayLabel: DATE, connection: "CONNECTED", inDaybook: false, dayLabelOverride: "Sat · Aug 15 · prep" },
   tomorrow: {
-    dayLabel: "Sat · Aug 15",
-    preparedNote: "NEXT OPERATING DAY · PREPARED 17:00",
+    available: true,
+    dayLabel: "PLAN-2026-08-15 · rev01",
+    planId: "PLAN-2026-08-15",
+    revision: "rev01",
     status: "DRAFT_WITH_CONSTRAINTS",
-    approvalNote: "Draft rev01 is not yet authoritative.",
-    draftRows: [
-      { tone: "crit", title: "Lot LTC-4471 excluded", body: "Only confirmed-safe, feasible inventory may be proposed." },
-      { tone: "info", title: "Agency 03 recovery prioritized first", body: "Sequenced ahead of routine commitments to close the 20-case shortfall." },
-      { tone: "warn", title: "Site 01 confirmation obligation remains open", body: "Eight cases still unconfirmed — carried forward, not closed." },
+    approvalRequired: true,
+    activationSupported: false,
+    candidateVehicles: [
+      {
+        vehicleId: "TRUCK-02",
+        stopCount: 2,
+        candidateLoadCases: 40,
+        stops: [
+          { orderId: "CAND-PLAN-2026-08-15-SF-A01", agency: "Agency 01", agencyId: "AGENCY-01", cases: 18, lotId: "LTC-5090", sequence: 1, status: "CANDIDATE" },
+          { orderId: "CAND-PLAN-2026-08-15-SF-A02", agency: "Agency 02", agencyId: "AGENCY-02", cases: 22, lotId: "LTC-5090", sequence: 2, status: "CANDIDATE" },
+        ],
+      },
+    ],
+    unassignedDemand: [
+      { shortfallId: "SF-A03", agencyId: "AGENCY-03", cases: 20, reason: "NO_CONFIRMED_SAFE_LOT_WITH_SUFFICIENT_CASES" },
     ],
     inheritedObligations: [
-      { id: "OBL-0344", badge: "OPEN", title: "Agency 03 · 20-case shortfall recovery", origin: "↳ from Aug 14 · recall INC-2231" },
-      { id: "OBL-0345", badge: "OPEN", title: "Site 01 · confirm custody of 8 cases", origin: "↳ from Aug 14 · lot LTC-4471" },
+      { id: "OBL-0344", badge: "RECOVERY SHORTFALL", title: "Agency 03 · 20-case shortfall recovery", origin: "↳ from Aug 14 · recall INC-2231" },
+      { id: "OBL-0345", badge: "ACKNOWLEDGMENT OBLIGATION", title: "Site 01 · confirm custody of 8 cases", origin: "↳ from Aug 14 · lot LTC-4471" },
     ],
-    planNote:
-      "No delivery feasibility is asserted for the draft. Quantities and routing are proposed only; a human must approve before anything becomes authoritative.",
-    carryNote: "The standing control plane carries unresolved truth forward.",
+    unavailableReason: null,
   },
   omittedFields: [],
 };

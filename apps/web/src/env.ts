@@ -40,8 +40,17 @@ export function createDataSource(): FullShelfDataSource {
     : new ReplayHttpDataSource(url);
 }
 
-/** Browser Maps key. Absent is normal: the SVG schematic is the fallback. */
+/**
+ * Browser Maps key. Absent is normal: the SVG schematic is the fallback.
+ *
+ * Verification may force a key so the invalid-key and unauthorized-key
+ * fallback paths are genuinely exercised rather than passing merely
+ * because no key was configured. It only ever supplies a FAKE key — a
+ * real key is never read from, or written to, the page.
+ */
 export function googleMapsApiKey(): string | undefined {
+  const forced = (globalThis as { __FS_FORCE_MAP_KEY?: string }).__FS_FORCE_MAP_KEY;
+  if (forced) return forced;
   const k = import.meta.env.VITE_GOOGLE_MAPS_API_KEY?.trim();
   return k ? k : undefined;
 }

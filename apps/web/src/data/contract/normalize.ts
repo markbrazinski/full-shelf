@@ -37,6 +37,7 @@ import {
   type SpecialistEvidence,
   type Tone,
   type TomorrowView,
+  type CandidateVehicle,
 } from "../../types/fullShelf";
 import type {
   RawAgent,
@@ -332,12 +333,20 @@ function buildDispatch(d: RawDispatch, clock: string): DispatchView {
       status: v.is_operational === false ? "Out of service" : `${v.stop_count} stops`,
       tone: v.is_operational === false ? "impacted" : "planned",
     };
-    v.stops.forEach((s, i) => {
+    v.stops.forEach((s) => {
       const slot = agencySlot(s.agency) ?? s.order_id;
+      // Sequence comes from the contract (COMMITTED_MANIFEST_ORDER), never
+      // from array position, so presentation cannot invent a route order.
       stops[slot] = {
-        title: `${i + 1}. ${s.order_id} · ${s.agency ?? "—"}`,
+        title: `${s.sequence ?? "—"}. ${s.order_id} · ${s.agency ?? "—"}`,
         sub: s.cases != null ? `${s.cases} cases · ${vehicleLabel(v.vehicle_id)}` : vehicleLabel(v.vehicle_id),
         tone: orderTone(s.status, false)[1],
+        orderId: s.order_id,
+        agency: s.agency,
+        cases: s.cases,
+        lotId: s.lot_id,
+        sequence: s.sequence,
+        vehicleId: v.vehicle_id,
       };
     });
   }
@@ -347,6 +356,13 @@ function buildDispatch(d: RawDispatch, clock: string): DispatchView {
       title: `${p.order_id} · ${p.agency ?? "—"}`,
       sub: p.cases != null ? `${p.cases} cases · partner pickup` : "partner pickup",
       tone: "partner",
+      orderId: p.order_id,
+      agency: p.agency,
+      cases: p.cases,
+      lotId: p.lot_id,
+      // A partner pickup sits on no vehicle manifest, so it holds no position.
+      sequence: null,
+      vehicleId: null,
     };
   }
   // The partner slot is a vehicle-position label in the schematic.
@@ -664,28 +680,82 @@ function buildOutcome(raw: RawProjection, commitments: Commitment[]): OutcomeVie
   };
 }
 
+/**
+ * Saturday's candidate schedule, read from the contract.
+ *
+ * Carry-forward obligations are shown whenever they exist, because they are
+ * committed regardless of whether a candidate plan was returned. Candidate
+ * assignments are shown ONLY when the contract supplied them; there is no
+ * fallback, and an empty candidate plan renders the unavailable state.
+ */
 function buildTomorrow(raw: RawProjection): TomorrowView {
-  const nd = raw.next_day_draft!;
+  const nd = raw.next_day_draft;
+  const inheritedObligations = raw.carry_forward_obligations.map((o) => ({
+    id: o.reference_id,
+    badge: o.kind.replace(/_/g, " "),
+    title: o.reference_id,
+    origin: o.incident_id
+      ? `from ${o.incident_id}`
+      : o.lot_id
+        ? `lot ${o.lot_id}`
+        : "carried forward",
+  }));
+
+  if (!nd) {
+    return {
+      available: false,
+      dayLabel: "Saturday",
+      planId: null,
+      revision: null,
+      status: null,
+      approvalRequired: false,
+      activationSupported: false,
+      candidateVehicles: [],
+      unassignedDemand: [],
+      inheritedObligations,
+      unavailableReason: "No candidate plan was returned for this boundary.",
+    };
+  }
+
+  const candidateVehicles: CandidateVehicle[] = (nd.candidate_vehicles ?? []).map((v) => ({
+    vehicleId: v.vehicle_id ?? null,
+    stopCount: v.stop_count,
+    candidateLoadCases: v.candidate_load_cases,
+    stops: v.stops.map((s) => ({
+      orderId: s.order_id,
+      agency: s.agency ?? null,
+      agencyId: s.agency_id ?? null,
+      cases: s.cases ?? null,
+      lotId: s.lot_id ?? null,
+      sequence: s.sequence,
+      status: s.status,
+    })),
+  }));
+
+  const hasAssignments = candidateVehicles.some((v) => v.stops.length > 0);
+
   return {
+    // Unassigned demand alone is not a schedule. Without any assignment the
+    // candidate surface has nothing truthful to draw, so it stays unavailable.
+    available: hasAssignments,
     dayLabel: `${nd.plan_id} · ${nd.revision}`,
-    preparedNote: "Prepared from today's carried obligations.",
+    planId: nd.plan_id,
+    revision: nd.revision,
     status: nd.status,
-    approvalNote: nd.approval_required
-      ? "This draft requires verified human approval before it can become active."
-      : "No approval requirement is recorded.",
-    draftRows: raw.current_day.plan_constraints.map((c) => ({
-      tone: "warn" as Tone,
-      title: c.constraint_type ?? "Constraint",
-      body: c.description ?? "No description recorded.",
+    approvalRequired: nd.approval_required,
+    // Read from the contract, never assumed. The projection pins this false.
+    activationSupported: nd.activation_supported === true,
+    candidateVehicles,
+    unassignedDemand: (nd.unassigned_demand ?? []).map((u) => ({
+      shortfallId: u.shortfall_id,
+      agencyId: u.agency_id ?? null,
+      cases: u.cases ?? null,
+      reason: u.reason ?? null,
     })),
-    inheritedObligations: raw.carry_forward_obligations.map((o) => ({
-      id: o.reference_id,
-      badge: o.kind.replace(/_/g, " "),
-      title: o.reference_id,
-      origin: o.incident_id ? `from ${o.incident_id}` : o.lot_id ? `lot ${o.lot_id}` : "carried forward",
-    })),
-    planNote: `${nd.plan_id} is a draft. It holds no committed commitments yet.`,
-    carryNote: `${raw.carry_forward_obligations.length} obligation(s) carried from ${raw.operating_day}.`,
+    inheritedObligations,
+    unavailableReason: hasAssignments
+      ? null
+      : "The contract returned no candidate assignments for this boundary.",
   };
 }
 
