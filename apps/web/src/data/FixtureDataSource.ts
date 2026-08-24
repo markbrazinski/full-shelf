@@ -166,8 +166,14 @@ const authorityBlock = (opts: { ledgerCommitted?: boolean; kmsKeyVersion?: strin
 // =====================================================================
 // PROJECTIONS — one per beat (partial; shell fields added by withShell)
 // =====================================================================
-type PartialProjection = Omit<FullShelfProjection, "beatId" | "asOf" | "dataMode"> & {
+type PartialProjection = Omit<
+  FullShelfProjection,
+  "beatId" | "asOf" | "dataMode" | "incidentSummary"
+> & {
   currentDay: FullShelfProjection["currentDay"] & { dayLabelOverride?: string };
+  // Reference material only; withShell supplies an empty summary. The runtime
+  // derives this from the contract's incidents, never from a fixture.
+  incidentSummary?: FullShelfProjection["incidentSummary"];
 };
 
 const P: Record<BeatId, PartialProjection> = {} as Record<BeatId, PartialProjection>;
@@ -811,6 +817,7 @@ P.history = {
 // =====================================================================
 function withShell(beatId: BeatId, proj: PartialProjection): FullShelfProjection {
   const meta = BEATS.find((b) => b.id === beatId)!;
+  const incidentSummary = proj.incidentSummary ?? { activeCount: 0, incidents: [] };
   const cd = proj.currentDay;
   const currentDay = {
     ...cd,
@@ -825,6 +832,7 @@ function withShell(beatId: BeatId, proj: PartialProjection): FullShelfProjection
     asOf,
     dataMode: DATA_MODE,
     currentDay,
+    incidentSummary,
     omittedFields: proj.omittedFields || [],
   };
   if (out.history) out.history = { ...out.history, asOf };

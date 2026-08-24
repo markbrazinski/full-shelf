@@ -419,10 +419,31 @@ export interface HistoryView {
 
 // --------------------------- the projection --------------------------
 
+/**
+ * Incidents live at this boundary, derived from `current_day.incidents`.
+ *
+ * The nav badge reads `activeCount`. It is NEVER inferred from which view is
+ * open or from demo state: an incident is active when the contract says it is
+ * open at this boundary, and resolved when the contract says it resolved.
+ */
+export interface IncidentSummary {
+  activeCount: number;
+  incidents: {
+    id: string;
+    type: string | null;
+    status: string;
+    terminalState: string;
+    affectedLotId: string | null;
+    /** True while the incident is not in a resolved/terminal state. */
+    active: boolean;
+  }[];
+}
+
 export interface FullShelfProjection {
   beatId: BeatId;
   asOf: string;
   dataMode: DataMode;
+  incidentSummary: IncidentSummary;
   currentDay: CurrentDayView;
   incident?: IncidentView;
   recall?: RecallView;

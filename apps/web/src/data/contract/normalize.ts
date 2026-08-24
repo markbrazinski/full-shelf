@@ -38,6 +38,7 @@ import {
   type Tone,
   type TomorrowView,
   type CandidateVehicle,
+  type IncidentSummary,
 } from "../../types/fullShelf";
 import type {
   RawAgent,
@@ -179,9 +180,26 @@ export function normalize(raw: RawProjection, beatId: BeatId): FullShelfProjecti
 
   const posture = recallIncident ? "RECALL" : vehicleIncident ? "INTERVENTION" : "NORMAL";
 
+  // Incident presence is a projected fact. A vehicle failure runs
+  // ACTIVE -> RESOLVED; a recall runs the containment ladder and is still
+  // open at PARTIALLY_CONTAINED. Nothing here consults the current view.
+  const RESOLVED_STATES = new Set(["RESOLVED", "CONTAINED", "CLOSED"]);
+  const incidentSummary: IncidentSummary = {
+    activeCount: cd.incidents.filter((i) => !RESOLVED_STATES.has(i.status)).length,
+    incidents: cd.incidents.map((i) => ({
+      id: i.incident_id,
+      type: i.incident_type,
+      status: i.status,
+      terminalState: i.terminal_state,
+      affectedLotId: i.affected_lot_id ?? null,
+      active: !RESOLVED_STATES.has(i.status),
+    })),
+  };
+
   const projection: FullShelfProjection = {
     beatId,
     asOf,
+    incidentSummary,
     // Replay is always synthetic; a live source overrides this.
     dataMode: raw.classification === "SYNTHETIC_TEST" ? "SYNTHETIC_TEST" : "OBSERVED_LIVE",
     currentDay: {

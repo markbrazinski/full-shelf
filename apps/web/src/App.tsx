@@ -1,190 +1,488 @@
+// =====================================================================
+// Full Shelf v6.1 — fulfillment control plane
+// ---------------------------------------------------------------------
+// A persistent shell: header, left nav, workspace, activity sidecar. The
+// shell never disappears between moments; only the workspace changes.
+//
+// Every factual value comes from the accepted contract over HTTP
+// (deterministic replay or the live orchestrator, selected in env.ts).
+// The Design fixture is NOT reachable from this entry path.
+//
+// Two rules this file exists to keep:
+//   * The incident badge is read from projection.incidentSummary, never
+//     inferred from which view is open.
+//   * A datasource failure shows the connection-error surface, and
+//     Reconnect performs a real retry.
+// =====================================================================
+
 import { useCallback, useEffect, useRef, useState } from "react";
 import { css } from "./styles/css";
-import { BEATS } from "./data/contract/beats";
 import { plannedStopsFrom } from "./data/contract/plannedStops";
 import { createDataSource, googleMapsApiKey, isReplayMode } from "./env";
 import type { FullShelfDataSource } from "./data/FullShelfDataSource";
-import type { BeatId, Connection, FullShelfProjection } from "./types/fullShelf";
+import type { BeatId, FullShelfProjection } from "./types/fullShelf";
 
 import { TestModeBanner } from "./components/TestModeBanner";
-import { StateNavigator } from "./components/StateNavigator";
-import { TopBar } from "./components/TopBar";
-import { DaybookHeader } from "./components/DaybookHeader";
 import { AgentActivityRail } from "./components/AgentActivityRail";
 import { CommitmentsBoard } from "./components/CommitmentsBoard";
 import { RevisionReview } from "./components/RevisionReview";
 import { DispatchSchematic } from "./components/DispatchSchematic";
 import { RecallWorkspace } from "./components/RecallWorkspace";
-import { IncidentRail } from "./components/IncidentRail";
 import { CustodyGraph } from "./components/CustodyGraph";
 import { GovernedRecovery } from "./components/GovernedRecovery";
 import { GovernanceRefusal } from "./components/GovernanceRefusal";
-import { TodaysOutcome } from "./components/TodaysOutcome";
-import { SaturdayCandidatePlan } from "./components/SaturdayCandidatePlan";
 import { HistoryLedger } from "./components/HistoryLedger";
 import { ExecutionRecordDrawer } from "./components/ExecutionRecordDrawer";
+import { SaturdayCandidatePlan } from "./components/SaturdayCandidatePlan";
+import { ConnectionError } from "./components/ConnectionError";
+import { ActivitySidecar } from "./components/ActivitySidecar";
 
-// Runtime truth comes from the accepted contract over HTTP — deterministic
-// replay or the live orchestrator, selected by VITE_DATA_SOURCE. The Design
-// fixture is NOT reachable from this entry path; it is test/reference material.
 const dataSource: FullShelfDataSource = createDataSource();
-
 const MAPS_API_KEY = googleMapsApiKey();
-// Provenance is stated differently for synthetic replay vs configured live
-// locations, but neither ever claims a live vehicle position.
 const MAP_LABEL = isReplayMode()
   ? "Synthetic replay · Google planned dispatch · not live vehicle tracking"
   : "Google planned dispatch · configured facility locations · not live vehicle tracking";
 
-const TODAY_HOME: Partial<Record<BeatId, BeatId>> = {
-  revisionReview: "truckFailure",
-  dispatchSchematic: "truckFailure",
-  tomorrowsDraft: "todaysOutcome",
+type View = "today" | "incident" | "history";
+type Day = "fri" | "sat";
+type IncidentTab = "scope" | "custody" | "response" | "evidence";
+
+/** Which boundary each surface reads. Every value is an explicit as_of. */
+const FRIDAY_HEALTHY: BeatId = "healthy";
+const FRIDAY_DISRUPTED: BeatId = "rev08Active";
+const SATURDAY: BeatId = "tomorrowsDraft";
+const INCIDENT_TAB_BEAT: Record<IncidentTab, BeatId> = {
+  scope: "recallProcessing",
+  custody: "custodyEstablished",
+  response: "governanceRefusal",
+  evidence: "governanceRefusal",
 };
 
 export default function App() {
-  const [beat, setBeat] = useState<BeatId>("healthy");
-  const [lastBeat, setLastBeat] = useState<BeatId>("healthy");
+  const [view, setView] = useState<View>("today");
+  const [day, setDay] = useState<Day>("fri");
+  const [disrupted, setDisrupted] = useState(false);
+  const [incidentTab, setIncidentTab] = useState<IncidentTab>("scope");
   const [projection, setProjection] = useState<FullShelfProjection | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [evidenceOpen, setEvidenceOpen] = useState(false);
-  const [connectionOverride, setConnectionOverride] = useState<Connection | null>(null);
-  const reqBeat = useRef<BeatId>("healthy");
+  const [execOpen, setExecOpen] = useState(false);
+  const [sidecarOpen, setSidecarOpen] = useState(true);
+  const pending = useRef<BeatId | null>(null);
 
-  const loadBeat = useCallback((next: BeatId) => {
-    reqBeat.current = next;
-    setBeat(next);
-    if (next !== "history") setLastBeat(next);
+  const beat: BeatId =
+    view === "history"
+      ? "history"
+      : view === "incident"
+        ? INCIDENT_TAB_BEAT[incidentTab]
+        : day === "sat"
+          ? SATURDAY
+          : disrupted
+            ? FRIDAY_DISRUPTED
+            : FRIDAY_HEALTHY;
+
+  const load = useCallback((next: BeatId) => {
+    pending.current = next;
     setLoading(true);
     setError(null);
-    setEvidenceOpen(false);
-    setConnectionOverride(null);
     dataSource
       .getProjection(next)
       .then((proj) => {
-        if (reqBeat.current === next) {
-          setProjection(proj);
-          setLoading(false);
-        }
+        if (pending.current !== next) return;
+        setProjection(proj);
+        setLoading(false);
       })
       .catch((e: unknown) => {
+        if (pending.current !== next) return;
+        // A datasource failure is surfaced, never swallowed. The control
+        // plane shows nothing rather than stale or unverified data.
+        setProjection(null);
         setError(e instanceof Error ? e.message : String(e));
         setLoading(false);
       });
   }, []);
 
   useEffect(() => {
-    loadBeat("healthy");
-  }, [loadBeat]);
+    load(beat);
+  }, [beat, load]);
 
-  const goToday = useCallback(() => loadBeat(TODAY_HOME[lastBeat] ?? lastBeat), [lastBeat, loadBeat]);
-  const goHistory = useCallback(() => loadBeat("history"), [loadBeat]);
-  const openEvidence = useCallback(() => setEvidenceOpen(true), []);
-  const toggleConnection = useCallback(() => setConnectionOverride((c) => (c ? null : "DISCONNECTED")), []);
+  /** A real retry against the same boundary, not a cosmetic reset. */
+  const reconnect = useCallback(() => load(beat), [beat, load]);
 
   const p = projection;
-  const cd = p?.currentDay;
-  const isHistory = beat === "history";
-  const connection: Connection = connectionOverride ?? cd?.connection ?? "CONNECTED";
-  const disconnected = !!connectionOverride;
-  const isIncidentRail = beat === "custodyEstablished" || beat === "governedRecovery" || beat === "governanceRefusal";
+  const activeIncidents = p?.incidentSummary.activeCount ?? 0;
+
+  if (error) {
+    return (
+      <div style={css("height:100vh;display:flex;flex-direction:column;background:#eef0ea")}>
+        <ConnectionError detail={error} onReconnect={reconnect} />
+      </div>
+    );
+  }
 
   return (
-    <div style={css("width:1280px;margin:0 auto;padding:16px 0 40px")}>
+    <div style={css("height:100vh;display:flex;flex-direction:column;background:#eef0ea;overflow:hidden")}>
       <TestModeBanner dataMode={p?.dataMode ?? "SYNTHETIC_TEST"} />
-      <StateNavigator beats={BEATS} activeBeat={beat} onGo={loadBeat} />
 
-      <div style={css("position:relative;background:#f4f2ec;min-height:900px;border-radius:12px;box-shadow:0 1px 3px rgba(22,50,59,.14);display:flex;flex-direction:column;overflow:hidden")}>
-        <TopBar
-          clock={loading ? "—" : (cd?.clock ?? "—")}
-          operatingDate={loading ? "" : (cd?.operatingDate ?? "")}
-          connection={connection}
-          isHistory={isHistory}
-          onToday={goToday}
-          onHistory={goHistory}
-          onOpenEvidence={openEvidence}
-          onToggleConnection={toggleConnection}
-        />
-
-        {disconnected && (
-          <div style={css("background:#f3e5e1;border-bottom:1px solid #e3c3ba;padding:9px 28px;display:flex;align-items:center;gap:12px;flex:none")}>
-            <span className="mono" style={css("font-size:12px;color:#a23b2b;font-weight:700")}>■ DISCONNECTED</span>
-            <span style={css("font-size:12px;color:#8a2f22")}>Live updates are paused. Showing the last projection received as of {p?.asOf ?? "—"}. No authoritative state changes while disconnected.</span>
-          </div>
+      {/* ---------------------------- HEADER ---------------------------- */}
+      <header
+        style={css(
+          "flex:none;height:50px;background:#16323b;color:#eef4f4;display:flex;align-items:center;" +
+            "justify-content:space-between;padding:0 18px;gap:18px;z-index:8",
         )}
-
-        {isHistory && !loading && p?.history && (
-          <div style={css("background:#eef1ee;border-bottom:1px solid #dfe4e0;padding:9px 28px;display:flex;align-items:center;gap:12px;flex:none")}>
-            <span className="mono" style={css("font-size:11px;font-weight:600;letter-spacing:.08em;color:#5c6b71")}>REVIEWING PROVENANCE · AS OF {p.history.asOf}</span>
-            <span style={css("font-size:12px;color:#5c6b71")}>Read-only. Reviewing history does not change today's authoritative state.</span>
-            <span role="button" tabIndex={0} onClick={goToday} onKeyDown={(e) => e.key === "Enter" && goToday()} style={css("margin-left:auto;font-size:12px;font-weight:600;color:#1f6f8b;cursor:pointer")}>Return to current Today →</span>
-          </div>
-        )}
-
-        <div style={css("flex:1;padding:24px 28px 26px")}>
-          {loading && (
-            <div style={css("display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:560px;gap:16px")}>
-              <span className="fs-spin" style={css("width:34px;height:34px;border-radius:50%;border:3px solid #dfe4e0;border-top-color:#1f6f8b")} />
-              <div className="mono" style={css("font-size:12px;letter-spacing:.08em;color:#74848a")}>Loading projection…</div>
-            </div>
-          )}
-
-          {error && (
-            <div style={css("display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:560px;gap:10px")}>
-              <div className="mono" style={css("font-size:13px;color:#a23b2b;font-weight:600")}>Projection unavailable</div>
-              <div style={css("font-size:12px;color:#74848a")}>{error}</div>
-            </div>
-          )}
-
-          {!loading && !error && p && cd && (
-            <>
-              {cd.inDaybook && <DaybookHeader cd={cd} onGo={loadBeat} />}
-              {p.agentActivity && <AgentActivityRail view={p.agentActivity} onOpenEvidence={openEvidence} />}
-
-              {cd.commitments && <CommitmentsBoard cd={cd} onHistory={goHistory} onOpenEvidence={openEvidence} />}
-
-              {p.incident?.diffRows && (
-                <RevisionReview incident={p.incident} onToday={goToday} onGo={loadBeat} onApprove={() => loadBeat("rev08Active")} />
-              )}
-
-              {p.dispatch && (
-                <DispatchSchematic
-                  dispatch={p.dispatch}
-                  onToday={goToday}
-                  onGo={loadBeat}
-                  mapsApiKey={MAPS_API_KEY}
-                  plannedStops={plannedStopsFrom(p.dispatch)}
-                  mapLabel={MAP_LABEL}
-                />
-              )}
-
-              {beat === "recallProcessing" && p.recall && (
-                <RecallWorkspace recall={p.recall} onToday={goToday} onGo={loadBeat} onOpenEvidence={openEvidence} />
-              )}
-
-              {isIncidentRail && (
-                <IncidentRail
-                  ref_={p.incident?.ref ?? "INC-2231"}
-                  postureLabel={p.incident?.posture ?? "PARTIALLY_CONTAINED"}
-                  activeBeat={beat}
-                  onToday={goToday}
-                  onGo={loadBeat}
-                />
-              )}
-              {p.custody && <CustodyGraph custody={p.custody} onOpenEvidence={openEvidence} />}
-              {p.recovery && <GovernedRecovery recovery={p.recovery} onOpenEvidence={openEvidence} />}
-              {p.governance && <GovernanceRefusal governance={p.governance} onOpenEvidence={openEvidence} />}
-
-              {p.outcome && <TodaysOutcome outcome={p.outcome} onGo={loadBeat} />}
-              {p.tomorrow && <SaturdayCandidatePlan view={p.tomorrow} />}
-              {p.history && <HistoryLedger history={p.history} onToday={goToday} />}
-            </>
-          )}
+      >
+        <div style={css("display:flex;align-items:baseline;gap:9px")}>
+          <span style={css("font-size:15px;font-weight:600;letter-spacing:-.01em")}>Full Shelf</span>
+          <span className="mono" style={css("font-size:9.5px;letter-spacing:.14em;color:#7e939c")}>
+            FULFILLMENT CONTROL PLANE
+          </span>
         </div>
+        <div style={css("display:flex;align-items:center;gap:10px")}>
+          <span
+            className="mono"
+            style={css(
+              "font-size:10.5px;color:#aebfc4;background:#1f3d47;border:1px solid #2b4c56;border-radius:5px;padding:4px 9px",
+            )}
+            data-testid="auth-rev"
+          >
+            {p?.currentDay.authRev ?? "—"}
+          </span>
+        </div>
+        <div style={css("display:flex;align-items:center;gap:10px")}>
+          <div style={css("text-align:right;line-height:1.2")}>
+            <div className="mono" style={css("font-size:11.5px;font-weight:600")} data-testid="clock">
+              {p?.currentDay.clock ?? "—"}
+            </div>
+            <div className="mono" style={css("font-size:9.5px;color:#8ea1a7")}>
+              {p?.currentDay.operatingDate ?? ""}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setExecOpen(true)}
+            style={css(
+              "background:#1f3d47;color:#cfe0e4;border:1px solid #2b4c56;border-radius:6px;padding:6px 11px;" +
+                "font-size:11.5px;font-weight:600;cursor:pointer",
+            )}
+          >
+            Execution record
+          </button>
+        </div>
+      </header>
+
+      <div style={css("flex:1;display:flex;min-height:0")}>
+        {/* --------------------------- LEFT NAV --------------------------- */}
+        <nav
+          aria-label="Primary"
+          style={css(
+            "flex:none;width:186px;background:#12292f;color:#a9bcc2;display:flex;flex-direction:column;padding:12px 10px;gap:3px",
+          )}
+        >
+          {(
+            [
+              ["today", "Today", "▦"],
+              ["incident", "Incidents", "◆"],
+              ["history", "History", "◷"],
+            ] as [View, string, string][]
+          ).map(([id, label, icon]) => {
+            const active = view === id;
+            return (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setView(id)}
+                aria-current={active ? "true" : "false"}
+                data-testid={`nav-${id}`}
+                style={css(
+                  `display:flex;align-items:center;gap:10px;background:${active ? "#1f3d47" : "transparent"};` +
+                    `color:${active ? "#eef4f4" : "#a9bcc2"};border:none;border-radius:8px;padding:10px 12px;` +
+                    "cursor:pointer;text-align:left;font-size:13px;font-weight:600",
+                )}
+              >
+                <span
+                  className="mono"
+                  style={css(`font-size:13px;width:16px;text-align:center;color:${active ? "#8fc6da" : "#5e7982"}`)}
+                >
+                  {icon}
+                </span>
+                <span style={css("flex:1")}>{label}</span>
+                {/* Derived from the projection's incidents, never from view state. */}
+                {id === "incident" && activeIncidents > 0 ? (
+                  <span
+                    className="mono"
+                    data-testid="incident-badge"
+                    style={css(
+                      `font-size:10px;font-weight:700;background:${active ? "#c14a34" : "#3a2320"};` +
+                        "color:#f0d0c8;border-radius:10px;min-width:18px;text-align:center;padding:2px 6px",
+                    )}
+                  >
+                    {activeIncidents}
+                  </span>
+                ) : null}
+              </button>
+            );
+          })}
+          <div style={css("margin-top:auto;border-top:1px solid #1e3a42;padding-top:10px")}>
+            <div
+              className="mono"
+              style={css("font-size:8.5px;color:#5e7982;letter-spacing:.04em;padding:8px 12px 2px;line-height:1.5")}
+            >
+              FLEET · 5 AGENTS
+              <br />
+              MODEL ARMOR BOUNDARY
+            </div>
+          </div>
+        </nav>
+
+        {/* -------------------------- WORKSPACE -------------------------- */}
+        <main
+          style={css(
+            "flex:1;min-width:0;display:flex;flex-direction:column;background:#eef0ea;overflow:auto;padding:14px 20px 16px",
+          )}
+        >
+          {loading ? (
+            <div
+              style={css(
+                "flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:15px",
+              )}
+            >
+              <span
+                className="fs-spin"
+                style={css("width:30px;height:30px;border-radius:50%;border:3px solid #d3dad7;border-top-color:#1f6f8b")}
+              />
+              <div className="mono" style={css("font-size:12px;letter-spacing:.1em;color:#74848a")}>
+                Loading control plane…
+              </div>
+            </div>
+          ) : null}
+
+          {!loading && p ? (
+            <>
+              {view === "today" ? (
+                <>
+                  <div
+                    style={css(
+                      "flex:none;display:flex;align-items:center;justify-content:space-between;gap:16px",
+                    )}
+                  >
+                    <div style={css("display:flex;background:#e2e6df;border-radius:9px;padding:3px")}>
+                      <button
+                        type="button"
+                        onClick={() => setDay("fri")}
+                        aria-pressed={day === "fri"}
+                        data-testid="day-fri"
+                        style={css(
+                          `background:${day === "fri" ? "#16323b" : "transparent"};color:${day === "fri" ? "#eef4f4" : "#5c6b71"};` +
+                            "border:none;border-radius:7px;padding:6px 13px;font-size:12px;font-weight:600;cursor:pointer",
+                        )}
+                      >
+                        Friday · Operating
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDay("sat")}
+                        aria-pressed={day === "sat"}
+                        data-testid="day-sat"
+                        style={css(
+                          `background:${day === "sat" ? "#16323b" : "transparent"};color:${day === "sat" ? "#eef4f4" : "#5c6b71"};` +
+                            "border:none;border-radius:7px;padding:6px 13px;font-size:12px;font-weight:600;cursor:pointer",
+                        )}
+                      >
+                        Saturday · Draft
+                      </button>
+                    </div>
+                    {day === "fri" ? (
+                      <button
+                        type="button"
+                        onClick={() => setDisrupted((d) => !d)}
+                        data-testid="toggle-disruption"
+                        style={css(
+                          "background:#fff;border:1px solid #dfe4e0;color:#3a4a50;border-radius:7px;" +
+                            "padding:6px 11px;font-size:11px;font-weight:600;cursor:pointer",
+                        )}
+                      >
+                        {disrupted ? "Show 08:05 · healthy" : "Show 08:24 · after disruption"}
+                      </button>
+                    ) : null}
+                  </div>
+
+                  {day === "sat" ? (
+                    p.tomorrow ? (
+                      <SaturdayCandidatePlan view={p.tomorrow} />
+                    ) : (
+                      // The contract carried no draft at this boundary. No
+                      // fallback: the surface says so and shows nothing.
+                      <SaturdayCandidatePlan
+                        view={{
+                          available: false,
+                          dayLabel: "Saturday",
+                          planId: null,
+                          revision: null,
+                          status: null,
+                          approvalRequired: false,
+                          activationSupported: false,
+                          candidateVehicles: [],
+                          unassignedDemand: [],
+                          inheritedObligations: [],
+                          unavailableReason:
+                            "The contract returned no next-day draft at this boundary.",
+                        }}
+                      />
+                    )
+                  ) : (
+                    <div style={css("margin-top:12px;display:flex;flex-direction:column;gap:14px")}>
+                      {p.agentActivity ? (
+                        <AgentActivityRail view={p.agentActivity} onOpenEvidence={() => setExecOpen(true)} />
+                      ) : null}
+                      {p.currentDay.commitments ? (
+                        <CommitmentsBoard
+                          cd={p.currentDay}
+                          onHistory={() => setView("history")}
+                          onOpenEvidence={() => setExecOpen(true)}
+                        />
+                      ) : null}
+                      {p.dispatch ? (
+                        <DispatchSchematic
+                          dispatch={p.dispatch}
+                          onToday={() => setView("today")}
+                          onGo={() => setView("today")}
+                          mapsApiKey={MAPS_API_KEY}
+                          plannedStops={plannedStopsFrom(p.dispatch)}
+                          mapLabel={MAP_LABEL}
+                        />
+                      ) : null}
+                    </div>
+                  )}
+                </>
+              ) : null}
+
+              {view === "incident" ? (
+                <>
+                  <div
+                    style={css(
+                      "flex:none;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap",
+                    )}
+                  >
+                    <div style={css("display:flex;align-items:center;gap:10px;min-width:0")}>
+                      <h1 style={css("font-size:18px;font-weight:600;color:#16262c;white-space:nowrap")}>
+                        {p.incident?.ref ?? p.incidentSummary.incidents[0]?.id ?? "Incident"}
+                      </h1>
+                      {p.incidentSummary.incidents.map((i) => (
+                        <span
+                          key={i.id}
+                          className="mono"
+                          data-testid="incident-status"
+                          style={css(
+                            "font-size:10px;color:#8a5a12;background:#f7ecd6;border:1px solid #e6cf9e;" +
+                              "border-radius:6px;padding:4px 8px;font-weight:600;white-space:nowrap",
+                          )}
+                        >
+                          {i.id} · {i.status}
+                        </span>
+                      ))}
+                    </div>
+                    <div style={css("display:flex;background:#e2e6df;border-radius:9px;padding:3px")}>
+                      {(["scope", "custody", "response", "evidence"] as IncidentTab[]).map((t) => {
+                        const active = incidentTab === t;
+                        return (
+                          <button
+                            key={t}
+                            type="button"
+                            onClick={() => setIncidentTab(t)}
+                            aria-current={active ? "true" : "false"}
+                            data-testid={`tab-${t}`}
+                            style={css(
+                              `background:${active ? "#16323b" : "transparent"};color:${active ? "#eef4f4" : "#5c6b71"};` +
+                                "border:none;border-radius:7px;padding:6px 15px;font-size:12px;font-weight:600;cursor:pointer;text-transform:capitalize",
+                            )}
+                          >
+                            {t}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div style={css("margin-top:13px;display:flex;flex-direction:column;gap:14px")}>
+                    {incidentTab === "scope" && p.recall ? (
+                      <RecallWorkspace
+                        recall={p.recall}
+                        onToday={() => setView("today")}
+                        onGo={() => setView("today")}
+                        onOpenEvidence={() => setExecOpen(true)}
+                      />
+                    ) : null}
+                    {incidentTab === "custody" && p.custody ? (
+                      <CustodyGraph custody={p.custody} onOpenEvidence={() => setExecOpen(true)} />
+                    ) : null}
+                    {incidentTab === "response" ? (
+                      <>
+                        {p.recovery ? (
+                          <GovernedRecovery recovery={p.recovery} onOpenEvidence={() => setExecOpen(true)} />
+                        ) : null}
+                        {p.governance ? (
+                          <GovernanceRefusal governance={p.governance} onOpenEvidence={() => setExecOpen(true)} />
+                        ) : null}
+                      </>
+                    ) : null}
+                    {incidentTab === "evidence" ? (
+                      <>
+                        {p.incident?.diffRows ? (
+                          <RevisionReview
+                            incident={p.incident}
+                            onToday={() => setView("today")}
+                            onGo={() => setView("today")}
+                            onApprove={() => setView("today")}
+                          />
+                        ) : null}
+                        <button
+                          type="button"
+                          onClick={() => setExecOpen(true)}
+                          style={css(
+                            "align-self:flex-start;background:#16323b;color:#eef4f4;border:none;border-radius:7px;" +
+                              "padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer",
+                          )}
+                        >
+                          Open full Execution Record →
+                        </button>
+                      </>
+                    ) : null}
+                  </div>
+                </>
+              ) : null}
+
+              {view === "history" && p.history ? (
+                <HistoryLedger history={p.history} onToday={() => setView("today")} />
+              ) : null}
+
+              {/* Fields the contract could not truthfully reconstruct here. */}
+              {p.omittedFields.length > 0 ? (
+                <div
+                  className="mono"
+                  style={css("flex:none;margin-top:12px;font-size:9px;color:#9aa6ab;line-height:1.6")}
+                  data-testid="omitted-fields"
+                >
+                  {p.omittedFields.map((f) => (
+                    <div key={f}>not available at this boundary · {f}</div>
+                  ))}
+                </div>
+              ) : null}
+            </>
+          ) : null}
+        </main>
+
+        <ActivitySidecar
+          open={sidecarOpen}
+          onToggle={() => setSidecarOpen((o) => !o)}
+          activity={p?.agentActivity}
+          governance={p?.governance}
+          onOpenExec={() => setExecOpen(true)}
+        />
       </div>
 
-      {evidenceOpen && <ExecutionRecordDrawer evidence={p?.executionEvidence} onClose={() => setEvidenceOpen(false)} />}
+      {execOpen ? (
+        <ExecutionRecordDrawer evidence={p?.executionEvidence} onClose={() => setExecOpen(false)} />
+      ) : null}
     </div>
   );
 }
