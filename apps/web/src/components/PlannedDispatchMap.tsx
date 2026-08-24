@@ -261,14 +261,14 @@ export function PlannedDispatchMap({ stops, label, apiKey, onFailure, telemetry 
             {STYLE[k].label}
           </span>
         ))}
-        <span className="mono" data-testid="map-provenance-label" style={css("margin-left:auto;font-size:11px;color:#a85f12;letter-spacing:.02em")}>
-          {label}
+        <span className="mono" data-testid="map-provenance-label" style={css("margin-left:auto;font-size:10px;color:#a85f12;letter-spacing:.02em;font-weight:600")}>
+          ◆ {label}
         </span>
       </div>
       {telemetry && (
         <div data-testid="telemetry-strip" style={css("margin-top:9px;padding-top:9px;border-top:1px solid #dbe1dc;display:flex;align-items:center;gap:14px;flex-wrap:wrap")}>
           <span className="mono" data-testid="telemetry-classification" style={css("font-size:11px;font-weight:700;color:#a85f12;background:#f6ebd9;border:1px solid #e6cfa4;border-radius:5px;padding:3px 8px;letter-spacing:.02em")}>
-            Replay · simulated telematics
+            SIMULATED TELEMETRY · NOT LIVE GPS
           </span>
           {telemetry.vehicles.map((v) => (
             <span

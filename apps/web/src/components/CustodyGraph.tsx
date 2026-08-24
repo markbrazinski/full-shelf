@@ -5,9 +5,14 @@ import type { CustodyView } from "../types/fullShelf";
 export function CustodyGraph({ custody, onOpenEvidence }: { custody: CustodyView; onOpenEvidence: () => void }) {
   return (
     <>
+      <div style={css("background:#fff;border:1px solid #d5d8d2;border-radius:10px;padding:12px 14px;margin-bottom:16px")}>
+        <div className="mono" style={css("font-size:10px;letter-spacing:.08em;color:#74848a;font-weight:600;line-height:1.5")}>
+          Regulatory event → Model Armor → LTC-4471 → 3 local commitments → 96 downstream cases
+        </div>
+      </div>
       <div style={css("display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:14px")}>
         <div>
-          <div className="mono" style={css("font-size:11px;letter-spacing:.12em;color:#74848a;font-weight:600")}>CUSTODY IMPACT · NON-GEOGRAPHIC GRAPH</div>
+          <div className="mono" style={css("font-size:11px;letter-spacing:.12em;color:#74848a;font-weight:600")}>CUSTODY IMPACT · SCOPE RESOLUTION</div>
           {/* The benefit leads. The question it answers is the subhead. */}
           <h1
             style={css("font-size:24px;font-weight:600;letter-spacing:-.01em;margin-top:5px")}

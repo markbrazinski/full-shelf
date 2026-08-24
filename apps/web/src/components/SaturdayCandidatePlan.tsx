@@ -212,15 +212,27 @@ function CandidateMap({ view }: { view: TomorrowView }) {
 export function SaturdayCandidatePlan({ view }: { view: TomorrowView }) {
   return (
     <div style={css("flex:1;min-height:0;display:flex;flex-direction:column;margin-top:12px")} data-enter="">
+      <div style={css("background:#f9f4f0;border:1px solid #e3c3ba;border-left:4px solid #a23b2b;border-radius:10px;padding:14px 16px;margin-bottom:14px")}>
+        <div className="mono" style={css("font-size:10px;letter-spacing:.08em;color:#8a2f22;font-weight:600;line-height:1.4")}>
+          FRIDAY UNRESOLVED CARRIES FORWARD
+          <br />
+          Agency 03 short 20 · Site 01 custody confirmation open · LTC-4471 excluded
+        </div>
+      </div>
       <div style={css("flex:none;display:flex;align-items:center;justify-content:space-between;gap:16px")}>
-        <h1 style={css("font-size:20px;font-weight:600;letter-spacing:-.01em;color:#16262c")}>
-          Saturday’s distribution schedule
-        </h1>
+        <div>
+          <h1 style={css("font-size:20px;font-weight:600;letter-spacing:-.01em;color:#16262c")}>
+            Saturday’s candidate schedule
+          </h1>
+          <div style={css("font-size:12px;color:#5c6b71;margin-top:5px")}>
+            Draft with constraints — no activation supported
+          </div>
+        </div>
         <span
           className="mono"
           style={css(
             "font-size:10.5px;font-weight:600;color:#8a5a12;background:#f7ecd6;border:1px solid #e6cf9e;" +
-              "border-radius:6px;padding:5px 11px",
+              "border-radius:6px;padding:5px 11px;flex:none;white-space:nowrap",
           )}
           data-testid="saturday-status-chip"
         >
@@ -340,7 +352,7 @@ export function SaturdayCandidatePlan({ view }: { view: TomorrowView }) {
           ))}
 
           {/* Carry-forwards are committed obligations, shown in both states. */}
-          {view.inheritedObligations.length > 0 ? (
+          {view.inheritedObligations.length > 0 && (
             <div
               style={css("flex:none;background:#fff;border:1px solid #dfe4e0;border-radius:10px;overflow:hidden")}
               data-testid="planning-inputs"
@@ -350,7 +362,7 @@ export function SaturdayCandidatePlan({ view }: { view: TomorrowView }) {
                   className="mono"
                   style={css("font-size:9px;letter-spacing:.06em;color:#5c6b71;font-weight:700")}
                 >
-                  PLANNING INPUTS · {view.inheritedObligations.length} CARRY-FORWARD
+                  INHERITED CONSTRAINTS · {view.inheritedObligations.length} CARRY-FORWARD
                   {view.inheritedObligations.length === 1 ? "" : "S"}
                 </span>
               </div>
@@ -384,7 +396,13 @@ export function SaturdayCandidatePlan({ view }: { view: TomorrowView }) {
                 ))}
               </div>
             </div>
-          ) : null}
+          )}
+
+          <div style={css("flex:none;background:#fff;border:1px solid #d5d8d2;border-radius:10px;padding:14px 16px;margin-top:12px")}>
+            <div className="mono" style={css("font-size:11px;letter-spacing:.08em;color:#5c6b71;font-weight:600;line-height:1.6")}>
+              Tomorrow starts with yesterday's truth.
+            </div>
+          </div>
         </div>
       </div>
     </div>

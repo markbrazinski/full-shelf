@@ -451,7 +451,14 @@ export default function App() {
                       ))}
                     </div>
                     <div style={css("display:flex;background:#e2e6df;border-radius:9px;padding:3px")}>
-                      {(["scope", "custody", "response", "evidence"] as IncidentTab[]).map((t) => {
+                      {(
+                        [
+                          ["scope", "Intake"],
+                          ["custody", "Custody"],
+                          ["response", "Response"],
+                          ["evidence", "Evidence"],
+                        ] as [IncidentTab, string][]
+                      ).map(([t, label]) => {
                         const active = incidentTab === t;
                         return (
                           <button
@@ -462,10 +469,10 @@ export default function App() {
                             data-testid={`tab-${t}`}
                             style={css(
                               `background:${active ? "#16323b" : "transparent"};color:${active ? "#eef4f4" : "#5c6b71"};` +
-                                "border:none;border-radius:7px;padding:6px 15px;font-size:12px;font-weight:600;cursor:pointer;text-transform:capitalize",
+                                "border:none;border-radius:7px;padding:6px 15px;font-size:12px;font-weight:600;cursor:pointer",
                             )}
                           >
-                            {t}
+                            {label}
                           </button>
                         );
                       })}
