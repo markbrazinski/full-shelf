@@ -1,0 +1,83 @@
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap");
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: #e4e1d7;
+  font-family: "IBM Plex Sans", system-ui, sans-serif;
+  color: #1a2a30;
+}
+
+a {
+  color: #1f6f8b;
+  text-decoration: none;
+}
+a:hover {
+  color: #16323b;
+}
+
+.mono {
+  font-family: "IBM Plex Mono", monospace;
+}
+
+::selection {
+  background: #cfe2e8;
+}
+
+/* Interactive affordances (ported from v4 style-hover / style-focus) */
+.fs-brighten:hover {
+  filter: brightness(1.08);
+}
+.fs-btn-teal:hover {
+  background: #238099 !important;
+}
+.fs-topchip:hover {
+  background: #24454f !important;
+}
+[tabindex]:focus-visible,
+button:focus-visible {
+  outline: 2px solid #4f97b0;
+  outline-offset: 2px;
+}
+
+@keyframes fs-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes fs-rise {
+  from { opacity: 0; transform: translateY(7px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes fs-slide {
+  from { opacity: 0; transform: translateX(24px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes fs-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(31, 111, 139, 0.5); }
+  50% { box-shadow: 0 0 0 7px rgba(31, 111, 139, 0); }
+}
+@keyframes fs-spin {
+  to { transform: rotate(360deg); }
+}
+
+.fs-pulse {
+  animation: fs-pulse 2s ease-in-out infinite;
+}
+.fs-spin {
+  animation: fs-spin 0.8s linear infinite;
+}
+.fs-drawer {
+  animation: fs-slide 0.22s ease forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fs-pulse,
+  .fs-spin,
+  .fs-drawer {
+    animation: none !important;
+  }
+}
