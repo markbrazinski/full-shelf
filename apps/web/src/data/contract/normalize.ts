@@ -728,11 +728,17 @@ function buildGovernance(incident: RawIncident, explanation: RawProjection["curr
   return {
     question: "Why can this incident not be closed?",
     proposal: {
-      label: "Proposed action",
+      // The real request. The coordinator asked for the closure eligibility
+      // check that policy requires — it did not invoke a DECLARE_CONTAINED
+      // command, because no such command exists in the ledger.
+      label: `Requested · ${r.requested_action.replace(/_/g, " ").toLowerCase()}`,
       time: r.committed_at,
-      text: `Close incident ${incident.incident_id} as contained.`,
+      text:
+        `The ${(r.requested_by_role ?? "INCIDENT_COORDINATOR").replace(/_/g, " ").toLowerCase()} ` +
+        `requested the closure eligibility check for incident ${incident.incident_id}.`,
     },
-    policyEvalLabel: "Deterministic policy evaluation",
+    policyEvalLabel:
+      `${r.decided_by.replace(/_/g, " ").toLowerCase()} → ${r.policy_action}`,
     refusal: {
       verdict: `${r.decision} · ${r.mutations_applied} MUTATIONS`,
       body: "Policy refused the closure and the ledger applied no mutation.",

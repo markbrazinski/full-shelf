@@ -454,3 +454,21 @@ test("23 · the recall source is a delivered event, not claimed monitoring", asy
   expect(text).not.toContain("continuously monitor");
   expect(text).not.toContain("polling the fda");
 });
+
+test("24 · the refusal narrates the real backend sequence", async ({ page }) => {
+  await open(page);
+  await page.getByTestId("nav-incident").click();
+  await settle(page);
+  await page.getByTestId("tab-response").click();
+  await settle(page);
+
+  const body = page.locator("body");
+  // The real sequence: eligibility check -> RECORD_REFUSAL -> DENIED.
+  await expect(body).toContainText(/closure eligibility check/i);
+  await expect(body).toContainText(/RECORD_REFUSAL/);
+  await expect(body).toContainText(/DENIED/);
+  await expect(body).toContainText(/0 MUTATIONS/i);
+  await expect(body).toContainText(/PARTIALLY_CONTAINED/);
+  // The fictional command must never appear.
+  await expect(body).not.toContainText(/DECLARE_CONTAINED/);
+});
