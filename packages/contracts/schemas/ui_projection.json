@@ -663,7 +663,8 @@
             "plan_id",
             "revision",
             "vehicles",
-            "partner_pickups"
+            "partner_pickups",
+            "sequence_basis"
           ],
           "properties": {
             "plan_id": {
@@ -747,7 +748,8 @@
                         "cases",
                         "lot_id",
                         "status",
-                        "assignment_type"
+                        "assignment_type",
+                        "sequence"
                       ],
                       "properties": {
                         "order_id": {
@@ -783,6 +785,14 @@
                             "VEHICLE_ROUTED",
                             "PARTNER_PICKUP"
                           ]
+                        },
+                        "sequence": {
+                          "type": [
+                            "integer",
+                            "null"
+                          ],
+                          "minimum": 1,
+                          "description": "1-based position in this vehicle's committed manifest order. Null for a partner pickup, which sits on no vehicle manifest. See sequence_basis: this is an ordering of committed rows, not an optimized route."
                         }
                       }
                     }
@@ -802,7 +812,8 @@
                   "lot_id",
                   "status",
                   "assignment_type",
-                  "assigned_vehicle_id"
+                  "assigned_vehicle_id",
+                  "sequence"
                 ],
                 "properties": {
                   "order_id": {
@@ -840,9 +851,24 @@
                   },
                   "assigned_vehicle_id": {
                     "type": "null"
+                  },
+                  "sequence": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ],
+                    "minimum": 1,
+                    "description": "1-based position in this vehicle's committed manifest order. Null for a partner pickup, which sits on no vehicle manifest. See sequence_basis: this is an ordering of committed rows, not an optimized route."
                   }
                 }
               }
+            },
+            "sequence_basis": {
+              "type": "string",
+              "description": "Provenance of stop.sequence. COMMITTED_MANIFEST_ORDER means the sequence is a deterministic 1-based ordering of committed manifest rows for each vehicle. It is never a routing, distance, or travel-time optimization, and must not be presented as one.",
+              "enum": [
+                "COMMITTED_MANIFEST_ORDER"
+              ]
             }
           }
         }

@@ -2905,14 +2905,24 @@ def get_demo_beats_projections(
                 assignments.setdefault(row[5], []).append(
                     {**stop, "assignment_type": "VEHICLE_ROUTED"})
             else:
+                # A partner pickup is not a stop on any vehicle's manifest, so
+                # it carries no position in a vehicle sequence.
                 partner_pickups.append(
                     {**stop, "assignment_type": "PARTNER_PICKUP",
-                     "assigned_vehicle_id": None})
+                     "assigned_vehicle_id": None, "sequence": None})
         vehicles_by_id = {v[0]: v for v in vehicle_rows}
         dispatch_vehicles = []
         for vehicle_id in sorted(set(assignments) | set(vehicles_by_id)):
             stops = sorted(assignments.get(vehicle_id, []),
                            key=lambda stop: stop["order_id"])
+            # Stop sequence is the committed manifest order for this vehicle,
+            # 1-based and contiguous. It is a deterministic ordering of the
+            # authoritative rows, NOT a routing or optimization claim: no
+            # distance, travel time, or geometry is consulted. sequence_basis
+            # states that provenance so a client can never present it as an
+            # optimized route.
+            for position, stop in enumerate(stops, start=1):
+                stop["sequence"] = position
             vehicle = vehicles_by_id.get(vehicle_id)
             assigned_cases = vehicle[3] if vehicle else None
             capacity = vehicle[2] if vehicle else None
@@ -2942,6 +2952,7 @@ def get_demo_beats_projections(
             })
         dispatch = {"plan_id": current_plan_id, "revision": active_revision,
                     "vehicles": dispatch_vehicles,
+                    "sequence_basis": "COMMITTED_MANIFEST_ORDER",
                     "partner_pickups": sorted(partner_pickups,
                                               key=lambda p: p["order_id"])}
 

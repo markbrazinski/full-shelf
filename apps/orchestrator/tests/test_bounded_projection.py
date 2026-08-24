@@ -521,6 +521,53 @@ def test_amendment2_same_action_type_different_targets_do_not_unlock():
     assert truck["terminal_state"] == "NONE"
 
 
+def test_stop_sequence_matches_the_canonical_ordered_manifest():
+    """Sequence is the committed manifest order, read from the seed.
+
+    The morning-plan seed carries an ordered assigned_orders manifest per
+    vehicle. The projected sequence must reproduce it rather than invent an
+    order, so the numbered stops an operator sees are source-backed.
+    """
+    expected = {
+        truck["vehicle_id"]: list(truck["assigned_orders"])
+        for truck in MORNING_PLAN["trucks"]
+    }
+    dispatch = project(T(8, 5)).json()["current_day"]["dispatch"]
+    for vehicle in dispatch["vehicles"]:
+        ordered = [s["order_id"] for s in sorted(vehicle["stops"],
+                                                 key=lambda s: s["sequence"])]
+        assert ordered == expected[vehicle["vehicle_id"]]
+        # 1-based and contiguous, so a client can render 1..n with no gaps.
+        assert [s["sequence"] for s in
+                sorted(vehicle["stops"], key=lambda s: s["sequence"])] == \
+            list(range(1, len(ordered) + 1))
+
+
+def test_stop_sequence_is_declared_as_manifest_order_not_a_route():
+    """The sequence must never be presentable as an optimized route."""
+    dispatch = project(T(8, 5)).json()["current_day"]["dispatch"]
+    assert dispatch["sequence_basis"] == "COMMITTED_MANIFEST_ORDER"
+
+
+def test_partner_pickup_carries_no_vehicle_stop_sequence():
+    """O203 leaves the truck manifest, so it holds no position on one."""
+    dispatch = project(T(23, 59)).json()["current_day"]["dispatch"]
+    pickups = dispatch["partner_pickups"]
+    assert [p["order_id"] for p in pickups] == ["O203"]
+    assert pickups[0]["sequence"] is None
+    routed = {s["order_id"] for v in dispatch["vehicles"] for s in v["stops"]}
+    assert "O203" not in routed
+
+
+def test_repaired_revision_resequences_the_absorbing_vehicle():
+    """Truck 2 absorbs O202, so its manifest renumbers contiguously."""
+    dispatch = project(T(23, 59)).json()["current_day"]["dispatch"]
+    truck2 = next(v for v in dispatch["vehicles"] if v["vehicle_id"] == "TRUCK-02")
+    ordered = sorted(truck2["stops"], key=lambda s: s["sequence"])
+    assert [s["order_id"] for s in ordered] == ["O202", "O204", "O205"]
+    assert [s["sequence"] for s in ordered] == [1, 2, 3]
+
+
 def test_vehicle_failure_is_active_then_resolved_by_its_repair_revision():
     """The truck breakdown is a real projected incident with its own lifecycle.
 

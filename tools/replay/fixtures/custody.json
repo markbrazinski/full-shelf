@@ -138,11 +138,13 @@
           "cases": 20,
           "lot_id": "LTC-4471",
           "order_id": "O203",
+          "sequence": null,
           "status": "PARTNER_PICKUP"
         }
       ],
       "plan_id": "PLAN-2026-08-14",
       "revision": "rev08",
+      "sequence_basis": "COMMITTED_MANIFEST_ORDER",
       "vehicles": [
         {
           "assigned_cases": null,
@@ -159,6 +161,7 @@
               "cases": 22,
               "lot_id": "LTC-4471",
               "order_id": "O202",
+              "sequence": 1,
               "status": "PLANNED"
             },
             {
@@ -167,6 +170,7 @@
               "cases": 15,
               "lot_id": "LTC-5090",
               "order_id": "O204",
+              "sequence": 2,
               "status": "PLANNED"
             },
             {
@@ -175,6 +179,7 @@
               "cases": 21,
               "lot_id": "LTC-5090",
               "order_id": "O205",
+              "sequence": 3,
               "status": "PLANNED"
             }
           ],
