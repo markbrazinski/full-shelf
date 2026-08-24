@@ -128,3 +128,49 @@ No inbound collections, notification tracking, replacement custody, agent
 `RUNNING` states, or real-GPS claims. The five-agent fleet, Model Armor
 boundary, deterministic policy, ledger authority, and canonical refusal
 behavior are untouched.
+
+## Story delta (approved after B5)
+
+Five further changes, all additive, no DDL:
+
+**Refrigeration failure → proposal → approval.** `VEHICLE_REFRIGERATION_FAILURE`
+from `SIMULATED_FLEET_TELEMATICS` is a reported mechanical fault, idempotent on
+`source_event_id` via `InboundEvents`'s primary key. It is never inferred from
+position: refrigeration status and location are separate signals, and a test
+asserts the projection exposes no coordinate, bearing, or speed.
+
+A bounded `PERSIST_REPAIR_PROPOSAL` command persists the resulting proposal as a
+constraint on the **source** revision. It writes no `PlanRevisions` row, no
+`Orders` row and no `Vehicles` update, so the active plan is untouched and rev07
+stays authoritative until approval. It fails closed on an infeasible reroute, a
+reroute onto the failed vehicle, an already-existing target revision, or a source
+revision that is no longer active — every rejection leaving zero mutations. The
+proposal binds the exact diff the approval later signs, hashed with the same
+`compute_plan_diff_hash` the KMS envelope uses.
+
+`current_day.repair_proposal` is present only while the revision it repairs is
+still active, so an approval control can never appear for work already
+committed. `authority` is always `AGENT_PROPOSAL`; `activation_supported` always
+false.
+
+**Recall arrival.** `REGULATORY_EVENT_RECEIVED` is the first intake step, making
+the authority order explicit: event arrives → Model Armor screens → extraction
+reads. `recall_intake_as_of.source` records a representative FDA-format
+regulatory notice delivered as an event, with `monitoring_claimed` pinned false.
+Full Shelf does not poll or monitor the FDA and the projection must never imply
+it does.
+
+**Refusal terminology.** The refusal names what really ran:
+`CLOSURE_ELIGIBILITY_CHECK` requested by the coordinator, answered by
+`RECORD_REFUSAL` from deterministic policy, `DENIED · 0 MUTATIONS`.
+`DECLARE_CONTAINED` is not in the ledger command enum and appears nowhere.
+
+**Custody and recovery hierarchy.** Both surfaces lead with the benefit,
+composed from projected quantities only. Human-readable node roles are
+presentation metadata; names, quantities, custody states and locations stay
+projection-backed.
+
+### Deferred
+
+Inbound food collections are **not** in this slice. Recorded as a post-film
+product extension, not a gap in the current story.
