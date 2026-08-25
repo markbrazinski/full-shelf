@@ -560,6 +560,21 @@ def run_fleet(
             incident_id, lot_id, "INCOMPLETE_SPECIALIST_COVERAGE", trace
         )
 
+    # If Incident Lead ran, verify it authorized all agents that actually ran.
+    # Incident Lead's required_specialists must be a superset of agents that ran (minus Incident Lead itself).
+    if AGENT_INCIDENT_LEAD in trigger_agents:
+        incident_lead_output = accepted.get(AGENT_INCIDENT_LEAD)
+        if incident_lead_output:
+            authorized_specialists = set(incident_lead_output.required_specialists)
+            agents_after_incident_lead = trigger_agents - {AGENT_INCIDENT_LEAD, AGENT_RECALL_INTAKE_EXTRACTION}
+            if not agents_after_incident_lead.issubset(authorized_specialists):
+                unauthorized = agents_after_incident_lead - authorized_specialists
+                return _failed_proposal(
+                    incident_id, lot_id,
+                    f"PLAYBOOK_DID_NOT_AUTHORIZE_SEQUENCE: {','.join(sorted(unauthorized))}",
+                    trace
+                )
+
     # Extract only the outputs for agents that ran (are in trigger_agents)
     proposal_kwargs = {
         "status": "PROPOSED",

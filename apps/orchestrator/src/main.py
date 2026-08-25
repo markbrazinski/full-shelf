@@ -67,6 +67,7 @@ from full_shelf_domain.fleet.contracts import (
     FleetProposalError,
 )
 from full_shelf_domain.fleet.coordinator import AGENT_INCIDENT_COORDINATOR, GOVERNED_SEQUENCE, run_fleet
+from full_shelf_domain.fleet.orchestration import TriggerClass
 from full_shelf_domain.fleet.manifest import build_manifest
 from full_shelf_domain.fleet.tools import generate_recovery_candidates
 
@@ -1754,6 +1755,7 @@ def _run_agent_fleet_proposal(
             graph_result=graph,
             recovery_candidates=candidates,
             source_event_id=source_event_id,
+            trigger=TriggerClass.RECALL,
             partner_state={
                 "partner_id": unconfirmed_position["node_id"],
                 "partner_name": unconfirmed_position["name"],
