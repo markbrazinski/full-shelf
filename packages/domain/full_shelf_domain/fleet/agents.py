@@ -390,14 +390,12 @@ def incident_lead_prompt(
     if extraction:
         # Handle both dict and Pydantic model instances
         extract_dict = extraction if isinstance(extraction, dict) else extraction.model_dump()
-        hazard = extract_dict.get('hazard', {})
-        hazard_value = hazard.get('value', 'unknown') if isinstance(hazard, dict) else 'unknown'
-        lot_id = extract_dict.get('lot_id', {})
-        lot_value = lot_id.get('value', 'unknown') if isinstance(lot_id, dict) else 'unknown'
         lines.extend([
             f"Extracted from notice:",
-            f"  Lot: {lot_value}",
-            f"  Hazard: {hazard_value}",
+            f"  Product: {extract_dict.get('product_name', 'unknown')}",
+            f"  Hazard: {extract_dict.get('hazard', 'unknown')}",
+            f"  Action required: {extract_dict.get('action_required', 'unknown')}",
+            f"  Source anchor: {extract_dict.get('source_anchor', 'unknown')}",
         ])
 
     lines.extend([
