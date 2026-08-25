@@ -52,7 +52,47 @@ VITE_ORCHESTRATOR_URL=https://full-shelf-orchestrator-<project>.run.app
 Live mode requires a real Google operator identity and the orchestrator's
 `FRONTEND_ALLOWED_ORIGINS` to include the frontend origin.
 
-## Beats
+## Golden runtime controller
+
+`runtime_server.py` is the deterministic, event-driven runtime. Unlike the beat
+selector below it is a **sequencer**: it owns a session cursor, advances only
+through the permitted event graph, and pauses at the one real human gate.
+
+```bash
+.venv/bin/python tools/replay/runtime_server.py
+# DETERMINISTIC TEST MODE - golden runtime on http://127.0.0.1:8788
+```
+
+Session state is presentation-only and never authoritative. It reaches no
+Gemini, ADK, Model Armor, KMS, Spanner, or ledger. Approval is synthetic and
+says so: it claims no real authentication, KMS signature, or human identity.
+
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/api/v1/replay/sessions` | Create a session at event 5, events 1-4 preloaded |
+| `GET` | `/api/v1/replay/sessions/{id}` | State, history, committed feed |
+| `POST` | `/api/v1/replay/sessions/{id}/start` | Autoplay; `{"interval_ms": N}` |
+| `POST` | `/api/v1/replay/sessions/{id}/pause` | Pause autoplay |
+| `POST` | `/api/v1/replay/sessions/{id}/advance` | Commit the next permitted event |
+| `POST` | `/api/v1/replay/sessions/{id}/approve` | The one human gate |
+| `POST` | `/api/v1/replay/sessions/{id}/branch` | `{"proof": "vague"\|"complete"}` |
+| `DELETE` | `/api/v1/replay/sessions/{id}/branch` | Return to canonical |
+| `POST` | `/api/v1/replay/sessions/{id}/reset` | New session at event 5 |
+| `GET` | `/api/v1/replay/sessions/{id}/stream` | SSE, honors `Last-Event-ID` |
+| `GET` | `/api/v1/replay/sessions/{id}/projection` | Cursor-gated projection |
+| `GET` | `/api/v1/replay/events` | The canonical event table |
+
+Ordering is enforced by the state machine, never the transport: autoplay stops
+after event 8, event 10 cannot precede event 9's receipt, a proof branch cannot
+open before event 22, and no field belonging to a later event crosses the
+boundary early.
+
+## Beats (legacy selector)
+
+`server.py` remains a fixture **selector**, kept for contract-shape parity and
+existing frontend work. It has no session, no ordering, and splices proof
+fixtures into the canonical timeline; prefer the runtime controller above for
+anything that must progress chronologically.
 
 `tools/replay/fixtures/index.json` maps each v3.1 beat to the exact `as_of`
 boundary that produces it. Selecting an arbitrary `as_of` returns the latest
@@ -62,7 +102,7 @@ beat at or before it, mirroring production boundary semantics.
 
 ```bash
 PYTHONPATH=packages/domain:packages/observability:apps/orchestrator/src:apps/plan-ledger/src \
-  .venv/bin/python -m pytest -q tools/replay/test_replay_contract.py
+  .venv/bin/python -m pytest -q tools/replay/
 ```
 
 Contract-parity tests fail if the production response shape and the fixtures
