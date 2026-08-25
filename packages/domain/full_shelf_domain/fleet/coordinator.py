@@ -57,6 +57,7 @@ from .contracts import (
     IncidentLeadAssessment,
     NetworkCustodyAssessment,
     PartnerCommunication,
+    PartnerInboundInterpretation,
     RecoverySelection,
 )
 from .tools import (
@@ -239,10 +240,16 @@ def build_incident_coordinator_agent(run_context: Optional[FleetRunContext] = No
 
     sub_agents = []
     if run_context is not None:
-        from .orchestration import sequence_for_trigger
+        from .orchestration import sequence_for_trigger, TriggerClass
 
         # Build only the agents needed for this trigger
         agent_ids = sequence_for_trigger(run_context.trigger_class)
+
+        # Partner Operations output schema depends on trigger
+        partner_schema = None
+        if run_context.trigger_class == TriggerClass.PARTNER_CALLBACK:
+            partner_schema = PartnerInboundInterpretation
+
         sub_agents_by_id = {
             AGENT_INCIDENT_LEAD: build_incident_lead_agent(),
             AGENT_RECALL_INTAKE_EXTRACTION: build_recall_intake_extraction_agent(),
@@ -251,7 +258,7 @@ def build_incident_coordinator_agent(run_context: Optional[FleetRunContext] = No
                 build_custody_dependents_tool(run_context.graph_result),
             ]),
             AGENT_FULFILLMENT_PLANNING_RECOVERY: build_fulfillment_planning_recovery_agent([]),
-            AGENT_PARTNER_OPERATIONS: build_partner_operations_agent([]),
+            AGENT_PARTNER_OPERATIONS: build_partner_operations_agent([], output_schema=partner_schema),
         }
         # Only include agents in the sequence
         sub_agents = [sub_agents_by_id[agent_id] for agent_id in agent_ids]

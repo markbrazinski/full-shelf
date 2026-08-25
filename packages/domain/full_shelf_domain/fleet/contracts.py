@@ -239,7 +239,7 @@ class FleetProposal(BaseModel):
     extraction: Optional[Dict[str, Any]] = None
     custody: Optional[NetworkCustodyAssessment] = None
     recovery: Optional[RecoverySelection] = None
-    partner: Optional[PartnerCommunication] = None
+    partner: Optional[PartnerCommunication | PartnerInboundInterpretation] = None
     delegation_trace: List[Dict[str, Any]] = Field(default_factory=list)
     coordinator_session_id: Optional[str] = None
     coordination_run_id: Optional[str] = None

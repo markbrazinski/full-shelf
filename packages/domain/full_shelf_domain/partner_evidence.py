@@ -75,7 +75,7 @@ class PartnerCustodyProposal(StrictModel):
     location: QuotedStringClaim | None = None
     disposition: QuotedDispositionClaim | None = None
     confirmation_time: QuotedTimeClaim | None = None
-    requested_mutation: Literal["CONFIRM_CUSTODY"]
+    requested_mutation: Literal["CONFIRM_CUSTODY"] | None = None
     rationale: str = Field(min_length=1, max_length=600)
     confidence: float = Field(ge=0.0, le=1.0)
 

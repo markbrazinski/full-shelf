@@ -32,6 +32,7 @@ from .contracts import (
     IncidentLeadAssessment,
     NetworkCustodyAssessment,
     PartnerCommunication,
+    PartnerInboundInterpretation,
     RecoverySelection,
 )
 
@@ -197,12 +198,17 @@ def build_fulfillment_planning_recovery_agent(tools: List[Callable]):
     )
 
 
-def build_partner_operations_agent(tools: List[Callable]):
-    """Concrete ADK LlmAgent for `full-shelf.partner-operations.v2`."""
+def build_partner_operations_agent(tools: List[Callable], output_schema=None):
+    """Concrete ADK LlmAgent for `full-shelf.partner-operations.v2`.
+
+    output_schema can be PartnerCommunication (outbound) or PartnerInboundInterpretation (callback).
+    """
+    if output_schema is None:
+        output_schema = PartnerCommunication
     return _build_llm_agent(
         name="PartnerOperationsAgent",
         instruction=PARTNER_OPERATIONS_INSTRUCTION,
-        output_schema=PartnerCommunication,
+        output_schema=output_schema,
         tools=tools,
         max_output_tokens=1024,
     )
