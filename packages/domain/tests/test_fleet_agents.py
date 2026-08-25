@@ -10,7 +10,7 @@ import pytest
 
 from full_shelf_domain.fleet import agents, contracts
 from full_shelf_domain.fleet.contracts import (
-    AGENT_FULFILLMENT_RECOVERY,
+    AGENT_FULFILLMENT_PLANNING_RECOVERY,
     AGENT_NETWORK_CUSTODY,
     AGENT_PARTNER_OPERATIONS,
     FleetProposalError,
@@ -49,7 +49,7 @@ def test_coordinator_is_a_concrete_adk_base_agent():
     [
         (agents.build_network_custody_agent, "NetworkAndCustodyAgent",
          NetworkCustodyAssessment),
-        (agents.build_fulfillment_recovery_agent,
+        (agents.build_fulfillment_planning_recovery_agent,
          "FulfillmentAndRecoveryPlannerAgent", RecoverySelection),
         (agents.build_partner_operations_agent, "PartnerOperationsAgent",
          PartnerCommunication),

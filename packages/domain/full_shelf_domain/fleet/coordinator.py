@@ -75,6 +75,9 @@ from .validation import (
 )
 
 
+# Infrastructure identifier for the coordinator itself (not an agent, not in FLEET_AGENT_IDS)
+AGENT_INCIDENT_COORDINATOR = "full-shelf.incident-coordinator.v1"
+
 # The governed specialist order the coordinator owns. Declared as data so the
 # catalog and the parity tests read the same sequence the runtime executes.
 GOVERNED_SEQUENCE = (

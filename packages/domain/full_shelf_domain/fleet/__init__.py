@@ -14,6 +14,13 @@ from .contracts import (
     FleetProposalError,
     TrustClass,
 )
+from .orchestration import (
+    TriggerClass,
+    OrchestrationPath,
+    ORCHESTRATION_PATHS,
+    sequence_for_trigger,
+    describe_orchestration,
+)
 
 __all__ = [
     "AGENT_FULFILLMENT_PLANNING_RECOVERY",
@@ -28,4 +35,9 @@ __all__ = [
     "FleetProposal",
     "FleetProposalError",
     "TrustClass",
+    "TriggerClass",
+    "OrchestrationPath",
+    "ORCHESTRATION_PATHS",
+    "sequence_for_trigger",
+    "describe_orchestration",
 ]

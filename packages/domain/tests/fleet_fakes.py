@@ -49,6 +49,17 @@ CANONICAL_PARTNER_STATE = {
     "deadline": "2026-08-08T17:00:00Z",
 }
 
+INCIDENT_LEAD_OK = {
+    "incident_class": "FOOD_SAFETY_RECALL",
+    "source_event_id": "EVT-RECALL-001",
+    "affected_capabilities": ["cold_chain", "fulfillment"],
+    "affected_commitment_ids": ["O202", "O203"],
+    "selected_playbook_id": "recall-response-playbook-v1",
+    "required_specialists": ["extraction", "custody", "recovery"],
+    "immediate_safety_actions": ["pause_distribution", "notify_sites"],
+    "rationale": "Food safety recall scope determined from notice.",
+    "confidence": 0.95,
+}
 RECALL_OK = {
     "lot_id": "LTC-4471", "product_name": "Romaine Lettuce",
     "hazard": "E. coli O157:H7", "action_required": "PAUSE_DISTRIBUTION",
@@ -78,9 +89,10 @@ PARTNER_OK = {
 }
 
 AGENT_DEFAULTS = {
-    "RecallExtractionAgent": RECALL_OK,
+    "IncidentLeadAgent": INCIDENT_LEAD_OK,
+    "RecallIntakeExtractionAgent": RECALL_OK,
     "NetworkAndCustodyAgent": CUSTODY_OK,
-    "FulfillmentAndRecoveryPlannerAgent": RECOVERY_OK,
+    "FulfillmentPlanningRecoveryAgent": RECOVERY_OK,
     "PartnerOperationsAgent": PARTNER_OK,
 }
 

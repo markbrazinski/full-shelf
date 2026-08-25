@@ -26,17 +26,17 @@ from fleet_fakes import (  # noqa: E402
 SYNTHETIC_PARENT_FIELD = "_".join(["parent", "agent", "id"])
 
 from full_shelf_domain.fleet.contracts import (  # noqa: E402
-    AGENT_FULFILLMENT_RECOVERY,
-    AGENT_INCIDENT_COORDINATOR,
+    AGENT_FULFILLMENT_PLANNING_RECOVERY,
     AGENT_NETWORK_CUSTODY,
     AGENT_PARTNER_OPERATIONS,
-    AGENT_RECALL_EXTRACTION,
+    AGENT_RECALL_INTAKE_EXTRACTION,
     AGENT_TIMEOUT_SECONDS,
     TOOL_CUSTODY_DEPENDENTS_READ,
     TOOL_CUSTODY_GRAPH_READ,
     TOOL_RUNTIME_NAMES,
 )
 from full_shelf_domain.fleet.coordinator import (  # noqa: E402
+    AGENT_INCIDENT_COORDINATOR,
     GOVERNED_SEQUENCE,
     build_incident_coordinator_agent,
 )
@@ -52,17 +52,17 @@ def test_adk_version_is_the_pinned_deployable_version():
 # --- Finding 1 & 2: genuine coordinator ownership ---------------------------
 
 
-def test_coordinator_governs_four_correlated_specialist_executions():
+def test_coordinator_governs_five_correlated_specialist_executions():
     calls = []
     with scripted_gemini(calls=calls):
         result = run_canonical_fleet()
     proposal = result["proposal"]
     assert proposal.status == "PROPOSED", proposal.reason_code
-    # Four real model invocations, in the governed order, each its own
-    # Runner/session execution correlated by coordination_run_id.
+    # Five real model invocations in the RECALL path, in the governed order,
+    # each its own Runner/session execution correlated by coordination_run_id.
     assert calls == [
-        "RecallExtractionAgent", "NetworkAndCustodyAgent",
-        "FulfillmentAndRecoveryPlannerAgent", "PartnerOperationsAgent",
+        "IncidentLeadAgent", "RecallIntakeExtractionAgent", "NetworkAndCustodyAgent",
+        "FulfillmentPlanningRecoveryAgent", "PartnerOperationsAgent",
     ]
 
 
@@ -116,7 +116,7 @@ def test_recall_evidence_uses_its_own_session_not_the_coordinators():
     with scripted_gemini():
         proposal = run_canonical_fleet()["proposal"]
     recall = proposal.delegation_trace[0]
-    assert recall["agent_id"] == AGENT_RECALL_EXTRACTION
+    assert recall["agent_id"] == AGENT_RECALL_INTAKE_EXTRACTION
     assert recall["specialist_session_id"] != proposal.coordinator_session_id
 
 
@@ -240,7 +240,7 @@ def test_runtime_tool_names_match_the_governed_catalog_ids():
 
 
 @pytest.mark.parametrize("agent_name,agent_id", [
-    ("RecallExtractionAgent", AGENT_RECALL_EXTRACTION),
+    ("RecallExtractionAgent", AGENT_RECALL_INTAKE_EXTRACTION),
     ("NetworkAndCustodyAgent", AGENT_NETWORK_CUSTODY),
 ])
 def test_specialist_timeout_is_executable_and_fails_closed(
