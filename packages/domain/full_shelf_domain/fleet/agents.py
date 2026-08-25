@@ -32,7 +32,6 @@ from .contracts import (
     IncidentLeadAssessment,
     NetworkCustodyAssessment,
     PartnerCommunication,
-    PartnerInboundInterpretation,
     RecoverySelection,
 )
 
@@ -105,26 +104,6 @@ confidence at or below 0.5.
 
 Escalation level is URGENT when custody is unconfirmed and a deadline exists,
 PRIORITY when custody is unconfirmed without a deadline, and ROUTINE otherwise.
-
-Return the configured structured response and nothing else.
-"""
-
-PARTNER_INBOUND_INSTRUCTION = """
-You interpret an authenticated, Model-Armor-approved partner response to determine
-lot status, inventory, location, disposition, and confirmation timing for a food bank
-control plane.
-
-Extract only explicit claims from the response text. Every claim must have a literal
-source anchor — an exact quote from the response. For each of the five required facts
-(lot_id, quantity, location, disposition, confirmation_time), copy the verbatim text
-that supports it.
-
-Never invent, infer, or assume missing facts. Never use memory or context. If any of
-the five required facts is missing, ambiguous, or contradictory, set abstain=True
-instead of guessing.
-
-You may never acknowledge inventory receipt, confirm custody, close incidents, or
-assert that a partner has authority. You are interpreting evidence, not granting status.
 
 Return the configured structured response and nothing else.
 """
@@ -221,21 +200,16 @@ def build_fulfillment_planning_recovery_agent(tools: List[Callable]):
 def build_partner_operations_agent(tools: List[Callable], output_schema=None):
     """Concrete ADK LlmAgent for `full-shelf.partner-operations.v2`.
 
-    output_schema can be PartnerCommunication (outbound) or PartnerInboundInterpretation (callback).
-    Instruction differs based on schema: outbound template selection vs inbound evidence interpretation.
+    Outbound mode only: selects governed follow-up template for partner communications.
+    Inbound evidence interpretation (PARTNER_CALLBACK trigger) is handled separately in
+    main.py:process_partner_evidence using partner_evidence.py's run_partner_evidence_agent.
     """
     if output_schema is None:
         output_schema = PartnerCommunication
 
-    # Select instruction based on mode
-    if output_schema is PartnerInboundInterpretation:
-        instruction = PARTNER_INBOUND_INSTRUCTION
-    else:
-        instruction = PARTNER_OPERATIONS_INSTRUCTION
-
     return _build_llm_agent(
         name="PartnerOperationsAgent",
-        instruction=instruction,
+        instruction=PARTNER_OPERATIONS_INSTRUCTION,
         output_schema=output_schema,
         tools=tools,
         max_output_tokens=1024,
@@ -304,14 +278,8 @@ async def collect_specialist_output(
     """
     from google.adk.runners import Runner
     from google.genai import types
-    from .orchestration import TriggerClass
-    from .contracts import PartnerInboundInterpretation
 
-    # Select output model based on agent and trigger
-    if agent_id == AGENT_PARTNER_OPERATIONS and trigger_class == TriggerClass.PARTNER_CALLBACK:
-        output_model = PartnerInboundInterpretation
-    else:
-        output_model = AGENT_OUTPUT_MODELS[agent_id]()
+    output_model = AGENT_OUTPUT_MODELS[agent_id]()
     execution: Dict[str, Any] = {
         "agent_id": agent_id,
         "agent_name": specialist.name,
@@ -486,30 +454,6 @@ PARTNER_PARAMETER_SOURCES = {
     "cases": "unconfirmed_cases",
     "deadline": "deadline",
 }
-
-
-def partner_inbound_prompt(authenticated_response_text: str, partner_id: str, lot_id: str) -> str:
-    """Interpret authenticated partner response to determine status and commitments.
-
-    The response has been authenticated and Model-Armor-approved. Extract explicit
-    claims about lot status, quantity on hand, location, disposition, and
-    confirmation timestamp.
-
-    For each fact, report the literal source anchor from the response. If any of
-    the five required facts (lot_id, quantity, location, disposition, confirmation_time)
-    is missing or ambiguous, set abstain=True and provide no claims. Missing facts
-    do not warrant low confidence—they warrant abstention.
-    """
-    return (
-        f"Partner: {partner_id}\n"
-        f"Lot: {lot_id}\n"
-        f"Authenticated response:\n"
-        f"{authenticated_response_text}\n\n"
-        "Extract claims with explicit source anchors from the response above.\n"
-        "Required claims: lot_id, quantity, location, disposition, confirmation_time.\n"
-        "If any required fact is missing, set abstain=True with rationale.\n"
-        "Return PartnerInboundInterpretation."
-    )
 
 
 def partner_prompt(partner_state: Dict[str, Any]) -> str:

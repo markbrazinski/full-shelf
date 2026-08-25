@@ -12,8 +12,6 @@ from .contracts import (
     ComponentKind,
     FleetProposal,
     FleetProposalError,
-    PartnerEvidenceClaim,
-    PartnerInboundInterpretation,
     TrustClass,
 )
 from .orchestration import (
@@ -36,8 +34,6 @@ __all__ = [
     "ComponentKind",
     "FleetProposal",
     "FleetProposalError",
-    "PartnerEvidenceClaim",
-    "PartnerInboundInterpretation",
     "TrustClass",
     "TriggerClass",
     "OrchestrationPath",

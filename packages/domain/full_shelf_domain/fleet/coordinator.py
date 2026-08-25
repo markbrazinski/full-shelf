@@ -41,7 +41,6 @@ from .agents import (
     collect_specialist_output,
     incident_lead_prompt,
     network_custody_prompt,
-    partner_inbound_prompt,
     partner_prompt,
     recall_prompt,
     recovery_prompt,
@@ -58,7 +57,6 @@ from .contracts import (
     IncidentLeadAssessment,
     NetworkCustodyAssessment,
     PartnerCommunication,
-    PartnerInboundInterpretation,
     RecoverySelection,
 )
 from .tools import (
@@ -73,7 +71,6 @@ from .validation import (
     validate_custody_assessment,
     validate_incident_lead_assessment,
     validate_partner_communication,
-    validate_partner_inbound_interpretation,
     validate_recall_extraction,
     validate_recovery_selection,
 )
@@ -190,32 +187,18 @@ def _build_hops_for_trigger(
         ),
     }
 
-    # Partner Operations has different behavior based on trigger
-    if trigger == TriggerClass.PARTNER_CALLBACK:
-        # Inbound interpretation mode: partner response is Model-Armor-approved
-        hop_configs[AGENT_PARTNER_OPERATIONS] = (
-            lambda acc: partner_inbound_prompt(
-                context.screened_notice_text,  # authenticated partner response text
-                context.partner_state.get("partner_id", ""),
-                context.lot_id
-            ),
-            lambda parsed: validate_partner_inbound_interpretation(
-                parsed, context.lot_id, context.partner_state.get("partner_id", ""), context.screened_notice_text,
-                received_at=context.callback_received_at,
-                expected_quantity=context.partner_state.get("unconfirmed_cases"),
-                expected_location=context.partner_state.get("location")
-            ),
-            "PARTNER_INBOUND_INTERPRETATION_VALIDATED"
-        )
-    else:
-        # Outbound communication mode: select template for partner
-        hop_configs[AGENT_PARTNER_OPERATIONS] = (
-            lambda acc: partner_prompt(partner_state_read(**context.partner_state)),
-            lambda parsed: validate_partner_communication(
-                parsed, partner_state_read(**context.partner_state)
-            ),
-            "TEMPLATE_AND_PARAMETERS_VALIDATED"
-        )
+    # Partner Operations outbound communication mode: select template for partner.
+    # Inbound evidence (PARTNER_CALLBACK trigger) is handled directly in main.py:process_partner_evidence
+    # after Model Armor screening, using partner_evidence.py's run_partner_evidence_agent and
+    # verify_partner_custody_proposal. The coordinator does not invoke Partner Operations for callbacks;
+    # this route is for outbound template selection only.
+    hop_configs[AGENT_PARTNER_OPERATIONS] = (
+        lambda acc: partner_prompt(partner_state_read(**context.partner_state)),
+        lambda parsed: validate_partner_communication(
+            parsed, partner_state_read(**context.partner_state)
+        ),
+        "TEMPLATE_AND_PARAMETERS_VALIDATED"
+    )
 
     # Build hops only for agents in the sequence
     hops = []

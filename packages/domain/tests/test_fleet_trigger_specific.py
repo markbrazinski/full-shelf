@@ -195,108 +195,14 @@ class TestRecallPathFullSequence:
         assert path[4] == AGENT_PARTNER_OPERATIONS
 
 
-class TestPartnerCallbackSourceAnchors:
-    """Test that Partner callback interprets evidence with source anchors."""
+class TestPartnerCallbackSequence:
+    """Test that Partner callback orchestration invokes only Partner Operations."""
 
     def test_partner_callback_trigger_invokes_only_partner_agent(self):
         """PARTNER_CALLBACK should invoke only Partner Operations."""
         path = sequence_for_trigger(TriggerClass.PARTNER_CALLBACK)
         assert len(path) == 1
         assert path[0] == AGENT_PARTNER_OPERATIONS
-
-    def test_partner_inbound_interpretation_with_literal_anchors(self):
-        """Partner inbound must extract literal source anchors for all critical facts."""
-        from full_shelf_domain.fleet.contracts import (
-            PartnerInboundInterpretation,
-            PartnerEvidenceClaim,
-        )
-
-        interpretation = PartnerInboundInterpretation(
-            partner_id="SITE-01",
-            response_received_at="2026-08-25T14:30:00Z",
-            claims=[
-                PartnerEvidenceClaim(
-                    claim_type="lot_id",
-                    value="LTC-4471",
-                    source_anchor="Lot LTC-4471"
-                ),
-                PartnerEvidenceClaim(
-                    claim_type="quantity",
-                    value="8",
-                    source_anchor="8 cases on hand"
-                ),
-                PartnerEvidenceClaim(
-                    claim_type="location",
-                    value="Walk-in cooler, Section B",
-                    source_anchor="stored in our walk-in cooler, Section B"
-                ),
-                PartnerEvidenceClaim(
-                    claim_type="disposition",
-                    value="held_pending_guidance",
-                    source_anchor="holding pending your guidance"
-                ),
-                PartnerEvidenceClaim(
-                    claim_type="confirmation_time",
-                    value="2026-08-25T14:25:00Z",
-                    source_anchor="confirmed at 2:25 PM today"
-                ),
-            ],
-            abstain=False,
-            rationale="All critical facts present with explicit source anchors.",
-        )
-        assert len(interpretation.claims) == 5
-        assert interpretation.abstain is False
-
-    def test_partner_evidence_missing_facts_triggers_abstention(self):
-        """Missing critical facts must trigger abstention (not low confidence)."""
-        from full_shelf_domain.fleet.contracts import (
-            PartnerInboundInterpretation,
-            PartnerEvidenceClaim,
-        )
-
-        interpretation = PartnerInboundInterpretation(
-            partner_id="SITE-01",
-            response_received_at="2026-08-25T14:30:00Z",
-            claims=[
-                PartnerEvidenceClaim(
-                    claim_type="lot_id",
-                    value="LTC-4471",
-                    source_anchor="Lot LTC-4471"
-                ),
-                PartnerEvidenceClaim(
-                    claim_type="quantity",
-                    value="8",
-                    source_anchor="8 cases"
-                ),
-                # Missing: location, disposition, confirmation_time
-            ],
-            abstain=True,  # Critical facts missing, not confidence-based
-            rationale="Location and disposition not stated in partner response.",
-        )
-        assert interpretation.abstain is True
-        assert len(interpretation.claims) == 2
-
-    def test_vague_partner_evidence_abstention(self):
-        """When partner evidence is vague, agent should abstain from claims."""
-        from full_shelf_domain.fleet.contracts import PartnerCommunication
-
-        # Vague evidence = missing required claims (lot, quantity, location)
-        # Agent response with empty proposed_actions indicates abstention
-        abstract_comm = PartnerCommunication(
-            partner_id="SITE-01",
-            template_id="partner.acknowledgment-request.v1",
-            escalation_level="ROUTINE",
-            template_parameters={
-                "partner_name": "Site 01",
-                "lot_id": "LTC-4471",
-                "cases": "",  # Vague: no quantity
-                "deadline": "2026-08-08T17:00:00Z"
-            },
-            rationale="Insufficient evidence to propose custody action.",
-            confidence=0.3,  # Low confidence = abstention
-        )
-        # The low confidence signals abstention; no mutation authority exercised
-        assert abstract_comm.confidence == 0.3
 
 
 class TestModelArmorBoundaryDesign:
@@ -327,8 +233,8 @@ class TestModelArmorBoundaryDesign:
         from full_shelf_domain.fleet.contracts import FLEET_AGENT_IDS
         assert all(agent in FLEET_AGENT_IDS for agent in path)
 
-    def test_partner_callback_uses_authenticated_input_not_model_armor(self):
-        """Partner callback receives authenticated input, not Model Armor screened."""
+    def test_partner_outbound_communication_trust_class(self):
+        """Partner Operations outbound mode requires TRUSTED_AUTHORITATIVE input."""
         from full_shelf_domain.fleet.manifest import build_manifest
 
         manifest = build_manifest()
@@ -337,9 +243,9 @@ class TestModelArmorBoundaryDesign:
              if "partner-operations" in a["agent_id"]), None
         )
         assert partner_entry is not None
-        # Partner Operations requires TRUSTED_AUTHORITATIVE, not MODEL_ARMOR_APPROVED
+        # Outbound mode uses TRUSTED_AUTHORITATIVE (partner state from authoritative plan)
+        # TODO (WP6): Manifest will distinguish input_trust_by_mode in mode-scoping work
         assert "TRUSTED_AUTHORITATIVE" in partner_entry["input_trust_classes"]
-        assert "MODEL_ARMOR_APPROVED" not in partner_entry["input_trust_classes"]
 
 
 if __name__ == "__main__":

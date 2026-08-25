@@ -208,41 +208,6 @@ class PartnerCommunication(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
 
 
-class PartnerEvidenceClaim(BaseModel):
-    """One factual claim from authenticated partner response with source anchor."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    claim_type: Literal["lot_id", "quantity", "location", "disposition", "confirmation_time"]
-    value: str = Field(min_length=1, max_length=256)
-    source_anchor: str = Field(min_length=1, max_length=512, description="Exact quote from partner response")
-
-
-class PartnerInboundInterpretation(BaseModel):
-    """Partner Operations inbound: interpret authenticated response with source anchors."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    partner_id: str = Field(min_length=1, max_length=64)
-    response_received_at: str = Field(
-        description="ISO8601 timestamp of authenticated response (must be valid RFC 3339)"
-    )
-    claims: List[PartnerEvidenceClaim] = Field(default_factory=list)
-    abstain: bool = Field(default=False, description="True if critical facts are missing (not confidence-based)")
-    rationale: str = Field(min_length=1, max_length=400)
-
-    @field_validator("response_received_at")
-    @classmethod
-    def validate_response_received_at(cls, v: str) -> str:
-        """Validate response_received_at is a well-formed ISO 8601 timestamp."""
-        try:
-            normalized = v.replace("Z", "+00:00") if v.endswith("Z") else v
-            datetime.fromisoformat(normalized)
-            return v
-        except (ValueError, TypeError) as e:
-            raise ValueError(f"response_received_at must be valid ISO 8601 (RFC 3339): {e}") from e
-
-
 class FleetProposal(BaseModel):
     """Assembled advisory output of one coordinator run. Never authoritative."""
 
@@ -256,7 +221,7 @@ class FleetProposal(BaseModel):
     extraction: Optional[Dict[str, Any]] = None
     custody: Optional[NetworkCustodyAssessment] = None
     recovery: Optional[RecoverySelection] = None
-    partner: Optional[PartnerCommunication | PartnerInboundInterpretation] = None
+    partner: Optional[PartnerCommunication] = None
     delegation_trace: List[Dict[str, Any]] = Field(default_factory=list)
     coordinator_session_id: Optional[str] = None
     coordination_run_id: Optional[str] = None
