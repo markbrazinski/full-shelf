@@ -66,7 +66,7 @@ function loadMapsApi(apiKey: string): Promise<void> {
     (globalThis as any).gm_authFailure = () => reject(new Error("Google Maps rejected the API key"));
 
     const script = document.createElement("script");
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&v=weekly`;
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&v=weekly&loading=async&auth_referrer_policy=origin`;
     script.async = true;
     script.onload = () => {
       // onload fires before auth is validated; confirm the API is usable.
@@ -198,21 +198,15 @@ export function PlannedDispatchMap({ stops, label, apiKey, onFailure, telemetry 
         // An unauthorized key can load the API yet render nothing, which
         // would leave an empty grey panel. Confirm the map actually
         // painted tiles; if it did not, fall back to the schematic.
-        const el = ref.current;
         maps.event.addListenerOnce(map, "tilesloaded", () => {
           painted.current = true;
         });
         window.setTimeout(() => {
           if (cancelled || painted.current) return;
-          // Count BASEMAP tiles only. Overlay nodes the vehicle markers
-          // add would otherwise make an unauthorized key that painted no
-          // basemap at all look like a healthy map.
-          const hasTiles =
-            !!el && [...el.querySelectorAll("img")].some((i) => !!(i as HTMLImageElement).src);
-          if (!hasTiles) {
-            setFailed(true);
-            onFailure();
-          }
+          // Only the Maps `tilesloaded` event establishes a painted basemap.
+          // Overlay marker images must never make a tile-less map look valid.
+          setFailed(true);
+          onFailure();
         }, 3_500);
       })
       .catch(() => {
@@ -252,7 +246,7 @@ export function PlannedDispatchMap({ stops, label, apiKey, onFailure, telemetry 
       <div
         ref={ref}
         data-testid="planned-dispatch-map"
-        style={css("width:100%;height:460px;border-radius:9px;border:1px solid #dbe1dc;background:#e7ebe7")}
+        style={css("width:100%;height:410px;border-radius:9px;border:1px solid #dbe1dc;background:#e7ebe7")}
       />
       <div style={css("display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:9px")}>
         {(Object.keys(STYLE) as (keyof typeof STYLE)[]).map((k) => (
@@ -265,26 +259,38 @@ export function PlannedDispatchMap({ stops, label, apiKey, onFailure, telemetry 
           ◆ {label}
         </span>
       </div>
-      {telemetry && (
-        <div data-testid="telemetry-strip" style={css("margin-top:9px;padding-top:9px;border-top:1px solid #dbe1dc;display:flex;align-items:center;gap:14px;flex-wrap:wrap")}>
-          <span className="mono" data-testid="telemetry-classification" style={css("font-size:11px;font-weight:700;color:#a85f12;background:#f6ebd9;border:1px solid #e6cfa4;border-radius:5px;padding:3px 8px;letter-spacing:.02em")}>
-            SIMULATED TELEMETRY · NOT LIVE GPS
+      <TelemetryStatus telemetry={telemetry} />
+      <div className="mono" style={css("font-size:10px;color:#93a1a6;margin-top:5px;letter-spacing:.02em")}>
+        Facility coordinates are DEMO_TENANT_LOCATION_REFERENCE configuration for {DEMO_TENANT_LOCATIONS.length} sites.
+        {telemetry ? " Vehicle markers replay a checked-in simulated telematics fixture; impacted orders and the revised plan come from the accepted projection." : ""}
+      </div>
+    </div>
+  );
+}
+
+/** Shared status layer so the Maps and schematic paths carry equal truth. */
+export function TelemetryStatus({ telemetry }: { telemetry?: TelemetryPlayback }) {
+  if (!telemetry) return null;
+  return (
+    <>
+      <div data-testid="telemetry-strip" style={css("margin-top:9px;padding-top:9px;border-top:1px solid #dbe1dc;display:flex;align-items:center;gap:14px;flex-wrap:wrap")}>
+        <span className="mono" data-testid="telemetry-classification" style={css("font-size:11px;font-weight:700;color:#a85f12;background:#f6ebd9;border:1px solid #e6cfa4;border-radius:5px;padding:3px 8px;letter-spacing:.02em")}>
+          SIMULATED TELEMETRY · NOT LIVE GPS
+        </span>
+        {telemetry.vehicles.map((v) => (
+          <span
+            key={v.vehicleId}
+            data-testid={`telemetry-vehicle-${v.vehicleId}`}
+            data-status={v.contextualStatus}
+            style={css(`display:flex;align-items:center;gap:6px;font-size:11px;color:${v.contextualStatus === "FAULT_REPORTED" ? "#a23b2b" : "#43555c"}`)}
+          >
+            <span style={css(`width:9px;height:9px;border-radius:50%;background:${v.contextualStatus === "FAULT_REPORTED" ? "#a23b2b" : "#1f6f8b"}`)} />
+            <span className="mono" style={css("font-weight:600")}>{VEHICLE_LABEL[v.vehicleId] ?? v.vehicleId}</span>
+            <span className="mono">Last sample · {v.lastSampleTime}</span>
           </span>
-          {telemetry.vehicles.map((v) => (
-            <span
-              key={v.vehicleId}
-              data-testid={`telemetry-vehicle-${v.vehicleId}`}
-              data-status={v.contextualStatus}
-              style={css(`display:flex;align-items:center;gap:6px;font-size:11px;color:${v.contextualStatus === "FAULT_REPORTED" ? "#a23b2b" : "#43555c"}`)}
-            >
-              <span style={css(`width:9px;height:9px;border-radius:50%;background:${v.contextualStatus === "FAULT_REPORTED" ? "#a23b2b" : "#1f6f8b"}`)} />
-              <span className="mono" style={css("font-weight:600")}>{VEHICLE_LABEL[v.vehicleId] ?? v.vehicleId}</span>
-              <span className="mono">Last sample · {v.lastSampleTime}</span>
-            </span>
-          ))}
-        </div>
-      )}
-      {telemetry?.healthEvents.map((e) => (
+        ))}
+      </div>
+      {telemetry.healthEvents.map((e) => (
         <div
           key={e.event_id}
           data-testid="refrigeration-alarm"
@@ -295,14 +301,10 @@ export function PlannedDispatchMap({ stops, label, apiKey, onFailure, telemetry 
             Refrigeration alarm received · {VEHICLE_LABEL[e.vehicle_id] ?? e.vehicle_id}
           </span>
           <span className="mono" style={css("font-size:11px;color:#8a2f22")}>
-            {e.event_type} · {e.source_type} · {e.source_classification}
+            {e.event_type} · {e.source_type} · SIMULATED FLEET TELEMATICS · {e.source_classification} · not derived from position
           </span>
         </div>
       ))}
-      <div className="mono" style={css("font-size:10px;color:#93a1a6;margin-top:5px;letter-spacing:.02em")}>
-        Facility coordinates are DEMO_TENANT_LOCATION_REFERENCE configuration for {DEMO_TENANT_LOCATIONS.length} sites.
-        {telemetry ? " Vehicle markers replay a checked-in simulated telematics fixture; impacted orders and the revised plan come from the accepted projection." : ""}
-      </div>
-    </div>
+    </>
   );
 }

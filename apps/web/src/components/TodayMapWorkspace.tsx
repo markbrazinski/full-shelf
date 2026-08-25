@@ -1,14 +1,15 @@
 import { useCallback, useMemo, useState } from "react";
 import { css } from "../styles/css";
 import type { CurrentDayView, DispatchStop, DispatchView } from "../types/fullShelf";
-import { PlannedDispatchMap, type PlannedStop } from "./PlannedDispatchMap";
+import type { TelemetryPlayback } from "../data/telemetry/playback";
+import { PlannedDispatchMap, TelemetryStatus, type PlannedStop } from "./PlannedDispatchMap";
 
 interface Props {
   currentDay: CurrentDayView;
   dispatch: DispatchView;
   mapsApiKey?: string;
   plannedStops: PlannedStop[];
-  mapLabel: string;
+  telemetry?: TelemetryPlayback;
 }
 
 const STOP_POINT: Record<string, [number, number]> = {
@@ -25,10 +26,14 @@ const TONE = {
   recall: { accent: "#a23b2b", bg: "#f5e8e4", fg: "#8a2f22" },
 } as const;
 
-export function TodayMapWorkspace({ currentDay, dispatch, mapsApiKey, plannedStops, mapLabel }: Props) {
+export function TodayMapWorkspace({ currentDay, dispatch, mapsApiKey, plannedStops, telemetry }: Props) {
   const [mapFailed, setMapFailed] = useState(false);
   const onMapFailure = useCallback(() => setMapFailed(true), []);
   const showGoogleMap = !!mapsApiKey && plannedStops.length > 0 && !mapFailed;
+  const googleMapLabel = telemetry
+    ? "GOOGLE MAPS · CONFIGURED REFERENCE LOCATIONS · SIMULATED TELEMETRY · NOT LIVE GPS"
+    : "GOOGLE MAPS · CONFIGURED REFERENCE LOCATIONS · NOT LIVE GPS";
+  const fallbackLabel = "DETERMINISTIC SCHEMATIC · CONFIGURED REFERENCE LOCATIONS · NOT LIVE GPS";
   const manifests = useMemo(() => {
     const grouped = new Map<string, DispatchStop[]>();
     for (const stop of Object.values(dispatch.stops)) {
@@ -44,7 +49,7 @@ export function TodayMapWorkspace({ currentDay, dispatch, mapsApiKey, plannedSto
         rows: rows.sort((a, b) => (a.sequence ?? 999) - (b.sequence ?? 999)),
       }))
       .sort((a, b) => a.vehicleId.localeCompare(b.vehicleId));
-  }, [dispatch.stops]);
+  }, [dispatch.stops, dispatch.vehicles]);
   const stopCount = manifests.reduce((n, manifest) => n + manifest.rows.length, 0);
   const caseCount = manifests.reduce(
     (n, manifest) => n + manifest.rows.reduce((sum, stop) => sum + (stop.cases ?? 0), 0), 0,
@@ -72,13 +77,16 @@ export function TodayMapWorkspace({ currentDay, dispatch, mapsApiKey, plannedSto
               <div style={css("font-size:13px;font-weight:700;color:#20353c")}>Planned dispatch</div>
               <div className="mono" style={css("font-size:9px;color:#7d8d92;margin-top:2px")}>CONFIGURED FACILITIES · COMMITTED ASSIGNMENTS</div>
             </div>
-            <span className="mono" style={css("font-size:9px;font-weight:700;color:#8a5a12;background:#f8eedc;border:1px solid #ead3a9;border-radius:5px;padding:5px 8px")}>PLANNED · NOT LIVE GPS</span>
+            <span data-testid="map-mode-label" className="mono" style={css("font-size:9px;font-weight:700;color:#8a5a12;background:#f8eedc;border:1px solid #ead3a9;border-radius:5px;padding:5px 8px")}>{showGoogleMap ? googleMapLabel : fallbackLabel}</span>
           </div>
           <div style={css("padding:10px;background:#f5f6f2") }>
             {showGoogleMap ? (
-              <PlannedDispatchMap stops={plannedStops} label={mapLabel} apiKey={mapsApiKey!} onFailure={onMapFailure} />
+              <PlannedDispatchMap stops={plannedStops} label={googleMapLabel} apiKey={mapsApiKey!} onFailure={onMapFailure} telemetry={telemetry} />
             ) : (
-              <RouteSchematic stops={Object.values(dispatch.stops)} provenance={mapLabel} />
+              <>
+                <RouteSchematic stops={Object.values(dispatch.stops)} provenance={fallbackLabel} />
+                <TelemetryStatus telemetry={telemetry} />
+              </>
             )}
           </div>
         </div>
@@ -126,7 +134,7 @@ function Manifest({ vehicleId, label, stops }: { vehicleId: string; label: strin
 
 function RouteSchematic({ stops, provenance }: { stops: DispatchStop[]; provenance: string }) {
   return <div>
-    <div data-testid="dispatch-svg-schematic" style={css("position:relative;height:492px;border:1px solid #d6ded9;border-radius:8px;overflow:hidden;background:#e9ede8") }>
+    <div data-testid="dispatch-svg-schematic" style={css("position:relative;height:430px;border:1px solid #d6ded9;border-radius:8px;overflow:hidden;background:#e9ede8") }>
       <svg viewBox="0 0 100 100" preserveAspectRatio="none" style={css("position:absolute;inset:0;width:100%;height:100%") }>
         <rect width="100" height="100" fill="#e9ede8" /><g stroke="#dce3dd" strokeWidth="1.8"><path d="M0 18 H100 M0 50 H100 M0 82 H100" /><path d="M13 0 V100 M39 0 V100 M68 0 V100 M90 0 V100" /><path d="M0 32 L100 65 M0 72 L88 0" /></g>
         {stops.map((stop) => { const point = STOP_POINT[stop.agency ?? "STAGING"] ?? STOP_POINT.STAGING; const tone = TONE[stop.tone]; return <line key={stop.orderId} x1="43" y1="48" x2={point[0]} y2={point[1]} stroke={tone.accent} strokeWidth=".65" strokeDasharray={stop.tone === "delivered" ? undefined : "1.6 1.3"} opacity=".78" />; })}

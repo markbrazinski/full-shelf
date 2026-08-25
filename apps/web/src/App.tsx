@@ -15,10 +15,10 @@
 //     Reconnect performs a real retry.
 // =====================================================================
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { css } from "./styles/css";
 import { plannedStopsFrom } from "./data/contract/plannedStops";
-import { createDataSource, googleMapsApiKey, isReplayMode } from "./env";
+import { createDataSource, debugReplayControlsEnabled, googleMapsApiKey, isReplayMode } from "./env";
 import type { FullShelfDataSource } from "./data/FullShelfDataSource";
 import type { BeatId, FullShelfProjection } from "./types/fullShelf";
 
@@ -37,12 +37,12 @@ import { ConnectionError } from "./components/ConnectionError";
 import { ActivitySidecar } from "./components/ActivitySidecar";
 import { RepairProposal } from "./components/RepairProposal";
 import { PartnerEvidenceProof } from "./components/PartnerEvidenceProof";
+import { useTelemetryPlayback } from "./data/telemetry/useTelemetryPlayback";
 
 const dataSource: FullShelfDataSource = createDataSource();
 const MAPS_API_KEY = googleMapsApiKey();
-const MAP_LABEL = isReplayMode()
-  ? "Synthetic replay · Google planned dispatch · not live vehicle tracking"
-  : "Google planned dispatch · configured facility locations · not live vehicle tracking";
+const REPLAY_MODE = isReplayMode();
+const DEBUG_REPLAY_CONTROLS = debugReplayControlsEnabled();
 
 type View = "today" | "incident" | "history";
 type Day = "fri" | "sat";
@@ -52,8 +52,15 @@ type IncidentTab = "scope" | "custody" | "response" | "vague" | "complete" | "ev
 // Three Friday moments: the healthy plan, the moment the fault has been
 // reported and a proposal is pending approval, and the committed update.
 const FRIDAY_HEALTHY: BeatId = "healthy";
+const FRIDAY_FAULT: BeatId = "truckFailure";
 const FRIDAY_PROPOSED: BeatId = "revisionReview";
 const FRIDAY_DISRUPTED: BeatId = "rev08Active";
+const FRIDAY_PRESENTER_SEQUENCE: BeatId[] = [
+  FRIDAY_HEALTHY,
+  FRIDAY_FAULT,
+  FRIDAY_PROPOSED,
+  FRIDAY_DISRUPTED,
+];
 const SATURDAY: BeatId = "tomorrowsDraft";
 // Each tab reads the first boundary at which its evidence is actually
 // committed. Custody reconciliation commits at 10:10, not at the 10:05
@@ -85,6 +92,11 @@ export default function App() {
   const [execOpen, setExecOpen] = useState(false);
   const [sidecarOpen, setSidecarOpen] = useState(true);
   const pending = useRef<BeatId | null>(null);
+  const telemetry = useTelemetryPlayback(REPLAY_MODE ? projection?.asOf : undefined);
+  const plannedStops = useMemo(
+    () => projection?.dispatch ? plannedStopsFrom(projection.dispatch) : [],
+    [projection?.dispatch],
+  );
 
   const beat: BeatId =
     view === "history"
@@ -128,6 +140,24 @@ export default function App() {
       setLoading(false);
     },
   ), [beat, load]);
+
+  // Film mode has one forward-only presenter gesture and no visible beat
+  // strip. It advances authoritative replay boundaries in place and stops at
+  // the committed update; it cannot seek backwards or expose future truth.
+  useEffect(() => {
+    if (!REPLAY_MODE || DEBUG_REPLAY_CONTROLS || view !== "today" || day !== "fri") return;
+    const advance = (event: KeyboardEvent) => {
+      if (event.key !== "ArrowRight") return;
+      const target = event.target as HTMLElement | null;
+      if (target?.matches("input, textarea, select, [contenteditable='true']")) return;
+      setFriday((current) => {
+        const index = FRIDAY_PRESENTER_SEQUENCE.indexOf(current);
+        return FRIDAY_PRESENTER_SEQUENCE[Math.min(index + 1, FRIDAY_PRESENTER_SEQUENCE.length - 1)];
+      });
+    };
+    window.addEventListener("keydown", advance);
+    return () => window.removeEventListener("keydown", advance);
+  }, [view, day]);
 
   /** A real retry against the same boundary, not a cosmetic reset. */
   const reconnect = useCallback(() => load(beat), [beat, load]);
@@ -175,11 +205,15 @@ export default function App() {
   }
 
   return (
-    <div style={css("height:100vh;display:flex;flex-direction:column;background:#eef0ea;overflow:hidden")}>
+    <div
+      data-presentation-mode={DEBUG_REPLAY_CONTROLS ? "debug" : "film"}
+      style={css("height:100vh;display:flex;flex-direction:column;background:#eef0ea;overflow:hidden")}
+    >
       <TestModeBanner
         dataMode={p?.dataMode ?? "SYNTHETIC_TEST"}
-        controls={view === "today" && day === "fri" ? [
+        controls={DEBUG_REPLAY_CONTROLS && view === "today" && day === "fri" ? [
           { id: "moment-healthy", label: "08:05", active: friday === FRIDAY_HEALTHY, onClick: () => setFriday(FRIDAY_HEALTHY) },
+          { id: "moment-fault", label: "08:20", active: friday === FRIDAY_FAULT, onClick: () => setFriday(FRIDAY_FAULT) },
           { id: "moment-proposed", label: "08:21", active: friday === FRIDAY_PROPOSED, onClick: () => setFriday(FRIDAY_PROPOSED) },
           { id: "moment-updated", label: "08:24", active: friday === FRIDAY_DISRUPTED, onClick: () => setFriday(FRIDAY_DISRUPTED) },
         ] : []}
@@ -384,8 +418,8 @@ export default function App() {
                           currentDay={p.currentDay}
                           dispatch={p.dispatch}
                           mapsApiKey={MAPS_API_KEY}
-                          plannedStops={plannedStopsFrom(p.dispatch)}
-                          mapLabel={MAP_LABEL}
+                          plannedStops={plannedStops}
+                          telemetry={telemetry}
                         />
                       ) : null}
                       {p.agentActivity ? (
