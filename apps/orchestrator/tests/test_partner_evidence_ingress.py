@@ -73,7 +73,7 @@ def test_partner_ingress_derives_scope_and_preserves_authenticated_provenance(mo
             }),
             patch.object(main, "run_partner_evidence_agent", new=AsyncMock(return_value=(
                 _proposal(), {
-                    "agent_id": "full-shelf.partner-operations.v1",
+                    "agent_id": "full-shelf.partner-operations.v2",
                     "model_id": "gemini-3.5-flash", "adk_framework": "google-adk/2.6.1",
                     "adk_session_id": "session", "adk_invocation_id": "invocation",
                     "adk_event_id": "event",
@@ -142,7 +142,7 @@ def test_partner_ingress_preserves_permanent_ledger_conflict_as_409(monkeypatch)
             }),
             patch.object(main, "run_partner_evidence_agent", new=AsyncMock(return_value=(
                 _proposal(), {
-                    "agent_id": "full-shelf.partner-operations.v1",
+                    "agent_id": "full-shelf.partner-operations.v2",
                     "model_id": "gemini-3.5-flash",
                     "adk_framework": "google-adk/2.6.1",
                     "adk_session_id": "session", "adk_invocation_id": "invocation",

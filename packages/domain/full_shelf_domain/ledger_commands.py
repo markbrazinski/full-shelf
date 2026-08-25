@@ -10,6 +10,7 @@ from typing import Any, Dict, Literal, Type
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from .fleet.contracts import AGENT_PARTNER_OPERATIONS
 from .partner_evidence import (
     PARTNER_CALLBACK_PROVENANCE,
     PARTNER_EVIDENCE_EVENT_TYPE,
@@ -268,7 +269,7 @@ class ProcessPartnerEvidencePayload(StrictPayload):
     callback_provenance: Literal["AUTHENTICATED_PARTNER_CALLBACK"]
     model_armor: Dict[str, Any]
     proposal: PartnerCustodyProposal
-    agent_id: Literal["full-shelf.partner-operations.v1"]
+    agent_id: Literal["full-shelf.partner-operations.v2"]
     model_id: str = Field(min_length=1, max_length=128)
     adk_framework: str = Field(pattern=r"^google-adk/2\.6\.1$")
     adk_session_id: str = Field(min_length=1, max_length=128)
