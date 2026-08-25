@@ -157,6 +157,7 @@ class RecoverySelection(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     selected_candidate_id: str = Field(min_length=1, max_length=64)
+    operating_objective: Literal["DAILY_PLAN", "DISRUPTION_RECOVERY", "RECALL_RECOVERY", "NEXT_DAY_DRAFT"]
     rationale: str = Field(min_length=1, max_length=600)
     cited_constraints: List[str] = Field(min_length=1, max_length=8)
     tradeoffs: str = Field(min_length=1, max_length=600)

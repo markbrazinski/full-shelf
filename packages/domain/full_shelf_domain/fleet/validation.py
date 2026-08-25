@@ -34,6 +34,7 @@ def validate_incident_lead_assessment(
 
     The source event must match what was accepted, the playbook must exist and be
     authorized, and required specialists must be a subset of what that playbook permits.
+    Confidence is reported but does not gate acceptance; grounded evidence is required.
     """
     if assessment.source_event_id != accepted_event_id:
         raise FleetProposalError("INCIDENT_SOURCE_EVENT_MISMATCH")
@@ -42,8 +43,6 @@ def validate_incident_lead_assessment(
     for specialist_id in assessment.required_specialists:
         if specialist_id not in authorized_specialists:
             raise FleetProposalError("INCIDENT_SPECIALIST_NOT_AUTHORIZED")
-    if assessment.confidence < 0.5:
-        raise FleetProposalError("INCIDENT_LEAD_CONFIDENCE_BELOW_THRESHOLD")
     return assessment
 
 
