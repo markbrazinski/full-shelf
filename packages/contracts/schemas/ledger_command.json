@@ -44,7 +44,8 @@
         "ACTIVATE_MOVEMENT_BARRIER",
         "RECORD_REFUSAL",
         "CREATE_NEXT_DAY_DRAFT",
-        "PERSIST_REPAIR_PROPOSAL"
+        "PERSIST_REPAIR_PROPOSAL",
+        "PROCESS_PARTNER_EVIDENCE"
       ]
     },
     "expected_plan_revision": {

@@ -76,6 +76,25 @@ paths:
         '401': { description: Missing, invalid, expired, or wrong-audience token }
         '403': { description: Valid but unauthorized managed identity or tenant }
         '503': { description: Retryable managed, ledger, or authoritative failure }
+  /api/v1/orchestrator/partner-evidence:
+    post:
+      summary: Process one authenticated partner custody evidence event
+      description: >-
+        The exact Google callback principal determines tenant and partner.
+        Model Armor screens the original response before a real ADK Runner
+        proposes claims. Only deterministic ledger policy can confirm custody.
+      security: [{ googlePartnerCallbackOidc: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '../schemas/partner_evidence_request.json' }
+      responses:
+        '200': { description: Committed APPLIED or DENIED evidence and its sole receipt }
+        '401': { description: Missing, invalid, expired, or wrong-audience Google token }
+        '403': { description: Valid identity is not the configured partner callback }
+        '409': { description: Source-event collision or authoritative precondition failure }
+        '503': { description: Model Armor, ADK, or authoritative read failed closed }
   /api/v1/incidents/site01-deadline:
     post:
       summary: Receive an OIDC-authenticated Cloud Tasks acknowledgment deadline
@@ -288,6 +307,10 @@ components:
       type: http
       scheme: bearer
       bearerFormat: Google ID token
+    googlePartnerCallbackOidc:
+      type: http
+      scheme: bearer
+      bearerFormat: Google-signed partner callback ID token for the exact audience
     googleHumanOperatorOidc:
       type: http
       scheme: bearer

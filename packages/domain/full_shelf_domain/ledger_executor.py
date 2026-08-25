@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable
@@ -23,10 +24,17 @@ from .ledger_commands import (
     OpenRecallIncidentPayload,
     PersistCoordinatorPayload,
     PersistRepairApprovalPayload,
+    ProcessPartnerEvidencePayload,
     RecordRefusalPayload,
     RecordAcknowledgmentHoldPayload,
     SavePlanRevisionPayload,
     SetIncidentStatusPayload,
+)
+from .partner_evidence import (
+    PARTNER_CUSTODY_WORK_TYPE,
+    PartnerCustodyConfirmationDetails,
+    proposal_sha256,
+    verify_partner_custody_proposal,
 )
 from .kms import compute_plan_diff_hash
 from .models import PlanDiff
@@ -74,6 +82,7 @@ class SpannerLedgerCommandExecutor:
         LedgerCommandType.RECORD_REFUSAL: {"INCIDENT_COORDINATOR"},
         LedgerCommandType.CREATE_NEXT_DAY_DRAFT: {"FULFILLMENT_RECOVERY_PLANNER"},
         LedgerCommandType.PERSIST_REPAIR_PROPOSAL: {"FULFILLMENT_RECOVERY_PLANNER"},
+        LedgerCommandType.PROCESS_PARTNER_EVIDENCE: {"PARTNER_OPERATIONS_AGENT"},
     }
 
     def __init__(self, database: Any, *, allowed_tenant_ids: set[str]) -> None:
@@ -90,6 +99,7 @@ class SpannerLedgerCommandExecutor:
         if command.tenant_id not in self._allowed_tenant_ids:
             raise PermissionError("TENANT_SCOPE_NOT_AUTHORIZED")
         payload = command.validated_payload()
+        receipt_id = command.stable_receipt_id()
 
         def transaction_body(transaction):
             existing = self._find_receipt(transaction, command)
@@ -138,6 +148,7 @@ class SpannerLedgerCommandExecutor:
                     LedgerCommandType.ALLOCATE_SAFE_STOCK,
                     LedgerCommandType.RECORD_REFUSAL,
                     LedgerCommandType.SET_INCIDENT_STATUS,
+                    LedgerCommandType.PROCESS_PARTNER_EVIDENCE,
                 }
                 and active_revision is None
                 and command.expected_plan_revision is not None
@@ -173,6 +184,35 @@ class SpannerLedgerCommandExecutor:
                     f"{payload.reason}: subject={payload.subject_id} affected_cases={payload.affected_cases}",
                 )
 
+            if command.command_type is LedgerCommandType.PROCESS_PARTNER_EVIDENCE:
+                assert isinstance(payload, ProcessPartnerEvidencePayload)
+                decision, domain_count, evidence_count, message = (
+                    self._apply_partner_evidence(
+                        transaction,
+                        command,
+                        payload,
+                        receipt_id=receipt_id,
+                        active_revision=active_revision,
+                    )
+                )
+                receipt = self._receipt(
+                    command,
+                    receipt_id=receipt_id,
+                    plan_revision=(
+                        active_revision or command.expected_plan_revision or "NONE"
+                    ),
+                    status="SUCCESS" if decision == "APPLIED" else "DENIED",
+                    mutation_count=domain_count,
+                    evidence_mutation_count=evidence_count,
+                    message=message,
+                )
+                self._insert_receipt(transaction, command, caller, receipt)
+                return CommandExecutionResult(
+                    receipt=receipt,
+                    idempotent_replay=False,
+                    additional_mutations=domain_count + evidence_count,
+                )
+
             mutation_count = self._apply(
                 transaction,
                 command,
@@ -189,6 +229,7 @@ class SpannerLedgerCommandExecutor:
             )
             receipt = self._receipt(
                 command,
+                receipt_id=receipt_id,
                 plan_revision=receipt_revision,
                 status="SUCCESS",
                 mutation_count=mutation_count,
@@ -208,7 +249,7 @@ class SpannerLedgerCommandExecutor:
         rows = transaction.execute_sql(
             "SELECT receipt_id, action_id, plan_revision_id, action_type, status, "
             "mutations_applied, message, trace_id, timestamp, caller_subject, "
-            "caller_email, agent_role, request_fingerprint "
+            "caller_email, agent_role, request_fingerprint, evidence_mutations_applied "
             "FROM Receipts WHERE tenant_id = @tenant_id AND idempotency_key = @idempotency_key",
             params={
                 "tenant_id": command.tenant_id,
@@ -236,6 +277,10 @@ class SpannerLedgerCommandExecutor:
                 "caller_email": row[10],
                 "agent_role": row[11],
                 "request_fingerprint": row[12],
+                # Legacy test doubles predate the additive column. Real Spanner
+                # rows always include it, preserving the original accounting on
+                # an idempotent replay.
+                "evidence_mutations_applied": row[13] if len(row) > 13 else None,
             }
         return None
 
@@ -968,7 +1013,47 @@ class SpannerLedgerCommandExecutor:
                     spanner.COMMIT_TIMESTAMP,
                 ]],
             )
-            return 2
+            work_material = "\x00".join((
+                command.tenant_id,
+                payload.incident_id,
+                payload.partner_id,
+                payload.site_id,
+                payload.lot_id,
+            ))
+            work_item_id = (
+                "WORK-PCF-"
+                + hashlib.sha256(work_material.encode("utf-8")).hexdigest()[:24].upper()
+            )
+            details = PartnerCustodyConfirmationDetails(
+                schema_version="partner-custody-confirmation.v1",
+                partner_id=payload.partner_id,
+                site_id=payload.site_id,
+                custody_node_id=payload.custody_node_id,
+                lot_id=payload.lot_id,
+                expected_cases=payload.unconfirmed_cases,
+                expected_acknowledgment_status="UNCONFIRMED",
+                requested_acknowledgment_status="CONFIRMED",
+                hold_incident_id=payload.hold_incident_id,
+                operating_day=payload.operating_day,
+                source_task_name=payload.task_name,
+            )
+            transaction.insert(
+                table="WorkItems",
+                columns=[
+                    "tenant_id", "work_item_id", "incident_id", "work_type",
+                    "status", "details", "created_at",
+                ],
+                values=[[
+                    command.tenant_id,
+                    work_item_id,
+                    payload.incident_id,
+                    PARTNER_CUSTODY_WORK_TYPE,
+                    "OPEN",
+                    details.model_dump_json(),
+                    spanner.COMMIT_TIMESTAMP,
+                ]],
+            )
+            return 3
 
         if command.command_type is LedgerCommandType.PERSIST_REPAIR_PROPOSAL:
             assert isinstance(payload, PersistRepairProposalPayload)
@@ -1397,6 +1482,242 @@ class SpannerLedgerCommandExecutor:
 
         raise ValueError(f"Unsupported command type: {command.command_type}")
 
+    def _apply_partner_evidence(
+        self,
+        transaction: Any,
+        command: LedgerCommand,
+        payload: ProcessPartnerEvidencePayload,
+        *,
+        receipt_id: str,
+        active_revision: str | None,
+    ) -> tuple[str, int, int, str]:
+        """Validate first, then atomically persist evidence and optional domain updates."""
+
+        if payload.event_type != "PARTNER_CUSTODY_EVIDENCE_RECEIVED":
+            raise ValueError("PARTNER_EVIDENCE_EVENT_TYPE_INVALID")
+        if payload.callback_provenance != "AUTHENTICATED_PARTNER_CALLBACK":
+            raise ValueError("PARTNER_CALLBACK_PROVENANCE_INVALID")
+        if payload.source_occurred_at.date().isoformat() != payload.operating_day:
+            raise ValueError("PARTNER_EVIDENCE_OPERATING_DAY_MISMATCH")
+        if payload.source_sha256 != hashlib.sha256(
+            payload.source_text.encode("utf-8")
+        ).hexdigest():
+            raise ValueError("PARTNER_EVIDENCE_SOURCE_HASH_MISMATCH")
+
+        prior = list(transaction.execute_sql(
+            "SELECT incident_id, partner_id, source_occurred_at, source_sha256, receipt_id "
+            "FROM PartnerEvidenceEvents WHERE tenant_id=@tenant_id "
+            "AND source_event_id=@source_event_id",
+            params={
+                "tenant_id": command.tenant_id,
+                "source_event_id": payload.source_event_id,
+            },
+            param_types={
+                "tenant_id": spanner.param_types.STRING,
+                "source_event_id": spanner.param_types.STRING,
+            },
+        ))
+        if prior:
+            row = prior[0]
+            if tuple(row[:2]) != (command.incident_id, payload.partner_id):
+                raise IdempotencyKeyCollision(collision_kind="SOURCE_EVENT_SCOPE_MISMATCH")
+            prior_time = row[2].isoformat() if hasattr(row[2], "isoformat") else str(row[2])
+            if (prior_time != payload.source_occurred_at.isoformat()
+                    or row[3] != payload.source_sha256
+                    or row[4] != receipt_id):
+                raise IdempotencyKeyCollision(collision_kind="SOURCE_EVENT_CONTENT_MISMATCH")
+            raise IdempotencyKeyCollision(collision_kind="SOURCE_EVENT_RECEIPT_MISSING")
+
+        incident_rows = list(transaction.execute_sql(
+            "SELECT status, terminal_state, affected_lot_id FROM Incidents "
+            "WHERE tenant_id=@tenant_id AND incident_id=@incident_id",
+            params={"tenant_id": command.tenant_id, "incident_id": command.incident_id},
+            param_types={
+                "tenant_id": spanner.param_types.STRING,
+                "incident_id": spanner.param_types.STRING,
+            },
+        ))
+        if len(incident_rows) != 1:
+            raise ValueError("PARTNER_EVIDENCE_INCIDENT_NOT_FOUND")
+        incident_status, terminal_state, incident_lot_id = incident_rows[0]
+        if (incident_status, terminal_state) != (
+            "PARTIALLY_CONTAINED", "PARTIALLY_CONTAINED"
+        ):
+            raise ValueError("PARTNER_EVIDENCE_INCIDENT_STATE_INVALID")
+
+        work_rows = list(transaction.execute_sql(
+            "SELECT work_item_id, details FROM WorkItems "
+            "WHERE tenant_id=@tenant_id AND incident_id=@incident_id "
+            "AND work_type='PARTNER_CUSTODY_CONFIRMATION' AND status='OPEN'",
+            params={"tenant_id": command.tenant_id, "incident_id": command.incident_id},
+            param_types={
+                "tenant_id": spanner.param_types.STRING,
+                "incident_id": spanner.param_types.STRING,
+            },
+        ))
+        if len(work_rows) != 1:
+            raise ValueError("EXACT_OPEN_PARTNER_CUSTODY_WORK_ITEM_REQUIRED")
+        work_item_id, raw_details = work_rows[0]
+        try:
+            details = PartnerCustodyConfirmationDetails.model_validate_json(raw_details)
+        except Exception as exc:
+            raise ValueError("PARTNER_CUSTODY_WORK_ITEM_DETAILS_INVALID") from exc
+        if details.partner_id != payload.partner_id:
+            raise ValueError("AUTHENTICATED_PARTNER_WORK_ITEM_MISMATCH")
+        if details.lot_id != incident_lot_id:
+            raise ValueError("WORK_ITEM_INCIDENT_LOT_MISMATCH")
+        if details.operating_day != payload.operating_day:
+            raise ValueError("WORK_ITEM_OPERATING_DAY_MISMATCH")
+
+        node_rows = list(transaction.execute_sql(
+            "SELECT name, on_hand_cases, acknowledgment_status FROM CustodyNodes "
+            "WHERE tenant_id=@tenant_id AND node_id=@node_id",
+            params={"tenant_id": command.tenant_id, "node_id": details.custody_node_id},
+            param_types={
+                "tenant_id": spanner.param_types.STRING,
+                "node_id": spanner.param_types.STRING,
+            },
+        ))
+        if len(node_rows) != 1:
+            raise ValueError("PARTNER_CUSTODY_NODE_NOT_FOUND")
+        node_name, node_cases, acknowledgment_status = node_rows[0]
+        if acknowledgment_status != details.expected_acknowledgment_status:
+            raise ValueError("PARTNER_CUSTODY_NODE_STATE_MISMATCH")
+        edge_rows = list(transaction.execute_sql(
+            "SELECT case_count FROM CustodyEdges WHERE tenant_id=@tenant_id "
+            "AND target_node_id=@node_id AND lot_id=@lot_id",
+            params={
+                "tenant_id": command.tenant_id,
+                "node_id": details.custody_node_id,
+                "lot_id": details.lot_id,
+            },
+            param_types={
+                "tenant_id": spanner.param_types.STRING,
+                "node_id": spanner.param_types.STRING,
+                "lot_id": spanner.param_types.STRING,
+            },
+        ))
+        if len(edge_rows) != 1:
+            raise ValueError("EXACT_PARTNER_CUSTODY_EDGE_REQUIRED")
+        edge_cases = edge_rows[0][0]
+
+        verification = verify_partner_custody_proposal(
+            source_text=payload.source_text,
+            proposal=payload.proposal,
+            work_item_id=work_item_id,
+            details=details,
+            incident_id=command.incident_id,
+            node_on_hand_cases=node_cases,
+            node_name=node_name,
+            incoming_edge_cases=edge_cases,
+        )
+        decision = verification.decision
+        domain_count = 0
+        before_after = {
+            "custody": {
+                "node_id": details.custody_node_id,
+                "name": node_name,
+                "cases": node_cases,
+                "before": acknowledgment_status,
+                "after": (
+                    details.requested_acknowledgment_status
+                    if decision == "APPLIED" else acknowledgment_status
+                ),
+            },
+            "work_item": {
+                "work_item_id": work_item_id,
+                "before": "OPEN",
+                "after": "COMPLETED" if decision == "APPLIED" else "OPEN",
+            },
+        }
+        if decision == "APPLIED":
+            updated_node = transaction.execute_update(
+                "UPDATE CustodyNodes SET acknowledgment_status=@requested "
+                "WHERE tenant_id=@tenant_id AND node_id=@node_id "
+                "AND acknowledgment_status=@expected AND on_hand_cases=@cases",
+                params={
+                    "requested": details.requested_acknowledgment_status,
+                    "tenant_id": command.tenant_id,
+                    "node_id": details.custody_node_id,
+                    "expected": details.expected_acknowledgment_status,
+                    "cases": details.expected_cases,
+                },
+                param_types={
+                    "requested": spanner.param_types.STRING,
+                    "tenant_id": spanner.param_types.STRING,
+                    "node_id": spanner.param_types.STRING,
+                    "expected": spanner.param_types.STRING,
+                    "cases": spanner.param_types.INT64,
+                },
+            )
+            if updated_node != 1:
+                raise ValueError("CUSTODY_CONFIRMATION_UPDATE_PRECONDITION_FAILED")
+            updated_work = transaction.execute_update(
+                "UPDATE WorkItems SET status='COMPLETED', "
+                "completed_at=PENDING_COMMIT_TIMESTAMP() "
+                "WHERE tenant_id=@tenant_id AND work_item_id=@work_item_id "
+                "AND incident_id=@incident_id "
+                "AND work_type='PARTNER_CUSTODY_CONFIRMATION' AND status='OPEN'",
+                params={
+                    "tenant_id": command.tenant_id,
+                    "work_item_id": work_item_id,
+                    "incident_id": command.incident_id,
+                },
+                param_types={
+                    "tenant_id": spanner.param_types.STRING,
+                    "work_item_id": spanner.param_types.STRING,
+                    "incident_id": spanner.param_types.STRING,
+                },
+            )
+            if updated_work != 1:
+                raise ValueError("PARTNER_CUSTODY_WORK_ITEM_UPDATE_PRECONDITION_FAILED")
+            domain_count = 2
+
+        verification_json = {
+            "claims": {
+                key: value.model_dump(mode="json")
+                for key, value in verification.claims.items()
+            },
+            "before_after": before_after,
+            "qualifying_disposition": "ISOLATED_IN_QUARANTINE",
+        }
+        transaction.insert(
+            table="PartnerEvidenceEvents",
+            columns=[
+                "tenant_id", "source_event_id", "event_type", "operating_day",
+                "incident_id", "partner_id", "source_occurred_at", "received_at",
+                "source_text", "source_sha256", "callback_subject", "callback_email",
+                "callback_audience", "callback_issuer", "callback_provenance",
+                "model_armor_json", "proposal_json", "proposal_sha256",
+                "policy_decision", "policy_reasons_json", "claim_verification_json",
+                "requested_mutation_json", "agent_id", "model_id", "adk_framework",
+                "adk_session_id", "adk_invocation_id", "adk_event_id", "receipt_id",
+                "domain_mutations_applied", "evidence_mutations_applied", "committed_at",
+            ],
+            values=[[
+                command.tenant_id, payload.source_event_id, payload.event_type,
+                payload.operating_day, command.incident_id, payload.partner_id,
+                payload.source_occurred_at, spanner.COMMIT_TIMESTAMP, payload.source_text,
+                payload.source_sha256, payload.callback_subject, payload.callback_email,
+                payload.callback_audience, payload.callback_issuer,
+                payload.callback_provenance,
+                json.dumps(payload.model_armor, sort_keys=True, separators=(",", ":")),
+                payload.proposal.model_dump_json(), proposal_sha256(payload.proposal),
+                decision, json.dumps(verification.reasons, separators=(",", ":")),
+                json.dumps(verification_json, sort_keys=True, separators=(",", ":")),
+                json.dumps({"type": payload.proposal.requested_mutation},
+                           separators=(",", ":")),
+                payload.agent_id, payload.model_id, payload.adk_framework,
+                payload.adk_session_id, payload.adk_invocation_id, payload.adk_event_id,
+                receipt_id, domain_count, 1, spanner.COMMIT_TIMESTAMP,
+            ]],
+        )
+        message = (
+            "PARTNER_CUSTODY_EVIDENCE_APPLIED"
+            if decision == "APPLIED" else "PARTNER_CUSTODY_EVIDENCE_DENIED"
+        )
+        return decision, domain_count, 1, message
+
     @staticmethod
     def _incident_exists(transaction: Any, tenant_id: str, incident_id: str) -> bool:
         rows: Iterable[Any] = transaction.execute_sql(
@@ -1436,19 +1757,22 @@ class SpannerLedgerCommandExecutor:
     def _receipt(
         command: LedgerCommand,
         *,
+        receipt_id: str | None = None,
         plan_revision: str,
         status: str,
         mutation_count: int,
+        evidence_mutation_count: int | None = None,
         message: str,
     ) -> Dict[str, Any]:
         return {
             "tenant_id": command.tenant_id,
-            "receipt_id": command.stable_receipt_id(),
+            "receipt_id": receipt_id or command.stable_receipt_id(),
             "command_id": command.command_id,
             "plan_revision_id": plan_revision,
             "command_type": command.command_type.value,
             "status": status,
             "mutations_applied": mutation_count,
+            "evidence_mutations_applied": evidence_mutation_count,
             "message": message,
             "trace_id": command.trace_id,
             "timestamp": "PENDING_COMMIT_TIMESTAMP",
@@ -1478,6 +1802,7 @@ class SpannerLedgerCommandExecutor:
                 "caller_email",
                 "agent_role",
                 "request_fingerprint",
+                "evidence_mutations_applied",
                 "timestamp",
             ],
             values=[[
@@ -1495,6 +1820,7 @@ class SpannerLedgerCommandExecutor:
                 caller.email,
                 command.agent_role,
                 command.request_fingerprint(),
+                receipt.get("evidence_mutations_applied"),
                 spanner.COMMIT_TIMESTAMP,
             ]],
         )

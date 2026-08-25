@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PartnerCustodyConfirmationDetailsV1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "partner_id", "site_id", "custody_node_id", "lot_id", "expected_cases", "expected_acknowledgment_status", "requested_acknowledgment_status", "hold_incident_id", "operating_day", "source_task_name"],
+  "properties": {
+    "schema_version": {"const": "partner-custody-confirmation.v1"},
+    "partner_id": {"type": "string", "minLength": 1, "maxLength": 64},
+    "site_id": {"type": "string", "minLength": 1, "maxLength": 64},
+    "custody_node_id": {"type": "string", "minLength": 1, "maxLength": 64},
+    "lot_id": {"type": "string", "minLength": 1, "maxLength": 64},
+    "expected_cases": {"type": "integer", "minimum": 1},
+    "expected_acknowledgment_status": {"const": "UNCONFIRMED"},
+    "requested_acknowledgment_status": {"const": "CONFIRMED"},
+    "hold_incident_id": {"type": "string", "minLength": 1, "maxLength": 64},
+    "operating_day": {"type": "string", "format": "date"},
+    "source_task_name": {"type": "string", "minLength": 1, "maxLength": 500}
+  }
+}

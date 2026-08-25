@@ -12,7 +12,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, BackgroundTa
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.routing import APIRoute
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 import httpx
 
 from google.cloud import spanner
@@ -38,6 +38,14 @@ from full_shelf_domain.ledger_commands import (
     NextDayRequest,
     OperatingDayRequest,
     RecurringDailyRequest,
+)
+from full_shelf_domain.partner_evidence import (
+    PARTNER_CALLBACK_PROVENANCE,
+    PARTNER_EVIDENCE_EVENT_TYPE,
+    PartnerCustodyConfirmationDetails,
+    partner_evidence_prompt,
+    run_partner_evidence_agent,
+    source_sha256,
 )
 from full_shelf_domain.recall import (
     inspect_recall_notice_with_model_armor,
@@ -101,6 +109,7 @@ logger = logging.getLogger("full_shelf.orchestrator")
 PUBLIC_HEALTH = "PUBLIC_HEALTH"
 HUMAN_OPERATOR = "HUMAN_OPERATOR"
 MANAGED_CALLBACK = "MANAGED_CALLBACK"
+PARTNER_CALLBACK = "PARTNER_CALLBACK"
 INTERNAL_WORKLOAD = "INTERNAL_WORKLOAD"
 DISABLED_OR_REMOVED = "DISABLED_OR_REMOVED"
 
@@ -111,6 +120,7 @@ ROUTE_AUTHENTICATION_MATRIX = {
     ("GET", "/"): PUBLIC_HEALTH,
     ("GET", "/healthz"): PUBLIC_HEALTH,
     ("POST", "/api/v1/orchestrator/approvals/approve-and-activate"): HUMAN_OPERATOR,
+    ("POST", "/api/v1/orchestrator/partner-evidence"): PARTNER_CALLBACK,
     ("GET", "/api/v1/projections/demo-beats"): HUMAN_OPERATOR,
     ("GET", "/api/v1/projections/stream"): HUMAN_OPERATOR,
     ("POST", "/api/v1/incidents/site01-deadline"): MANAGED_CALLBACK,
@@ -234,6 +244,16 @@ MANAGED_CALLBACK_SERVICE_ACCOUNT_SUBJECT = os.getenv(
     "MANAGED_CALLBACK_SERVICE_ACCOUNT_SUBJECT", ""
 )
 OPERATING_TIME_ZONE = os.getenv("OPERATING_TIME_ZONE", "America/Los_Angeles")
+PARTNER_CALLBACK_AUDIENCE = os.getenv("PARTNER_CALLBACK_AUDIENCE", "")
+PARTNER_CALLBACK_SERVICE_ACCOUNT_EMAIL = os.getenv(
+    "PARTNER_CALLBACK_SERVICE_ACCOUNT_EMAIL", ""
+)
+PARTNER_CALLBACK_SERVICE_ACCOUNT_SUBJECT = os.getenv(
+    "PARTNER_CALLBACK_SERVICE_ACCOUNT_SUBJECT", ""
+)
+PARTNER_EVIDENCE_MAX_CLOCK_SKEW_SECONDS = int(
+    os.getenv("PARTNER_EVIDENCE_MAX_CLOCK_SKEW_SECONDS", "900")
+)
 
 
 def post_to_plan_ledger(
@@ -341,6 +361,16 @@ class RecallArmorPreflightRequest(BaseModel):
     notice_text: str = Field(min_length=1, max_length=20000)
 
 
+class PartnerEvidenceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    event_type: Literal["PARTNER_CUSTODY_EVIDENCE_RECEIVED"]
+    source_event_id: str = Field(min_length=1, max_length=256)
+    incident_id: str = Field(min_length=1, max_length=64)
+    original_text: str = Field(min_length=1, max_length=20000)
+    source_occurred_at: datetime
+
+
 class RecallTriggerRequest(BaseModel):
     coordinator_id: str = Field(min_length=1, max_length=64)
     incident_id: str = Field(min_length=1, max_length=64)
@@ -440,6 +470,70 @@ def require_managed_callback(
     authorization: Optional[str] = Header(None),
 ) -> VerifiedGoogleIdentity:
     return _verify_managed_callback(authorization)
+
+
+def _verify_partner_callback(authorization: Optional[str]) -> VerifiedGoogleIdentity:
+    """Verify the dedicated partner callback principal and exact audience."""
+    try:
+        return GoogleOidcVerifier(
+            audience=PARTNER_CALLBACK_AUDIENCE,
+            allowed_subjects={PARTNER_CALLBACK_SERVICE_ACCOUNT_SUBJECT},
+            allowed_emails={PARTNER_CALLBACK_SERVICE_ACCOUNT_EMAIL},
+        ).verify_authorization(authorization)
+    except IdentityConfigurationError as exc:
+        raise HTTPException(503, "PARTNER_CALLBACK_IDENTITY_NOT_CONFIGURED") from exc
+    except MissingIdentityToken as exc:
+        raise HTTPException(401, "PARTNER_CALLBACK_GOOGLE_ID_TOKEN_REQUIRED") from exc
+    except InvalidIdentityToken as exc:
+        raise HTTPException(401, "PARTNER_CALLBACK_GOOGLE_ID_TOKEN_INVALID") from exc
+    except UnauthorizedIdentity as exc:
+        raise HTTPException(403, "PARTNER_CALLBACK_GOOGLE_IDENTITY_NOT_ALLOWED") from exc
+
+
+def require_partner_callback(
+    authorization: Optional[str] = Header(None),
+) -> VerifiedGoogleIdentity:
+    return _verify_partner_callback(authorization)
+
+
+def _partner_callback_authority(identity: VerifiedGoogleIdentity) -> dict[str, str]:
+    """Resolve tenant and partner only from deployment-owned identity mapping."""
+    raw = os.getenv("PARTNER_CALLBACK_AUTHORITY_JSON", "")
+    try:
+        mapping = json.loads(raw)
+        bound = mapping[identity.subject]
+        tenant_id = bound["tenant_id"]
+        partner_id = bound["partner_id"]
+    except (TypeError, KeyError, json.JSONDecodeError) as exc:
+        raise HTTPException(503, "PARTNER_CALLBACK_AUTHORITY_NOT_CONFIGURED") from exc
+    if not all(isinstance(value, str) and value for value in (tenant_id, partner_id)):
+        raise HTTPException(503, "PARTNER_CALLBACK_AUTHORITY_INVALID")
+    return {"tenant_id": tenant_id, "partner_id": partner_id}
+
+
+def _partner_site_binding(site_id: str) -> dict[str, str]:
+    """Deployment-owned binding used when the deadline creates the typed work item."""
+    default = {
+        "N-ST01": {
+            "partner_id": "PARTNER-AGENCY-01",
+            "custody_node_id": "N-ST01",
+        },
+        "SITE-01": {
+            "partner_id": "PARTNER-AGENCY-01",
+            "custody_node_id": "N-ST01",
+        },
+    }
+    try:
+        mapping = json.loads(os.getenv(
+            "PARTNER_SITE_AUTHORITY_JSON", json.dumps(default)
+        ))
+        binding = mapping[site_id]
+        return {
+            "partner_id": str(binding["partner_id"]),
+            "custody_node_id": str(binding["custody_node_id"]),
+        }
+    except (TypeError, KeyError, json.JSONDecodeError) as exc:
+        raise HTTPException(503, "PARTNER_SITE_AUTHORITY_NOT_CONFIGURED") from exc
 
 
 def _verify_internal_workload(authorization: Optional[str]):
@@ -964,6 +1058,8 @@ def handle_site01_deadline_callback(
     payload_trace_id = payload.correlation_trace_id
     if payload_trace_id and payload_trace_id != trace_id:
         raise HTTPException(400, "CLOUD_TASK_TRACE_CONTEXT_MISMATCH")
+    site_binding = _partner_site_binding(site_id)
+    operating_day = _operating_day_from_managed_publish_time(_utc_now())
     ledger_result = execute_ledger_command(
         command_id=f"CMD-TASK-{hashlib.sha256(event_idempotency_key.encode()).hexdigest()[:24]}",
         idempotency_key=f"cloud-task:{hashlib.sha256(event_idempotency_key.encode()).hexdigest()}",
@@ -983,6 +1079,9 @@ def handle_site01_deadline_callback(
             "delivery_subject": caller.subject,
             "delivery_email": caller.email,
             "delivery_audience": caller.audience,
+            "partner_id": site_binding["partner_id"],
+            "custody_node_id": site_binding["custody_node_id"],
+            "operating_day": operating_day,
         },
     )
     logger.warning(
@@ -1008,6 +1107,192 @@ def handle_site01_deadline_callback(
         "idempotent_replay": ledger_result["idempotent_replay"],
         "timestamp": now,
         "ledger_receipt": ledger_result["receipt"],
+    }
+
+
+def _read_partner_evidence_authority(
+    *, database: Any, tenant_id: str, incident_id: str, operating_day: str,
+) -> dict[str, Any]:
+    """Read the exact authoritative target before any model invocation."""
+    str_t = spanner.param_types.STRING
+    with database.snapshot(multi_use=True) as snapshot:
+        incidents = list(snapshot.execute_sql(
+            "SELECT status, terminal_state, affected_lot_id FROM Incidents "
+            "WHERE tenant_id=@tenant AND incident_id=@incident",
+            params={"tenant": tenant_id, "incident": incident_id},
+            param_types={"tenant": str_t, "incident": str_t},
+        ))
+        plans = list(snapshot.execute_sql(
+            "SELECT plan_id, revision, status FROM PlanRevisions "
+            "WHERE tenant_id=@tenant AND plan_id=@plan_id "
+            "AND status='INVALIDATED_RECALL'",
+            params={"tenant": tenant_id, "plan_id": f"PLAN-{operating_day}"},
+            param_types={"tenant": str_t, "plan_id": str_t},
+        ))
+        works = list(snapshot.execute_sql(
+            "SELECT work_item_id, details FROM WorkItems "
+            "WHERE tenant_id=@tenant AND incident_id=@incident "
+            "AND work_type='PARTNER_CUSTODY_CONFIRMATION' AND status='OPEN'",
+            params={"tenant": tenant_id, "incident": incident_id},
+            param_types={"tenant": str_t, "incident": str_t},
+        ))
+        if len(incidents) != 1 or len(plans) != 1 or len(works) != 1:
+            raise HTTPException(409, "PARTNER_EVIDENCE_AUTHORITY_NOT_EXACT")
+        try:
+            details = PartnerCustodyConfirmationDetails.model_validate_json(works[0][1])
+        except Exception as exc:
+            raise HTTPException(409, "PARTNER_CUSTODY_WORK_ITEM_DETAILS_INVALID") from exc
+        nodes = list(snapshot.execute_sql(
+            "SELECT name, on_hand_cases, acknowledgment_status FROM CustodyNodes "
+            "WHERE tenant_id=@tenant AND node_id=@node",
+            params={"tenant": tenant_id, "node": details.custody_node_id},
+            param_types={"tenant": str_t, "node": str_t},
+        ))
+        edges = list(snapshot.execute_sql(
+            "SELECT edge_id, case_count FROM CustodyEdges WHERE tenant_id=@tenant "
+            "AND target_node_id=@node AND lot_id=@lot",
+            params={
+                "tenant": tenant_id,
+                "node": details.custody_node_id,
+                "lot": details.lot_id,
+            },
+            param_types={"tenant": str_t, "node": str_t, "lot": str_t},
+        ))
+    if len(nodes) != 1 or len(edges) != 1:
+        raise HTTPException(409, "PARTNER_EVIDENCE_CUSTODY_TARGET_NOT_EXACT")
+    incident_status, terminal_state, affected_lot_id = incidents[0]
+    if (incident_status, terminal_state, affected_lot_id) != (
+        "PARTIALLY_CONTAINED", "PARTIALLY_CONTAINED", details.lot_id
+    ):
+        raise HTTPException(409, "PARTNER_EVIDENCE_INCIDENT_PRECONDITION_FAILED")
+    if (
+        details.operating_day != operating_day
+        or nodes[0][1] != details.expected_cases
+        or nodes[0][2] != details.expected_acknowledgment_status
+        or edges[0][1] != details.expected_cases
+    ):
+        raise HTTPException(409, "PARTNER_EVIDENCE_WORK_ITEM_PRECONDITION_FAILED")
+    return {
+        "incident_id": incident_id,
+        "incident_status": incident_status,
+        "terminal_state": terminal_state,
+        "plan_id": plans[0][0],
+        "plan_revision": plans[0][1],
+        "plan_status": plans[0][2],
+        "work_item_id": works[0][0],
+        "partner_id": details.partner_id,
+        "site_id": details.site_id,
+        "custody_node_id": details.custody_node_id,
+        "custody_node_name": nodes[0][0],
+        "lot_id": details.lot_id,
+        "expected_cases": details.expected_cases,
+        "expected_acknowledgment_status": details.expected_acknowledgment_status,
+        "requested_acknowledgment_status": details.requested_acknowledgment_status,
+        "custody_edge_id": edges[0][0],
+        "custody_edge_cases": edges[0][1],
+    }
+
+
+@app.post("/api/v1/orchestrator/partner-evidence")
+def process_partner_evidence(
+    req: Request,
+    payload: PartnerEvidenceRequest,
+    caller: VerifiedGoogleIdentity = Depends(require_partner_callback),
+):
+    """Screen, interpret, and submit authenticated evidence to the private ledger."""
+    if payload.event_type != PARTNER_EVIDENCE_EVENT_TYPE:
+        raise HTTPException(422, "PARTNER_EVIDENCE_EVENT_TYPE_INVALID")
+    if payload.source_occurred_at.tzinfo is None:
+        raise HTTPException(422, "SOURCE_OCCURRED_AT_TIMEZONE_REQUIRED")
+    if abs((_utc_now() - payload.source_occurred_at.astimezone(timezone.utc)).total_seconds()) > (
+        PARTNER_EVIDENCE_MAX_CLOCK_SKEW_SECONDS
+    ):
+        raise HTTPException(409, "SOURCE_OCCURRED_AT_OUTSIDE_TRUSTED_CLOCK_SKEW")
+    operating_day = _operating_day_from_managed_publish_time(payload.source_occurred_at)
+    callback_authority = _partner_callback_authority(caller)
+    tenant_id = callback_authority["tenant_id"]
+    partner_id = callback_authority["partner_id"]
+    scope = _resolve_authority_scope(tenant_id)
+    database = get_spanner_database(scope.database_id)
+    try:
+        authority = _read_partner_evidence_authority(
+            database=database,
+            tenant_id=tenant_id,
+            incident_id=payload.incident_id,
+            operating_day=operating_day,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(503, "PARTNER_EVIDENCE_AUTHORITY_READ_UNAVAILABLE") from exc
+    if authority["partner_id"] != partner_id:
+        raise HTTPException(403, "PARTNER_CALLBACK_PARTNER_SCOPE_MISMATCH")
+
+    trace_id = getattr(req.state, "full_shelf_trace_id", None) or generate_trace_id()
+    screening = inspect_recall_notice_with_model_armor(
+        payload.original_text, correlation_id=trace_id
+    )
+    if not (
+        screening.get("status") == "APPROVED"
+        and screening.get("safety_verdict") == "PASSED"
+        and screening.get("correlation_id") == trace_id
+    ):
+        raise HTTPException(503, "PARTNER_EVIDENCE_MODEL_ARMOR_FAILED_CLOSED")
+    try:
+        proposal, adk = asyncio.run(run_partner_evidence_agent(
+            partner_evidence_prompt(
+                source_text=payload.original_text,
+                authority=authority,
+            )
+        ))
+    except Exception as exc:
+        raise HTTPException(503, "PARTNER_EVIDENCE_ADK_FAILED_CLOSED") from exc
+
+    digest = hashlib.sha256(
+        f"{tenant_id}\x00{payload.source_event_id}".encode("utf-8")
+    ).hexdigest()
+    try:
+        result = execute_ledger_command(
+            command_id=f"CMD-PE-{digest[:24].upper()}",
+            idempotency_key=f"partner-evidence:{digest}",
+            tenant_id=tenant_id,
+            incident_id=payload.incident_id,
+            agent_role="PARTNER_OPERATIONS_AGENT",
+            command_type="PROCESS_PARTNER_EVIDENCE",
+            expected_plan_revision=authority["plan_revision"],
+            trace_id=trace_id,
+            allow_denied=True,
+            payload={
+                "event_type": payload.event_type,
+                "source_event_id": payload.source_event_id,
+                "operating_day": operating_day,
+                "source_occurred_at": payload.source_occurred_at.isoformat(),
+                "source_text": payload.original_text,
+                "source_sha256": source_sha256(payload.original_text),
+                "partner_id": partner_id,
+                "callback_subject": caller.subject,
+                "callback_email": caller.email,
+                "callback_audience": caller.audience,
+                "callback_issuer": caller.issuer,
+                "callback_provenance": PARTNER_CALLBACK_PROVENANCE,
+                "model_armor": screening,
+                "proposal": proposal.model_dump(mode="json"),
+                **adk,
+            },
+        )
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 409:
+            raise HTTPException(409, "PARTNER_EVIDENCE_SOURCE_EVENT_CONFLICT") from exc
+        raise HTTPException(503, "PARTNER_EVIDENCE_LEDGER_UNAVAILABLE") from exc
+    receipt = result["receipt"]
+    return {
+        "event_type": payload.event_type,
+        "source_event_id": payload.source_event_id,
+        "incident_id": payload.incident_id,
+        "partner_id": partner_id,
+        "decision": "APPLIED" if receipt["status"] == "SUCCESS" else "DENIED",
+        "receipt": receipt,
+        "idempotent_replay": result["idempotent_replay"],
     }
 
 
@@ -2917,6 +3202,28 @@ def get_demo_beats_projections(
                 param_types={"tenant": str_t, "as_of": ts_t,
                              "incident_ids": incident_list_t},
             ))
+        partner_evidence_rows = list(snapshot.execute_sql(
+            "SELECT source_event_id, event_type, incident_id, partner_id, "
+            "source_occurred_at, received_at, source_text, callback_subject, "
+            "callback_email, callback_audience, callback_issuer, callback_provenance, "
+            "model_armor_json, proposal_json, policy_decision, policy_reasons_json, "
+            "claim_verification_json, requested_mutation_json, agent_id, model_id, "
+            "adk_framework, adk_session_id, adk_invocation_id, adk_event_id, receipt_id, "
+            "domain_mutations_applied, evidence_mutations_applied, committed_at "
+            "FROM PartnerEvidenceEvents WHERE tenant_id=@tenant "
+            "AND operating_day=@day AND committed_at<=@as_of "
+            "ORDER BY committed_at, source_event_id",
+            params={
+                "tenant": tenant,
+                "day": datetime.fromisoformat(operating_day).date(),
+                "as_of": boundary_at,
+            },
+            param_types={
+                "tenant": str_t,
+                "day": spanner.param_types.DATE,
+                "as_of": ts_t,
+            },
+        ))
         constraint_rows = list(snapshot.execute_sql(
             "SELECT plan_id, constraint_type, details, created_at "
             "FROM PlanConstraints WHERE tenant_id=@tenant AND created_at<=@as_of "
@@ -3357,6 +3664,71 @@ def get_demo_beats_projections(
                 _incident_action_id(tenant, incident_id, f"plan:{revision}"))
     history = boundary.history(relevant_action_ids)
 
+    partner_evidence_as_of = []
+    for row in partner_evidence_rows:
+        try:
+            armor = json.loads(row[12] or "{}")
+            proposal = json.loads(row[13] or "null")
+            reasons = json.loads(row[15] or "[]")
+            verification = json.loads(row[16] or "{}")
+            requested_mutation = json.loads(row[17] or "null")
+        except (TypeError, json.JSONDecodeError):
+            omitted.append({
+                "field": f"partner_evidence_as_of.{row[0]}",
+                "reason": "PERSISTED_PARTNER_EVIDENCE_INVALID",
+            })
+            continue
+        receipt = next((r for r in receipt_rows if r[0] == row[24]), None)
+        node_cases = (
+            ((verification.get("before_after") or {}).get("custody") or {}).get("cases")
+        )
+        total_cases = custody.get("unique_current_cases") if custody else None
+        before_confirmed = (
+            total_cases - node_cases
+            if isinstance(total_cases, int) and isinstance(node_cases, int) else None
+        )
+        after_confirmed = (
+            total_cases if row[14] == "APPLIED" else before_confirmed
+        )
+        partner_evidence_as_of.append({
+            "source_event_id": row[0],
+            "event_type": row[1],
+            "incident_id": row[2],
+            "authoritative_partner_id": row[3],
+            "source_occurred_at": _normalize_receipt_timestamp(row[4]).isoformat(),
+            "received_at": _normalize_receipt_timestamp(row[5]).isoformat(),
+            "committed_at": _normalize_receipt_timestamp(row[27]).isoformat(),
+            "original_response": row[6],
+            "callback_principal": {
+                "subject": row[7], "email": row[8], "audience": row[9],
+                "issuer": row[10], "provenance": row[11],
+            },
+            "model_armor": armor,
+            "proposal": proposal,
+            "decision": row[14],
+            "policy_reasons": reasons,
+            "claim_verification": verification.get("claims", {}),
+            "before_after": verification.get("before_after", {}),
+            "requested_mutation": requested_mutation,
+            "agent": {
+                "agent_id": row[18], "model_id": row[19],
+                "adk_framework": row[20], "adk_session_id": row[21],
+                "adk_invocation_id": row[22], "adk_event_id": row[23],
+            },
+            "receipt": ({
+                "receipt_id": receipt[0], "action_id": receipt[1],
+                "action_type": receipt[2], "status": receipt[3],
+                "domain_mutations_applied": row[25],
+                "evidence_mutations_applied": row[26],
+                "committed_at": _normalize_receipt_timestamp(receipt[5]).isoformat(),
+            } if receipt else None),
+            "custody": {
+                "total_cases": total_cases,
+                "confirmed_cases_before": before_confirmed,
+                "confirmed_cases_after": after_confirmed,
+            },
+        })
+
     response = {
         "tenant_id": tenant,
         "operating_day": operating_day,
@@ -3434,6 +3806,7 @@ def get_demo_beats_projections(
         },
         "agent_activity_as_of": fleet_evidence,
         "recall_intake_as_of": recall_intake,
+        "partner_evidence_as_of": partner_evidence_as_of,
         "execution_evidence_as_of": {
             "custody_graph": custody,
             "receipts_committed": len(boundary._by_action_id),
@@ -3701,6 +4074,7 @@ TIMELESS_TABLE_MUTATORS = {
         "ACTIVATE_MOVEMENT_BARRIER",
         "ALLOCATE_SAFE_STOCK",
         "RECORD_ACKNOWLEDGMENT_HOLD",
+        "PROCESS_PARTNER_EVIDENCE",
         "CUSTODY_RECONCILIATION",
     }),
 }
@@ -3860,8 +4234,7 @@ def _query_committed_receipts_after(db, *, tenant_id: str, cursor):
         param_types["cursor_receipt_id"] = spanner.param_types.STRING
 
     sql = f"""
-      SELECT receipt_id, action_id, plan_revision_id, action_type, status,
-             message, timestamp, trace_id, caller_email, mutations_applied
+      SELECT receipt_id, timestamp
       FROM Receipts
       WHERE tenant_id = @tenant_id
       {cursor_predicate}
@@ -3870,28 +4243,6 @@ def _query_committed_receipts_after(db, *, tenant_id: str, cursor):
     """
     with db.snapshot() as snapshot:
         return list(snapshot.execute_sql(sql, params=params, param_types=param_types))
-
-
-def _receipt_projection(row) -> Dict[str, Any]:
-    timestamp = _normalize_receipt_timestamp(row[6])
-    event_id = _encode_receipt_cursor(timestamp, row[0])
-    return {
-        "event_id": event_id,
-        "receipt_id": row[0],
-        "action_id": row[1],
-        "plan_revision_id": row[2],
-        "action_type": row[3],
-        "status": row[4],
-        "message": row[5],
-        "timestamp": timestamp.isoformat(),
-        "correlation_trace_id": row[7],
-        "committed_by": row[8],
-        # Delta 3: the refusal beat must read DENIED - 0 MUTATIONS from the
-        # ledger itself rather than being asserted by the presentation layer.
-        # Absent rather than guessed when a caller supplies a narrower row, so
-        # the frontend can distinguish "no mutation" from "not reported".
-        "mutations_applied": row[9] if len(row) > 9 else None,
-    }
 
 
 async def _stream_committed_receipts(
@@ -3929,17 +4280,14 @@ async def _stream_committed_receipts(
         for row in rows:
             if await request.is_disconnected():
                 return
-            event = _receipt_projection(row)
-            cursor = (_normalize_receipt_timestamp(row[6]), row[0])
-            payload = {
-                "event_id": event["event_id"],
-                "projection_type": "SPANNER_COMMITTED_RECEIPT",
-                "classification": "OBSERVED_LIVE",
-                "data": event,
-                "emitted_at": datetime.now(timezone.utc).isoformat(),
-            }
+            cursor = (_normalize_receipt_timestamp(row[1]), row[0])
+            event_id = _encode_receipt_cursor(*cursor)
+            # Cursor-only notification: all material state, including partner
+            # source text, is fetched anew through the authenticated bounded
+            # projection rather than copied into the event stream.
+            payload = {"receipt_cursor": event_id}
             yield (
-                f"id: {event['event_id']}\n"
+                f"id: {event_id}\n"
                 f"event: projection_update\n"
                 f"data: {json.dumps(payload)}\n\n"
             )

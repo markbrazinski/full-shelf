@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PartnerEvidenceIngress",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["event_type", "source_event_id", "incident_id", "original_text", "source_occurred_at"],
+  "properties": {
+    "event_type": {"const": "PARTNER_CUSTODY_EVIDENCE_RECEIVED"},
+    "source_event_id": {"type": "string", "minLength": 1, "maxLength": 256},
+    "incident_id": {"type": "string", "minLength": 1, "maxLength": 64},
+    "original_text": {"type": "string", "minLength": 1, "maxLength": 20000},
+    "source_occurred_at": {"type": "string", "format": "date-time"}
+  }
+}

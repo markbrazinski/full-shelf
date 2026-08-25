@@ -19,6 +19,8 @@ def _schema(name):
         "approval.json", "event.json", "incident.json", "plan.json",
         "ledger_command.json", "operating_day_request.json",
         "recurring_daily_request.json", "ledger_error.json",
+        "partner_evidence_request.json",
+        "partner_custody_confirmation_details.json",
     ],
 )
 def test_schema_is_valid_draft_2020_12(name):
@@ -120,6 +122,46 @@ def test_ledger_collision_contract_is_permanent_and_zero_mutation():
         "collision_kind": "BUSINESS_IDENTITY_ALREADY_EXISTS",
     }
     jsonschema.validate(rejection, schema)
+
+
+def test_partner_evidence_ingress_is_constant_and_has_no_scope_overrides():
+    schema = _schema("partner_evidence_request.json")
+    body = {
+        "event_type": "PARTNER_CUSTODY_EVIDENCE_RECEIVED",
+        "source_event_id": "partner-event-1",
+        "incident_id": "INC-2231",
+        "original_text": "We pulled the remaining lettuce.",
+        "source_occurred_at": "2026-08-14T10:15:00Z",
+    }
+    jsonschema.validate(body, schema)
+    for forbidden in (
+        "tenant_id", "partner_id", "site_id", "lot_id", "quantity",
+        "work_item_id", "plan_revision", "operating_day",
+    ):
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate({**body, forbidden: "caller-selected"}, schema)
+
+
+def test_partner_custody_work_item_details_are_closed_and_all_required():
+    schema = _schema("partner_custody_confirmation_details.json")
+    details = {
+        "schema_version": "partner-custody-confirmation.v1",
+        "partner_id": "PARTNER-AGENCY-01", "site_id": "SITE-01",
+        "custody_node_id": "N-ST01", "lot_id": "LTC-4471",
+        "expected_cases": 8,
+        "expected_acknowledgment_status": "UNCONFIRMED",
+        "requested_acknowledgment_status": "CONFIRMED",
+        "hold_incident_id": "HOLD-01", "operating_day": "2026-08-14",
+        "source_task_name": "projects/p/locations/l/queues/q/tasks/t",
+    }
+    jsonschema.validate(details, schema)
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate({**details, "tenant_id": "caller-selected"}, schema)
+    for required in schema["required"]:
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(
+                {key: value for key, value in details.items() if key != required}, schema
+            )
 
 
 def test_openapi_records_managed_and_retired_paths_truthfully():

@@ -4,10 +4,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, Literal, Type
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from .partner_evidence import (
+    PARTNER_CALLBACK_PROVENANCE,
+    PARTNER_EVIDENCE_EVENT_TYPE,
+    PartnerCustodyProposal,
+)
 
 
 class LedgerCommandType(str, Enum):
@@ -24,6 +31,7 @@ class LedgerCommandType(str, Enum):
     RECORD_REFUSAL = "RECORD_REFUSAL"
     CREATE_NEXT_DAY_DRAFT = "CREATE_NEXT_DAY_DRAFT"
     PERSIST_REPAIR_PROPOSAL = "PERSIST_REPAIR_PROPOSAL"
+    PROCESS_PARTNER_EVIDENCE = "PROCESS_PARTNER_EVIDENCE"
 
 
 class StrictPayload(BaseModel):
@@ -240,6 +248,45 @@ class RecordAcknowledgmentHoldPayload(StrictPayload):
     delivery_subject: str = Field(min_length=1, max_length=128)
     delivery_email: str = Field(min_length=1, max_length=320)
     delivery_audience: str = Field(min_length=1, max_length=512)
+    partner_id: str = Field(min_length=1, max_length=64)
+    custody_node_id: str = Field(min_length=1, max_length=64)
+    operating_day: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+
+
+class ProcessPartnerEvidencePayload(StrictPayload):
+    event_type: Literal["PARTNER_CUSTODY_EVIDENCE_RECEIVED"]
+    source_event_id: str = Field(min_length=1, max_length=256)
+    operating_day: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    source_occurred_at: datetime
+    source_text: str = Field(min_length=1, max_length=20000)
+    source_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    partner_id: str = Field(min_length=1, max_length=64)
+    callback_subject: str = Field(min_length=1, max_length=128)
+    callback_email: str = Field(min_length=1, max_length=320)
+    callback_audience: str = Field(min_length=1, max_length=512)
+    callback_issuer: str = Field(min_length=1, max_length=256)
+    callback_provenance: Literal["AUTHENTICATED_PARTNER_CALLBACK"]
+    model_armor: Dict[str, Any]
+    proposal: PartnerCustodyProposal
+    agent_id: Literal["full-shelf.partner-operations.v1"]
+    model_id: str = Field(min_length=1, max_length=128)
+    adk_framework: str = Field(pattern=r"^google-adk/2\.6\.1$")
+    adk_session_id: str = Field(min_length=1, max_length=128)
+    adk_invocation_id: str = Field(min_length=1, max_length=128)
+    adk_event_id: str = Field(min_length=1, max_length=128)
+
+    @model_validator(mode="after")
+    def _source_and_constants_are_bound(self):
+        digest = hashlib.sha256(self.source_text.encode("utf-8")).hexdigest()
+        if digest != self.source_sha256:
+            raise ValueError("PARTNER_EVIDENCE_SOURCE_HASH_MISMATCH")
+        if self.event_type != PARTNER_EVIDENCE_EVENT_TYPE:
+            raise ValueError("PARTNER_EVIDENCE_EVENT_TYPE_INVALID")
+        if self.callback_provenance != PARTNER_CALLBACK_PROVENANCE:
+            raise ValueError("PARTNER_CALLBACK_PROVENANCE_INVALID")
+        if self.source_occurred_at.tzinfo is None:
+            raise ValueError("SOURCE_OCCURRED_AT_TIMEZONE_REQUIRED")
+        return self
 
 
 class NextDayBarrierPayload(StrictPayload):
@@ -392,6 +439,7 @@ PAYLOAD_MODELS: Dict[LedgerCommandType, Type[StrictPayload]] = {
     LedgerCommandType.RECORD_REFUSAL: RecordRefusalPayload,
     LedgerCommandType.CREATE_NEXT_DAY_DRAFT: CreateNextDayDraftPayload,
     LedgerCommandType.PERSIST_REPAIR_PROPOSAL: PersistRepairProposalPayload,
+    LedgerCommandType.PROCESS_PARTNER_EVIDENCE: ProcessPartnerEvidencePayload,
 }
 
 
@@ -418,6 +466,21 @@ class LedgerCommand(BaseModel):
 
     def request_fingerprint(self) -> str:
         """Hash mutation semantics while excluding delivery trace/command IDs."""
+        if self.command_type is LedgerCommandType.PROCESS_PARTNER_EVIDENCE:
+            payload = self.validated_payload()
+            assert isinstance(payload, ProcessPartnerEvidencePayload)
+            material = {
+                "tenant_id": self.tenant_id,
+                "incident_id": self.incident_id,
+                "partner_id": payload.partner_id,
+                "event_type": payload.event_type,
+                "source_event_id": payload.source_event_id,
+                "expected_plan_revision": self.expected_plan_revision,
+                "source_occurred_at": payload.source_occurred_at.isoformat(),
+                "source_sha256": payload.source_sha256,
+            }
+            canonical = json.dumps(material, sort_keys=True, separators=(",", ":"))
+            return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
         material = {
             "tenant_id": self.tenant_id,
             "incident_id": self.incident_id,

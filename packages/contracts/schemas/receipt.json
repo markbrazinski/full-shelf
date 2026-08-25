@@ -11,6 +11,7 @@
     "status": { "type": "string", "enum": ["SUCCESS", "DENIED", "REJECTED"] },
     "timestamp": { "type": "string", "format": "date-time" },
     "mutations_applied": { "type": "integer" },
+    "evidence_mutations_applied": { "type": ["integer", "null"] },
     "message": { "type": "string" },
     "trace_id": { "type": "string" }
   },

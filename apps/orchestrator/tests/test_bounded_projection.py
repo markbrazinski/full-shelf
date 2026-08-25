@@ -73,6 +73,17 @@ ALL_RECEIPTS = [
     receipt("status:PARTIALLY_CONTAINED", RECALL_INC, "SET_INCIDENT_STATUS", T(10, 13)),
 ]
 
+
+def partner_receipt(source_event_id, ts, status, domain_mutations):
+    return (
+        f"fixture-RCT-{source_event_id}",
+        f"fixture-CMD-{source_event_id}",
+        "PROCESS_PARTNER_EVIDENCE",
+        status,
+        domain_mutations,
+        ts,
+    )
+
 def _hop(agent_id, slug, validation, *, model="gemini-flash-latest",
          declared_tools=(), tool_invocations=()):
     """One persisted delegation hop, shaped exactly as the coordinator writes it."""
@@ -323,12 +334,90 @@ CUSTODY_GRAPH = {
 }
 
 
+def _partner_evidence_row(*, source_event_id, source_text, occurred_at,
+                          committed_at, decision, reasons, proposal,
+                          domain_mutations):
+    before_after = {
+        "custody": {"node_id": "N-ST01", "name": "Site 01", "cases": 8,
+                    "before": "UNCONFIRMED",
+                    "after": "CONFIRMED" if decision == "APPLIED" else "UNCONFIRMED"},
+        "work_item": {"work_item_id": "WORK-PCF-FIXTURE", "before": "OPEN",
+                      "after": "COMPLETED" if decision == "APPLIED" else "OPEN"},
+    }
+    claims = {
+        name: {"state": "PRESENT" if not reasons else "MISSING",
+               "reason": "LITERAL_SOURCE_ANCHOR" if not reasons else "CLAIM_NOT_PRESENT"}
+        for name in ("lot", "quantity", "location", "disposition")
+    }
+    claims["confirmation_time"] = {
+        "state": "PRESENT" if decision == "APPLIED" else "MISSING",
+        "reason": "LITERAL_SOURCE_ANCHOR" if decision == "APPLIED" else "OPTIONAL_CLAIM_NOT_PRESENT",
+    }
+    return (
+        source_event_id, "PARTNER_CUSTODY_EVIDENCE_RECEIVED", RECALL_INC,
+        "PARTNER-AGENCY-01", occurred_at, committed_at, source_text,
+        "fixture-partner-subject", "partner-callback@example.com",
+        "https://orchestrator.example.run.app/partner-evidence",
+        "https://accounts.google.com", "AUTHENTICATED_PARTNER_CALLBACK",
+        _json.dumps({"status": "APPROVED", "managed_operation": "sanitizeUserPrompt",
+                     "safety_verdict": "PASSED", "correlation_id": "fixture-trace"}),
+        _json.dumps(proposal), decision, _json.dumps(reasons),
+        _json.dumps({"claims": claims, "before_after": before_after,
+                     "qualifying_disposition": "ISOLATED_IN_QUARANTINE"}),
+        _json.dumps({"type": "CONFIRM_CUSTODY"}),
+        "full-shelf.partner-operations.v1", "gemini-3.5-flash",
+        "google-adk/2.6.1", f"fixture-session-{source_event_id}",
+        f"fixture-invocation-{source_event_id}", f"fixture-event-{source_event_id}",
+        f"fixture-RCT-{source_event_id}", domain_mutations, 1, committed_at,
+    )
+
+
+VAGUE_PROPOSAL = {
+    "incident_id": RECALL_INC, "partner_id": "PARTNER-AGENCY-01",
+    "site_id": "SITE-01", "custody_node_id": "N-ST01",
+    "work_item_id": "WORK-PCF-FIXTURE",
+    "expected_acknowledgment_status": "UNCONFIRMED",
+    "requested_acknowledgment_status": "CONFIRMED",
+    "lot": None, "quantity": None, "location": None, "disposition": None,
+    "confirmation_time": None, "requested_mutation": "CONFIRM_CUSTODY",
+    "rationale": "The response intends completion but omits required custody facts.",
+    "confidence": 0.72,
+}
+COMPLETE_PROPOSAL = {
+    **VAGUE_PROPOSAL,
+    "lot": {"value": "LTC-4471", "quote": "LTC-4471"},
+    "quantity": {"value": 8, "quote": "8 cases"},
+    "location": {"value": "Site 01", "quote": "Site 01"},
+    "disposition": {"value": "ISOLATED_IN_QUARANTINE",
+                    "quote": "ISOLATED_IN_QUARANTINE"},
+    "confirmation_time": {"value": "10:18", "quote": "confirmed at 10:18"},
+    "rationale": "Every required custody fact has a literal source anchor.",
+    "confidence": 0.99,
+}
+VAGUE_EVIDENCE_ROW = _partner_evidence_row(
+    source_event_id="fixture-partner-vague",
+    source_text="We pulled the remaining lettuce. Should be all good.",
+    occurred_at=T(10, 15), committed_at=T(10, 15), decision="DENIED",
+    reasons=["MISSING_LOT_EVIDENCE", "MISSING_QUANTITY_EVIDENCE",
+             "MISSING_LOCATION_EVIDENCE", "MISSING_DISPOSITION_EVIDENCE"],
+    proposal=VAGUE_PROPOSAL, domain_mutations=0,
+)
+COMPLETE_EVIDENCE_ROW = _partner_evidence_row(
+    source_event_id="fixture-partner-complete",
+    source_text=("LTC-4471 · 8 cases · ISOLATED_IN_QUARANTINE at Site 01 · "
+                 "confirmed at 10:18."),
+    occurred_at=T(10, 18), committed_at=T(10, 18), decision="APPLIED",
+    reasons=[], proposal=COMPLETE_PROPOSAL, domain_mutations=2,
+)
+
+
 def _database(*, include_next_day=False, vehicles=VEHICLE_ROWS,
               work_rows=WORK_ROWS, incident_rows=INCIDENT_ROWS,
               receipts=ALL_RECEIPTS, approval_rows=APPROVAL_ROWS,
               alloc_rows=ALLOC_ROWS, shortfall_rows=SHORTFALL_ROWS,
               constraint_rows=tuple(CONSTRAINT_ROWS) + (CANDIDATE_UNASSIGNED_ROW,
-                                                        REPAIR_PROPOSAL_ROW)):
+                                                        REPAIR_PROPOSAL_ROW),
+              partner_evidence_rows=()):
     """Fake Spanner that ENFORCES every predicate the handler actually binds.
 
     A fake that ignores a WHERE clause cannot prove scoping: the adversarial
@@ -395,6 +484,8 @@ def _database(*, include_next_day=False, vehicles=VEHICLE_ROWS,
             return scoped(shortfall_rows, 3, incident_index=1)
         if "FROM WorkItems" in sql:
             return scoped(work_rows, 3, incident_index=1)
+        if "FROM PartnerEvidenceEvents" in sql:
+            return scoped(partner_evidence_rows, 27)
         if "FROM PlanConstraints" in sql:
             rows = scoped(constraint_rows, 3, plan_index=0)
             if "subject_id" in sql:
@@ -412,7 +503,7 @@ def _database(*, include_next_day=False, vehicles=VEHICLE_ROWS,
     return db
 
 
-def project(as_of, *, include_next_day=False, db=None):
+def project(as_of, *, include_next_day=False, db=None, custody_graph=CUSTODY_GRAPH):
     client = TestClient(orchestrator_main.app)
     identity = MagicMock(subject="operator-subject", email="op@example.com")
     scope = MagicMock(tenant_id=TENANT, database_id="full-shelf-audit-test")
@@ -431,7 +522,7 @@ def project(as_of, *, include_next_day=False, db=None):
         patch.object(orchestrator_main, "get_spanner_database",
                      return_value=db if db is not None else _database()),
         patch.object(orchestrator_main, "_run_managed_custody_graph",
-                     return_value=CUSTODY_GRAPH),
+                     return_value=custody_graph),
     ):
         try:
             return client.get(url)

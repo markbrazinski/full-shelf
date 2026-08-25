@@ -15,7 +15,8 @@
     "agent_activity_as_of",
     "execution_evidence_as_of",
     "carry_forward_obligations",
-    "recall_intake_as_of"
+    "recall_intake_as_of",
+    "partner_evidence_as_of"
   ],
   "properties": {
     "tenant_id": {
@@ -84,7 +85,8 @@
                 "enum": [
                   "PRE_BOUNDARY_STATE_NOT_RETAINED",
                   "NOT_COMMITTED_AS_OF_BOUNDARY",
-                  "MANAGED_GRAPH_READ_UNAVAILABLE"
+                  "MANAGED_GRAPH_READ_UNAVAILABLE",
+                  "PERSISTED_PARTNER_EVIDENCE_INVALID"
                 ]
               }
             }
@@ -1426,6 +1428,49 @@
               }
             }
           }
+        }
+      }
+    },
+    "partner_evidence_as_of": {
+      "type": "array",
+      "description": "Partner evidence committed at or before this authenticated HUMAN_OPERATOR / require_frontend_authority boundary.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "source_event_id", "event_type", "incident_id", "authoritative_partner_id",
+          "source_occurred_at", "received_at", "committed_at", "original_response",
+          "callback_principal", "model_armor", "proposal", "decision", "policy_reasons",
+          "claim_verification", "before_after", "requested_mutation", "agent", "receipt", "custody"
+        ],
+        "properties": {
+          "source_event_id": {"type": "string"},
+          "event_type": {"const": "PARTNER_CUSTODY_EVIDENCE_RECEIVED"},
+          "incident_id": {"type": "string"},
+          "authoritative_partner_id": {"type": "string"},
+          "source_occurred_at": {"type": "string", "format": "date-time"},
+          "received_at": {"type": "string", "format": "date-time"},
+          "committed_at": {"type": "string", "format": "date-time"},
+          "original_response": {"type": "string"},
+          "callback_principal": {
+            "type": "object",
+            "required": ["subject", "email", "audience", "issuer", "provenance"],
+            "properties": {
+              "subject": {"type": "string"}, "email": {"type": "string"},
+              "audience": {"type": "string"}, "issuer": {"type": "string"},
+              "provenance": {"const": "AUTHENTICATED_PARTNER_CALLBACK"}
+            }
+          },
+          "model_armor": {"type": "object"},
+          "proposal": {"type": ["object", "null"]},
+          "decision": {"enum": ["APPLIED", "DENIED"]},
+          "policy_reasons": {"type": "array", "items": {"type": "string"}},
+          "claim_verification": {"type": "object"},
+          "before_after": {"type": "object"},
+          "requested_mutation": {"type": ["object", "null"]},
+          "agent": {"type": "object"},
+          "receipt": {"type": ["object", "null"]},
+          "custody": {"type": "object"}
         }
       }
     },

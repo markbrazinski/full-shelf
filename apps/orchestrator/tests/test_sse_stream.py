@@ -30,17 +30,7 @@ class DisconnectAfterFirstPoll:
 
 
 def _receipt(receipt_id, timestamp):
-    return (
-        receipt_id,
-        f"ACT-{receipt_id}",
-        "rev08",
-        "RECORD_ACKNOWLEDGMENT_HOLD",
-        "SUCCESS",
-        f"Committed {receipt_id}",
-        timestamp,
-        "0123456789abcdef0123456789abcdef",
-        "orchestrator@example.iam.gserviceaccount.com",
-    )
+    return (receipt_id, timestamp)
 
 
 async def _collect(generator):
@@ -95,9 +85,11 @@ def test_stream_stays_open_and_emits_new_commit_without_reconnect():
     assert query.call_count == 2
     assert len(chunks) == 1
     assert "event: projection_update" in chunks[0]
-    assert "RCT-NEW" in chunks[0]
-    assert "0123456789abcdef0123456789abcdef" in chunks[0]
-    assert "orchestrator@example.iam.gserviceaccount.com" in chunks[0]
+    event_id = chunks[0].split("\n", 1)[0].removeprefix("id: ")
+    assert orchestrator_main._decode_receipt_cursor(event_id) == (timestamp, "RCT-NEW")
+    assert '"receipt_cursor":' in chunks[0]
+    assert "trace_id" not in chunks[0]
+    assert "caller_email" not in chunks[0]
 
 
 def test_stream_advances_cursor_without_skip_or_duplicate():
@@ -120,8 +112,13 @@ def test_stream_advances_cursor_without_skip_or_duplicate():
         )))
 
     assert len(chunks) == 2
-    assert sum("RCT-001" in chunk for chunk in chunks) == 1
-    assert sum("RCT-002" in chunk for chunk in chunks) == 1
+    emitted = [
+        orchestrator_main._decode_receipt_cursor(
+            chunk.split("\n", 1)[0].removeprefix("id: ")
+        )[1]
+        for chunk in chunks
+    ]
+    assert emitted == ["RCT-001", "RCT-002"]
     second_cursor = query.call_args_list[1].kwargs["cursor"]
     third_cursor = query.call_args_list[2].kwargs["cursor"]
     assert second_cursor == (first_at, "RCT-001")

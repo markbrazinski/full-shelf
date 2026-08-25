@@ -66,6 +66,7 @@ def test_every_registered_route_has_exactly_one_classification():
         main.PUBLIC_HEALTH,
         main.HUMAN_OPERATOR,
         main.MANAGED_CALLBACK,
+        main.PARTNER_CALLBACK,
         main.INTERNAL_WORKLOAD,
         main.DISABLED_OR_REMOVED,
     }
@@ -80,6 +81,7 @@ def test_sensitive_route_classification_has_matching_authentication_dependency()
     }
     expected_by_policy = {
         main.MANAGED_CALLBACK: "require_managed_callback",
+        main.PARTNER_CALLBACK: "require_partner_callback",
         main.INTERNAL_WORKLOAD: "require_internal_workload",
     }
     for route in main.app.routes:
