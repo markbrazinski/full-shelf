@@ -887,7 +887,11 @@ def _generate_daily_morning_plan(
     *,
     request: OperatingDayRequest,
 ) -> Dict[str, Any]:
-    """Commit a validated morning plan definition through the private ledger."""
+    """Commit a validated morning plan definition through the private ledger.
+
+    Daily plan is pre-built by deterministic logic upstream. Fulfillment agent
+    validates selection before ledger commit.
+    """
     trace_id = generate_trace_id()
     tenant_id = operating_day_authority_id(request.tenant_id, request.operating_day)
     operating_plan = request.operating_plan
@@ -900,6 +904,43 @@ def _generate_daily_morning_plan(
             f"{operating_plan.revision}"
         ).encode("utf-8")
     ).hexdigest()[:24]
+
+    # Gate daily plan through Fulfillment agent validation before ledger commit
+    # Daily plan is treated as single deterministic candidate
+    incident_id_daily = f"INC-DAY-{plan_scope_digest}"
+    try:
+        fleet_result = run_fleet(
+            incident_id=incident_id_daily,
+            lot_id="DAILY_PLAN_NO_LOT",
+            screened_notice_text="Daily plan generation",
+            graph_result={},
+            recovery_candidates=[{
+                "candidate_id": operating_plan.plan_id,
+                "revision": operating_plan.revision,
+                "content_hash": hashlib.sha256(
+                    operating_plan.model_dump_json().encode("utf-8")
+                ).hexdigest(),
+            }],
+            source_event_id=None,
+            trigger=TriggerClass.DAILY_PLANNING,
+            partner_state={},
+        )
+        if fleet_result["proposal"].status != "PROPOSED":
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "DAILY_PLAN_REJECTED_BY_FULFILLMENT",
+                    "reason": fleet_result["proposal"].reason_code,
+                },
+            )
+    except FleetProposalError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "DAILY_PLAN_FLEET_VALIDATION_FAILED",
+                "reason": exc.reason_code,
+            },
+        ) from exc
 
     try:
         ledger_result = execute_ledger_command(
@@ -2367,6 +2408,42 @@ def _derive_repair_proposal(
     if pickup is None:
         raise HTTPException(409, "NO_SECOND_COMMITMENT_TO_ROUTE_TO_A_PARTNER")
 
+    # Gate repair through Fulfillment agent before ledger persist
+    incident_id_repair = f"INC-REPAIR-{source_event_id}"
+    try:
+        fleet_result = run_fleet(
+            incident_id=incident_id_repair,
+            lot_id="FLEET_FAILURE_NO_LOT",
+            screened_notice_text=f"Fleet failure: {vehicle_id} offline",
+            graph_result={},
+            recovery_candidates=[{
+                "candidate_id": f"{absorbing_id}-repair",
+                "revision": source_revision,
+                "content_hash": hashlib.sha256(
+                    f"{reroute[0]},{pickup[0]}".encode("utf-8")
+                ).hexdigest(),
+            }],
+            source_event_id=source_event_id,
+            trigger=TriggerClass.FLEET_FAILURE,
+            partner_state={},
+        )
+        if fleet_result["proposal"].status != "PROPOSED":
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "REPAIR_REJECTED_BY_FULFILLMENT",
+                    "reason": fleet_result["proposal"].reason_code,
+                },
+            )
+    except FleetProposalError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "FLEET_FAILURE_FLEET_VALIDATION_FAILED",
+                "reason": exc.reason_code,
+            },
+        ) from exc
+
     proposal_id = "PROP-" + hashlib.sha256(
         f"{tenant_id}\x00{plan_id}\x00{source_revision}\x00{source_event_id}".encode()
     ).hexdigest()[:24].upper()
@@ -2722,6 +2799,41 @@ def _generate_next_day_plan(
     candidate = _candidate_assignments(
         shortfalls, safe_lots, fleet, plan_id=plan_id,
         agency_names=agency_names)
+
+    # Gate next-day draft through Fulfillment agent before ledger persist
+    try:
+        fleet_result = run_fleet(
+            incident_id=incident_id or f"INC-NEXTDAY-{stable_event_id}",
+            lot_id=affected_lot_id or "NEXT_DAY_NO_LOT",
+            screened_notice_text="Next-day draft generation",
+            graph_result={},
+            recovery_candidates=[{
+                "candidate_id": plan_id,
+                "revision": "rev01",
+                "content_hash": hashlib.sha256(
+                    json.dumps(candidate, sort_keys=True, separators=(",", ":")).encode()
+                ).hexdigest(),
+            }],
+            source_event_id=stable_event_id,
+            trigger=TriggerClass.NEXT_DAY_DRAFT,
+            partner_state={},
+        )
+        if fleet_result["proposal"].status != "PROPOSED":
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "NEXT_DAY_DRAFT_REJECTED_BY_FULFILLMENT",
+                    "reason": fleet_result["proposal"].reason_code,
+                },
+            )
+    except FleetProposalError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "NEXT_DAY_DRAFT_FLEET_VALIDATION_FAILED",
+                "reason": exc.reason_code,
+            },
+        ) from exc
 
     next_day_plan = {
         "operating_date": operating_date.isoformat(),
