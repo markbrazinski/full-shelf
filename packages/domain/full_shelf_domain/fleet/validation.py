@@ -16,11 +16,35 @@ from .contracts import (
     PARTNER_TEMPLATE_IDS,
     RECOVERY_MIN_CONFIDENCE,
     FleetProposalError,
+    IncidentLeadAssessment,
     NetworkCustodyAssessment,
     PartnerCommunication,
     RecoverySelection,
     deterministic_escalation_level,
 )
+
+
+def validate_incident_lead_assessment(
+    assessment: IncidentLeadAssessment,
+    accepted_event_id: str,
+    authorized_playbook_ids: Sequence[str],
+    authorized_specialists: Sequence[str],
+) -> IncidentLeadAssessment:
+    """Require the incident lead's proposal to reference authorized resources only.
+
+    The source event must match what was accepted, the playbook must exist and be
+    authorized, and required specialists must be a subset of what that playbook permits.
+    """
+    if assessment.source_event_id != accepted_event_id:
+        raise FleetProposalError("INCIDENT_SOURCE_EVENT_MISMATCH")
+    if assessment.selected_playbook_id not in authorized_playbook_ids:
+        raise FleetProposalError("INCIDENT_PLAYBOOK_NOT_AUTHORIZED")
+    for specialist_id in assessment.required_specialists:
+        if specialist_id not in authorized_specialists:
+            raise FleetProposalError("INCIDENT_SPECIALIST_NOT_AUTHORIZED")
+    if assessment.confidence < 0.5:
+        raise FleetProposalError("INCIDENT_LEAD_CONFIDENCE_BELOW_THRESHOLD")
+    return assessment
 
 
 def validate_custody_assessment(
