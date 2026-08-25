@@ -40,18 +40,18 @@ class TrustClass(str, Enum):
 
 # --- Stable agent identity -------------------------------------------------
 
-AGENT_INCIDENT_COORDINATOR = "full-shelf.incident-coordinator.v1"
-AGENT_NETWORK_CUSTODY = "full-shelf.network-custody.v1"
-AGENT_FULFILLMENT_RECOVERY = "full-shelf.fulfillment-recovery.v1"
-AGENT_PARTNER_OPERATIONS = "full-shelf.partner-operations.v1"
-AGENT_RECALL_EXTRACTION = "full-shelf.recall-extraction.v1"
+AGENT_FULFILLMENT_PLANNING_RECOVERY = "full-shelf.fulfillment-planning-recovery.v2"
+AGENT_INCIDENT_LEAD = "full-shelf.incident-lead.v1"
+AGENT_RECALL_INTAKE_EXTRACTION = "full-shelf.recall-intake-extraction.v2"
+AGENT_NETWORK_CUSTODY = "full-shelf.network-custody.v2"
+AGENT_PARTNER_OPERATIONS = "full-shelf.partner-operations.v2"
 
 FLEET_AGENT_IDS = (
-    AGENT_INCIDENT_COORDINATOR,
+    AGENT_FULFILLMENT_PLANNING_RECOVERY,
+    AGENT_INCIDENT_LEAD,
+    AGENT_RECALL_INTAKE_EXTRACTION,
     AGENT_NETWORK_CUSTODY,
-    AGENT_FULFILLMENT_RECOVERY,
     AGENT_PARTNER_OPERATIONS,
-    AGENT_RECALL_EXTRACTION,
 )
 
 # --- Stable read-only tool identity ----------------------------------------
@@ -81,25 +81,24 @@ TOOL_RUNTIME_NAMES = {
 # catalogable statement that the agent holds no tool authority at all.
 # Only the Network and Custody agent needs live tool access: custody
 # investigation is genuinely exploratory, so it reads the graph and may follow
-# up on a specific node. The planner and partner agents receive their complete
-# bounded input directly in the prompt, so they hold no tools rather than
-# carrying a catalog entry with no runtime behavior.
+# up on a specific node. The planner, incident lead, and partner agents receive
+# their complete bounded input directly in the prompt, so they hold no tools.
 AGENT_TOOL_ALLOWLIST: Dict[str, tuple] = {
-    AGENT_INCIDENT_COORDINATOR: (),
+    AGENT_FULFILLMENT_PLANNING_RECOVERY: (),
+    AGENT_INCIDENT_LEAD: (),
+    AGENT_RECALL_INTAKE_EXTRACTION: (),
     AGENT_NETWORK_CUSTODY: (TOOL_CUSTODY_GRAPH_READ, TOOL_CUSTODY_DEPENDENTS_READ),
-    AGENT_FULFILLMENT_RECOVERY: (),
     AGENT_PARTNER_OPERATIONS: (),
-    AGENT_RECALL_EXTRACTION: (),
 }
 
 # Bounded wall-clock budget per agent. No agent may loop or retry internally;
 # re-entry is owned by the existing idempotent Pub/Sub event mechanism.
 AGENT_TIMEOUT_SECONDS: Dict[str, float] = {
-    AGENT_INCIDENT_COORDINATOR: 90.0,
+    AGENT_FULFILLMENT_PLANNING_RECOVERY: 30.0,
+    AGENT_INCIDENT_LEAD: 30.0,
+    AGENT_RECALL_INTAKE_EXTRACTION: 30.0,
     AGENT_NETWORK_CUSTODY: 30.0,
-    AGENT_FULFILLMENT_RECOVERY: 30.0,
     AGENT_PARTNER_OPERATIONS: 30.0,
-    AGENT_RECALL_EXTRACTION: 30.0,
 }
 
 MANUAL_REVIEW_REQUIRED = "MANUAL_REVIEW_REQUIRED"
@@ -119,6 +118,22 @@ class FleetProposalError(RuntimeError):
 
 
 # --- Strict agent output schemas -------------------------------------------
+
+
+class IncidentLeadAssessment(BaseModel):
+    """Advisory incident scoping: what failed, which commitments are affected, which playbook applies."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    incident_class: Literal["FLEET_CAPABILITY_LOSS", "FOOD_SAFETY_RECALL", "OTHER_GOVERNED_EXCEPTION"]
+    source_event_id: str = Field(min_length=1, max_length=64)
+    affected_capabilities: List[str] = Field(min_length=1, max_length=16)
+    affected_commitment_ids: List[str] = Field(max_length=32)
+    selected_playbook_id: str = Field(min_length=1, max_length=64)
+    required_specialists: List[str] = Field(max_length=8)
+    immediate_safety_actions: List[str] = Field(max_length=8)
+    rationale: str = Field(min_length=1, max_length=600)
+    confidence: float = Field(ge=0.0, le=1.0)
 
 
 class NetworkCustodyAssessment(BaseModel):

@@ -20,14 +20,16 @@ from typing import Any, Callable, Dict, List, Optional
 from pydantic import ValidationError
 
 from .contracts import (
-    AGENT_FULFILLMENT_RECOVERY,
-    AGENT_RECALL_EXTRACTION,
+    AGENT_FULFILLMENT_PLANNING_RECOVERY,
+    AGENT_INCIDENT_LEAD,
+    AGENT_RECALL_INTAKE_EXTRACTION,
     AGENT_NETWORK_CUSTODY,
     AGENT_PARTNER_OPERATIONS,
     AGENT_TIMEOUT_SECONDS,
     AGENT_TOOL_ALLOWLIST,
     PARTNER_TEMPLATE_IDS,
     FleetProposalError,
+    IncidentLeadAssessment,
     NetworkCustodyAssessment,
     PartnerCommunication,
     RecoverySelection,
@@ -42,6 +44,20 @@ WORKLOAD_USER_ID = "orchestrator-workload"
 def adk_framework() -> str:
     return f"google-adk/{version('google-adk')}"
 
+
+INCIDENT_LEAD_INSTRUCTION = """
+You are the incident interpreter for a food bank control plane.
+
+Interpret the operational meaning of an accepted exception without inventing facts.
+For example, distinguish a refrigeration-capability loss from a location anomaly,
+scope the commitments requiring recovery, and select the applicable governed
+response playbook.
+
+Use only the values supplied in your inputs. Do not recall scenarios from memory
+or invent affected commitments. Select only from the authorized playbook catalog.
+
+Return the configured structured response and nothing else.
+"""
 
 NETWORK_CUSTODY_INSTRUCTION = """
 You assess physical custody of a recalled lot for a food bank control plane.
@@ -135,8 +151,32 @@ def _build_llm_agent(
     return Agent(**kwargs)
 
 
+def build_incident_lead_agent(tools: Optional[List[Callable]] = None):
+    """Concrete ADK LlmAgent for `full-shelf.incident-lead.v1`."""
+    return _build_llm_agent(
+        name="IncidentLeadAgent",
+        instruction=INCIDENT_LEAD_INSTRUCTION,
+        output_schema=IncidentLeadAssessment,
+        tools=tools or [],
+        max_output_tokens=1024,
+    )
+
+
+def build_recall_intake_extraction_agent(tools: Optional[List[Any]] = None):
+    """Concrete ADK LlmAgent for `full-shelf.recall-intake-extraction.v2`."""
+    from full_shelf_domain.recall import RecallExtractionSchema
+
+    return _build_llm_agent(
+        name="RecallIntakeExtractionAgent",
+        instruction=RECALL_EXTRACTION_INSTRUCTION,
+        output_schema=RecallExtractionSchema,
+        tools=tools or [],
+        max_output_tokens=512,
+    )
+
+
 def build_network_custody_agent(tools: List[Callable]):
-    """Concrete ADK LlmAgent for `full-shelf.network-custody.v1`."""
+    """Concrete ADK LlmAgent for `full-shelf.network-custody.v2`."""
     return _build_llm_agent(
         name="NetworkAndCustodyAgent",
         instruction=NETWORK_CUSTODY_INSTRUCTION,
@@ -146,10 +186,10 @@ def build_network_custody_agent(tools: List[Callable]):
     )
 
 
-def build_fulfillment_recovery_agent(tools: List[Callable]):
-    """Concrete ADK LlmAgent for `full-shelf.fulfillment-recovery.v1`."""
+def build_fulfillment_planning_recovery_agent(tools: List[Callable]):
+    """Concrete ADK LlmAgent for `full-shelf.fulfillment-planning-recovery.v2`."""
     return _build_llm_agent(
-        name="FulfillmentAndRecoveryPlannerAgent",
+        name="FulfillmentPlanningRecoveryAgent",
         instruction=FULFILLMENT_RECOVERY_INSTRUCTION,
         output_schema=RecoverySelection,
         tools=tools,
@@ -158,7 +198,7 @@ def build_fulfillment_recovery_agent(tools: List[Callable]):
 
 
 def build_partner_operations_agent(tools: List[Callable]):
-    """Concrete ADK LlmAgent for `full-shelf.partner-operations.v1`."""
+    """Concrete ADK LlmAgent for `full-shelf.partner-operations.v2`."""
     return _build_llm_agent(
         name="PartnerOperationsAgent",
         instruction=PARTNER_OPERATIONS_INSTRUCTION,
@@ -175,9 +215,10 @@ def _recall_schema():
 
 
 AGENT_OUTPUT_MODELS = {
-    AGENT_RECALL_EXTRACTION: _recall_schema,
+    AGENT_FULFILLMENT_PLANNING_RECOVERY: lambda: RecoverySelection,
+    AGENT_INCIDENT_LEAD: lambda: IncidentLeadAssessment,
+    AGENT_RECALL_INTAKE_EXTRACTION: _recall_schema,
     AGENT_NETWORK_CUSTODY: lambda: NetworkCustodyAssessment,
-    AGENT_FULFILLMENT_RECOVERY: lambda: RecoverySelection,
     AGENT_PARTNER_OPERATIONS: lambda: PartnerCommunication,
 }
 
@@ -203,22 +244,6 @@ canonical scenario. Return the configured structured response only.
 """
 
 
-def build_recall_extraction_agent(tools: Optional[List[Any]] = None):
-    """Concrete ADK LlmAgent for `full-shelf.recall-extraction.v1`.
-
-    Preserves the accepted extraction behavior: strict schema, zero tools, no
-    transfer, deterministic decoding. Source anchoring is enforced by
-    `validation.validate_recall_extraction` after parsing.
-    """
-    from full_shelf_domain.recall import RecallExtractionSchema
-
-    return _build_llm_agent(
-        name="RecallExtractionAgent",
-        instruction=RECALL_EXTRACTION_INSTRUCTION,
-        output_schema=RecallExtractionSchema,
-        tools=tools or [],
-        max_output_tokens=512,
-    )
 
 
 async def collect_specialist_output(

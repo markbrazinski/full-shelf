@@ -15,12 +15,12 @@ from typing import Any, Dict, List
 
 from .agents import MODEL_ID
 from .contracts import (
-    AGENT_FULFILLMENT_RECOVERY,
-    TOOL_RUNTIME_NAMES,
-    AGENT_INCIDENT_COORDINATOR,
+    AGENT_FULFILLMENT_PLANNING_RECOVERY,
+    AGENT_INCIDENT_LEAD,
+    AGENT_RECALL_INTAKE_EXTRACTION,
     AGENT_NETWORK_CUSTODY,
     AGENT_PARTNER_OPERATIONS,
-    AGENT_RECALL_EXTRACTION,
+    TOOL_RUNTIME_NAMES,
     AGENT_TIMEOUT_SECONDS,
     AGENT_TOOL_ALLOWLIST,
     FLEET_MANIFEST_VERSION,
@@ -28,6 +28,7 @@ from .contracts import (
     TOOL_CUSTODY_DEPENDENTS_READ,
     TOOL_CUSTODY_GRAPH_READ,
     ComponentKind,
+    IncidentLeadAssessment,
     NetworkCustodyAssessment,
     PartnerCommunication,
     RecoverySelection,
@@ -38,53 +39,52 @@ from .tools import CANDIDATE_POLICY_ID, CANDIDATE_POLICY_ORDERINGS
 # The ledger role each agent's advice may inform. The agent never holds the
 # role; the orchestrator submits under it after deterministic revalidation.
 AGENT_INFORMED_LEDGER_ROLE = {
-    AGENT_INCIDENT_COORDINATOR: "INCIDENT_COORDINATOR",
+    AGENT_FULFILLMENT_PLANNING_RECOVERY: "FULFILLMENT_RECOVERY_PLANNER",
+    AGENT_INCIDENT_LEAD: "INCIDENT_COORDINATOR",
+    AGENT_RECALL_INTAKE_EXTRACTION: "INCIDENT_COORDINATOR",
     AGENT_NETWORK_CUSTODY: "INCIDENT_COORDINATOR",
-    AGENT_FULFILLMENT_RECOVERY: "FULFILLMENT_RECOVERY_PLANNER",
     AGENT_PARTNER_OPERATIONS: "INCIDENT_COORDINATOR",
-    AGENT_RECALL_EXTRACTION: "INCIDENT_COORDINATOR",
 }
 
 _AGENT_SPECS = {
-    AGENT_INCIDENT_COORDINATOR: {
-        "product_role": "Incident Coordinator",
-        "runtime_name": "IncidentCoordinatorAgent",
-        "kind": ComponentKind.ADK_WORKFLOW_AGENT,
-        "uses_gemini": False,
+    AGENT_FULFILLMENT_PLANNING_RECOVERY: {
+        "product_role": "Fulfillment Planning & Recovery",
+        "runtime_name": "FulfillmentPlanningRecoveryAgent",
+        "kind": ComponentKind.ADK_LLM_AGENT,
+        "uses_gemini": True,
         "input_trust": [TrustClass.TRUSTED_DERIVED],
-        # The executable coordinator is a BaseAgent with NO ADK output_schema.
-        # It emits an internal coordination event, which is not an ADK
-        # structured-output contract and is not catalogued as one.
-        "output_schema": None,
-        "adk_output_schema": None,
-        "coordination_event_contract": (
-            "Emits one internal coordination event whose text payload carries "
-            "status, reason_code, delegation_trace, and accepted_agent_ids. "
-            "This is not an ADK output_schema. FleetProposal is assembled "
-            "deterministically by run_fleet from the accepted specialist "
-            "outputs; the coordinator agent does not emit it."
-        ),
-        "instruction_source": "full_shelf_domain.fleet.coordinator:IncidentCoordinatorAgent",
+        "output_schema": RecoverySelection.__name__,
+        "instruction_source": "full_shelf_domain.fleet.agents:FULFILLMENT_RECOVERY_INSTRUCTION",
+        "failure_behavior": "MANUAL_REVIEW_REQUIRED",
+    },
+    AGENT_INCIDENT_LEAD: {
+        "product_role": "Incident Lead",
+        "runtime_name": "IncidentLeadAgent",
+        "kind": ComponentKind.ADK_LLM_AGENT,
+        "uses_gemini": True,
+        "input_trust": [TrustClass.TRUSTED_AUTHORITATIVE],
+        "output_schema": IncidentLeadAssessment.__name__,
+        "instruction_source": "full_shelf_domain.fleet.agents:INCIDENT_LEAD_INSTRUCTION",
+        "failure_behavior": "MANUAL_REVIEW_REQUIRED",
+    },
+    AGENT_RECALL_INTAKE_EXTRACTION: {
+        "product_role": "Recall Intake & Extraction",
+        "runtime_name": "RecallIntakeExtractionAgent",
+        "kind": ComponentKind.ADK_LLM_AGENT,
+        "uses_gemini": True,
+        "input_trust": [TrustClass.MODEL_ARMOR_APPROVED],
+        "output_schema": "RecallExtractionSchema",
+        "instruction_source": "full_shelf_domain.fleet.agents:RECALL_EXTRACTION_INSTRUCTION",
         "failure_behavior": "MANUAL_REVIEW_REQUIRED",
     },
     AGENT_NETWORK_CUSTODY: {
-        "product_role": "Network and Custody",
+        "product_role": "Network & Custody",
         "runtime_name": "NetworkAndCustodyAgent",
         "kind": ComponentKind.ADK_LLM_AGENT,
         "uses_gemini": True,
         "input_trust": [TrustClass.TRUSTED_AUTHORITATIVE],
         "output_schema": NetworkCustodyAssessment.__name__,
         "instruction_source": "full_shelf_domain.fleet.agents:NETWORK_CUSTODY_INSTRUCTION",
-        "failure_behavior": "MANUAL_REVIEW_REQUIRED",
-    },
-    AGENT_FULFILLMENT_RECOVERY: {
-        "product_role": "Fulfillment and Recovery Planner",
-        "runtime_name": "FulfillmentAndRecoveryPlannerAgent",
-        "kind": ComponentKind.ADK_LLM_AGENT,
-        "uses_gemini": True,
-        "input_trust": [TrustClass.TRUSTED_DERIVED],
-        "output_schema": RecoverySelection.__name__,
-        "instruction_source": "full_shelf_domain.fleet.agents:FULFILLMENT_RECOVERY_INSTRUCTION",
         "failure_behavior": "MANUAL_REVIEW_REQUIRED",
     },
     AGENT_PARTNER_OPERATIONS: {
@@ -95,16 +95,6 @@ _AGENT_SPECS = {
         "input_trust": [TrustClass.TRUSTED_AUTHORITATIVE],
         "output_schema": PartnerCommunication.__name__,
         "instruction_source": "full_shelf_domain.fleet.agents:PARTNER_OPERATIONS_INSTRUCTION",
-        "failure_behavior": "MANUAL_REVIEW_REQUIRED",
-    },
-    AGENT_RECALL_EXTRACTION: {
-        "product_role": "Recall Extraction",
-        "runtime_name": "RecallExtractionAgent",
-        "kind": ComponentKind.ADK_LLM_AGENT,
-        "uses_gemini": True,
-        "input_trust": [TrustClass.MODEL_ARMOR_APPROVED],
-        "output_schema": "RecallExtractionSchema",
-        "instruction_source": "full_shelf_domain.fleet.agents:RECALL_EXTRACTION_INSTRUCTION",
         "failure_behavior": "MANUAL_REVIEW_REQUIRED",
     },
 }
