@@ -164,7 +164,14 @@ def test_only_the_coordinator_is_a_non_gemini_workflow_agent():
 
 def test_untrusted_content_reaches_only_the_screened_extraction_agent():
     for agent_id, entry in BY_ID.items():
-        assert "UNTRUSTED_EXTERNAL" not in entry["input_trust_classes"], agent_id
+        # Check both flat (legacy) and mode-scoped (new) trust structures
+        if "input_trust_classes" in entry:
+            assert "UNTRUSTED_EXTERNAL" not in entry["input_trust_classes"], agent_id
+        if "input_trust_by_mode" in entry:
+            for mode_classes in entry["input_trust_by_mode"].values():
+                assert "UNTRUSTED_EXTERNAL" not in mode_classes, agent_id
+
+    # Recall uses MODEL_ARMOR_APPROVED
     assert BY_ID[contracts.AGENT_RECALL_INTAKE_EXTRACTION]["input_trust_classes"] == [
         "MODEL_ARMOR_APPROVED"
     ]
@@ -188,13 +195,17 @@ def test_candidate_scope_is_stated_as_a_bounded_policy_not_completeness():
     assert stale_claim not in str(MANIFEST).lower()
 
 
-def test_governed_sequence_matches_the_executable_coordinator_sequence():
-    from full_shelf_domain.fleet.coordinator import GOVERNED_SEQUENCE, AGENT_INCIDENT_COORDINATOR
+def test_orchestration_paths_have_all_triggers():
+    from full_shelf_domain.fleet.orchestration import TriggerClass
+    from full_shelf_domain.fleet.coordinator import AGENT_INCIDENT_COORDINATOR
 
-    assert MANIFEST["governed_sequence"] == list(GOVERNED_SEQUENCE)
-    # The root is not in its own sequence; the five specialists are.
-    assert AGENT_INCIDENT_COORDINATOR not in MANIFEST["governed_sequence"]
-    assert len(MANIFEST["governed_sequence"]) == 5
+    assert "orchestration_paths" in MANIFEST
+    for trigger in TriggerClass:
+        assert trigger.value in MANIFEST["orchestration_paths"]
+        # Each path contains agents; root coordinator is not included
+        path = MANIFEST["orchestration_paths"][trigger.value]
+        assert len(path) > 0
+        assert AGENT_INCIDENT_COORDINATOR not in path
 
 
 def test_runtime_tool_names_are_unique_and_catalogued():
@@ -203,9 +214,13 @@ def test_runtime_tool_names_are_unique_and_catalogued():
     assert set(names) == set(contracts.TOOL_RUNTIME_NAMES.values())
 
 
-def test_catalog_does_not_claim_model_armor_for_partner_inputs():
+def test_catalog_declares_partner_trust_by_mode():
     partner = BY_ID[contracts.AGENT_PARTNER_OPERATIONS]
-    assert partner["input_trust_classes"] == ["TRUSTED_AUTHORITATIVE"]
+    assert "input_trust_by_mode" in partner
+    assert partner["input_trust_by_mode"]["OUTBOUND_FOLLOWUP"] == ["TRUSTED_AUTHORITATIVE"]
+    assert set(partner["input_trust_by_mode"]["INBOUND_EVIDENCE"]) == {
+        "AUTHENTICATED_EXTERNAL", "MODEL_ARMOR_APPROVED", "TRUSTED_AUTHORITATIVE"
+    }
 
 
 def test_partner_template_parameters_all_have_authoritative_sources():

@@ -234,7 +234,7 @@ class TestModelArmorBoundaryDesign:
         assert all(agent in FLEET_AGENT_IDS for agent in path)
 
     def test_partner_outbound_communication_trust_class(self):
-        """Partner Operations outbound mode requires TRUSTED_AUTHORITATIVE input."""
+        """Partner Operations declares distinct trust requirements per mode."""
         from full_shelf_domain.fleet.manifest import build_manifest
 
         manifest = build_manifest()
@@ -243,9 +243,12 @@ class TestModelArmorBoundaryDesign:
              if "partner-operations" in a["agent_id"]), None
         )
         assert partner_entry is not None
-        # Outbound mode uses TRUSTED_AUTHORITATIVE (partner state from authoritative plan)
-        # TODO (WP6): Manifest will distinguish input_trust_by_mode in mode-scoping work
-        assert "TRUSTED_AUTHORITATIVE" in partner_entry["input_trust_classes"]
+        # Mode-scoped trust: outbound uses TRUSTED_AUTHORITATIVE only
+        assert "input_trust_by_mode" in partner_entry
+        assert partner_entry["input_trust_by_mode"]["OUTBOUND_FOLLOWUP"] == ["TRUSTED_AUTHORITATIVE"]
+        # Inbound requires all three: AUTHENTICATED_EXTERNAL, MODEL_ARMOR_APPROVED, TRUSTED_AUTHORITATIVE
+        inbound_trust = set(partner_entry["input_trust_by_mode"]["INBOUND_EVIDENCE"])
+        assert inbound_trust == {"AUTHENTICATED_EXTERNAL", "MODEL_ARMOR_APPROVED", "TRUSTED_AUTHORITATIVE"}
 
 
 if __name__ == "__main__":

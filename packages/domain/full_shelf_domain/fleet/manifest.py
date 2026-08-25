@@ -92,7 +92,14 @@ _AGENT_SPECS = {
         "runtime_name": "PartnerOperationsAgent",
         "kind": ComponentKind.ADK_LLM_AGENT,
         "uses_gemini": True,
-        "input_trust": [TrustClass.TRUSTED_AUTHORITATIVE],
+        "input_trust_by_mode": {
+            "OUTBOUND_FOLLOWUP": [TrustClass.TRUSTED_AUTHORITATIVE],
+            "INBOUND_EVIDENCE": [
+                TrustClass.AUTHENTICATED_EXTERNAL,
+                TrustClass.MODEL_ARMOR_APPROVED,
+                TrustClass.TRUSTED_AUTHORITATIVE,
+            ],
+        },
         "output_schema": PartnerCommunication.__name__,
         "instruction_source": "full_shelf_domain.fleet.agents:PARTNER_OPERATIONS_INSTRUCTION",
         "failure_behavior": "MANUAL_REVIEW_REQUIRED",
@@ -141,11 +148,25 @@ _VALIDATOR_SPECS = {
 
 def build_manifest() -> Dict[str, Any]:
     """Derive the complete fleet manifest from executable definitions."""
-    from .coordinator import GOVERNED_SEQUENCE
+    from .orchestration import TriggerClass, sequence_for_trigger
 
     agents: List[Dict[str, Any]] = []
     for agent_id in _AGENT_SPECS:
         spec = _AGENT_SPECS[agent_id]
+
+        # Handle both mode-scoped (new) and flat (old) trust structures
+        if "input_trust_by_mode" in spec:
+            input_trust_entry = {
+                "input_trust_by_mode": {
+                    mode: [t.value for t in classes]
+                    for mode, classes in spec["input_trust_by_mode"].items()
+                }
+            }
+        else:
+            input_trust_entry = {
+                "input_trust_classes": [t.value for t in spec.get("input_trust", [])]
+            }
+
         agents.append({
             "agent_id": agent_id,
             "version": agent_id.rsplit(".", 1)[-1],
@@ -155,7 +176,7 @@ def build_manifest() -> Dict[str, Any]:
             "framework": "google-adk",
             "uses_gemini": spec["uses_gemini"],
             "model_id": MODEL_ID if spec["uses_gemini"] else None,
-            "input_trust_classes": [t.value for t in spec["input_trust"]],
+            **input_trust_entry,
             "output_schema": spec["output_schema"],
             "adk_output_schema": spec.get("adk_output_schema", spec["output_schema"]),
             "coordination_event_contract": spec.get("coordination_event_contract"),
@@ -228,7 +249,10 @@ def build_manifest() -> Dict[str, Any]:
         "tools": tools,
         "governance": governance,
         "partner_templates": sorted(PARTNER_TEMPLATE_IDS),
-        "governed_sequence": list(GOVERNED_SEQUENCE),
+        "orchestration_paths": {
+            trigger.value: list(sequence_for_trigger(trigger))
+            for trigger in TriggerClass
+        },
         "recovery_candidate_scope": {
             "policy_id": CANDIDATE_POLICY_ID,
             "scope": "BOUNDED_ADMISSIBLE_CANDIDATE_SET",
