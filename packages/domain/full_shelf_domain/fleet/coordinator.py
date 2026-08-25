@@ -240,10 +240,10 @@ def build_incident_coordinator_agent(run_context: Optional[FleetRunContext] = No
         authoritative evidence stops the sequence before the next specialist is
         asked anything.
 
-        One coordinator Runner/session governs four separately correlated
-        specialist Runner/session executions. Correlation is application-managed
-        through `coordination_run_id`; no native ADK parent-child lineage is
-        claimed.
+        One coordinator Runner/session governs specialists (count varies by trigger)
+        in separately correlated Runner/session executions. Correlation is
+        application-managed through `coordination_run_id`; no native ADK parent-child
+        lineage is claimed.
         """
 
         async def _run_async_impl(self, ctx) -> AsyncGenerator["Event", None]:
@@ -256,6 +256,10 @@ def build_incident_coordinator_agent(run_context: Optional[FleetRunContext] = No
             hops = _build_hops_for_trigger(context)
 
             for index, (agent_id, prompt, validator, ok_label) in enumerate(hops):
+                # Get specialist by index (should match because both derived from same sequence)
+                if index >= len(self.sub_agents):
+                    failure = "SUB_AGENTS_MISMATCH"
+                    break
                 specialist = self.sub_agents[index]
                 try:
                     started: Dict[str, Any] = {}
