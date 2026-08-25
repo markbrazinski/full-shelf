@@ -28,6 +28,16 @@ async function open(page: Page) {
   await settle(page);
 }
 
+/** Film mode exposes one forward-only presenter gesture and no beat strip. */
+async function advance(page: Page, steps = 1) {
+  for (let i = 0; i < steps; i += 1) {
+    await page.keyboard.press("ArrowRight");
+    // Give React a turn to mount the loading boundary before waiting for it.
+    await page.waitForTimeout(20);
+    await settle(page);
+  }
+}
+
 async function shot(page: Page, name: string) {
   await page.screenshot({ path: path.join(SHOTS, `${name}.png`), fullPage: false });
 }
@@ -53,16 +63,26 @@ test("01 · Friday healthy shows rev07 commitments and a quiet sidecar", async (
   await expect(manifests).toContainText("COMMITTED MANIFEST ORDER");
   await expect(page.locator("main")).not.toContainText("OPEN OBLIGATIONS");
   await expect(page.locator("main")).not.toContainText("CONTEXTUAL DISPATCH VIEW");
-  await expect(page.locator("main").getByTestId("moment-healthy")).toHaveCount(0);
+  await expect(page.locator("[data-testid^='moment-']")).toHaveCount(0);
+  await expect(page.locator("[data-presentation-mode='film']")).toBeVisible();
   await shot(page, "v6-01-friday-healthy");
+});
+
+test("01a · replay diagnostics require explicit local debug mode", async ({ page }) => {
+  await page.goto("/?debug=1");
+  await settle(page);
+  await expect(page.locator("[data-presentation-mode='debug']")).toBeVisible();
+  await expect(page.getByTestId("moment-healthy")).toBeVisible();
+  await expect(page.getByTestId("moment-fault")).toBeVisible();
+  await expect(page.getByTestId("moment-proposed")).toBeVisible();
+  await expect(page.getByTestId("moment-updated")).toBeVisible();
 });
 
 test("02 · disruption is in place: same shell, rev08, incident badge appears", async ({ page }) => {
   await open(page);
   const navBefore = await page.getByTestId("nav-today").boundingBox();
 
-  await page.getByTestId("moment-updated").click();
-  await settle(page);
+  await advance(page, 3);
 
   await expect(page.getByTestId("auth-rev")).toHaveText("rev08");
   // The shell stays put: disruption happens inside the workspace, so the nav
@@ -72,6 +92,10 @@ test("02 · disruption is in place: same shell, rev08, incident badge appears", 
   expect(navAfter!.x).toBe(navBefore!.x);
   expect(navAfter!.width).toBe(navBefore!.width);
   expect(Math.abs(navAfter!.y - navBefore!.y)).toBeLessThanOrEqual(2);
+  // Presenter navigation is forward-only and stops at the committed update.
+  await advance(page);
+  await expect(page.getByTestId("auth-rev")).toHaveText("rev08");
+  await expect(page.getByTestId("clock")).toHaveText("08:24");
   await shot(page, "v6-02-friday-disrupted");
 });
 
@@ -271,10 +295,11 @@ test("11 · datasource failure shows the error surface and Reconnect retries", a
 
 test("12 · map fallback renders without a Maps key", async ({ page }) => {
   await open(page);
-  await page.getByTestId("moment-updated").click();
-  await settle(page);
+  await advance(page, 3);
   // No key is configured in verification, so the SVG schematic is shown.
-  await expect(page.locator("body")).toContainText(/not live vehicle tracking/i);
+  await expect(page.getByTestId("dispatch-svg-schematic")).toBeVisible();
+  await expect(page.getByTestId("map-mode-label")).toContainText("DETERMINISTIC SCHEMATIC");
+  await expect(page.getByTestId("map-mode-label")).toContainText("NOT LIVE GPS");
   await shot(page, "v6-13-map-fallback");
 });
 
@@ -287,10 +312,73 @@ test("13 · map degrades to the schematic when Maps fails to load", async ({ pag
   await page.route("https://maps.googleapis.com/**", (route) => route.abort("failed"));
 
   await open(page);
-  await page.getByTestId("moment-updated").click();
-  await settle(page);
-  await expect(page.locator("body")).toContainText(/not live vehicle tracking/i);
+  await advance(page, 3);
+  await expect(page.getByTestId("dispatch-svg-schematic")).toBeVisible();
+  await expect(page.getByTestId("map-mode-label")).toContainText("DETERMINISTIC SCHEMATIC");
   await shot(page, "v6-14-map-degraded");
+});
+
+test("13a · configured Maps API paints before the Google map is accepted", async ({ page }) => {
+  await page.addInitScript(() => {
+    (globalThis as { __FS_FORCE_MAP_KEY?: string }).__FS_FORCE_MAP_KEY = "fake-structural-valid-key";
+  });
+  await page.route("https://maps.googleapis.com/**", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/javascript",
+    body: `
+      window.google = { maps: {
+        SymbolPath: { CIRCLE: "circle" },
+        LatLngBounds: class { constructor(){ this.empty = true; } extend(){ this.empty = false; } isEmpty(){ return this.empty; } },
+        Map: class { constructor(el){ const tile = document.createElement("img"); tile.src = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="; el.appendChild(tile); } fitBounds(){} },
+        Marker: class { setPosition(){} setTitle(){} setIcon(){} }, Polyline: class {},
+        event: { addListenerOnce(_map, name, cb){ if (name === "tilesloaded") setTimeout(cb, 0); } }
+      }};
+    `,
+  }));
+  await open(page);
+  await expect(page.getByTestId("planned-dispatch-map")).toBeVisible();
+  await expect(page.getByTestId("map-mode-label")).toContainText("GOOGLE MAPS");
+  await expect(page.getByTestId("map-mode-label")).toContainText("SIMULATED TELEMETRY");
+  await expect(page.getByTestId("map-mode-label")).toContainText("NOT LIVE GPS");
+  await expect(page.getByTestId("dispatch-svg-schematic")).toHaveCount(0);
+  await shot(page, "v6-15-google-maps-structural");
+});
+
+test("13b · an API auth rejection falls back without a grey panel", async ({ page }) => {
+  await page.addInitScript(() => {
+    (globalThis as { __FS_FORCE_MAP_KEY?: string }).__FS_FORCE_MAP_KEY = "fake-auth-rejected-key";
+  });
+  await page.route("https://maps.googleapis.com/**", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/javascript",
+    body: "window.gm_authFailure && window.gm_authFailure();",
+  }));
+  await open(page);
+  await expect(page.getByTestId("dispatch-svg-schematic")).toBeVisible();
+  await expect(page.getByTestId("map-mode-label")).toContainText("DETERMINISTIC SCHEMATIC");
+  await shot(page, "v6-16-map-auth-fallback");
+});
+
+test("13c · a loaded API with no painted tiles falls back", async ({ page }) => {
+  await page.addInitScript(() => {
+    (globalThis as { __FS_FORCE_MAP_KEY?: string }).__FS_FORCE_MAP_KEY = "fake-no-tiles-key";
+  });
+  await page.route("https://maps.googleapis.com/**", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/javascript",
+    body: `
+      window.google = { maps: {
+        SymbolPath: { CIRCLE: "circle" },
+        LatLngBounds: class { constructor(){ this.empty = true; } extend(){ this.empty = false; } isEmpty(){ return this.empty; } },
+        Map: class { fitBounds(){} }, Marker: class { setPosition(){} setTitle(){} setIcon(){} }, Polyline: class {},
+        event: { addListenerOnce(){} }
+      }};
+    `,
+  }));
+  await open(page);
+  await expect(page.getByTestId("dispatch-svg-schematic")).toBeVisible({ timeout: 6_000 });
+  await expect(page.getByTestId("map-mode-label")).toContainText("DETERMINISTIC SCHEMATIC");
+  await shot(page, "v6-17-map-tiles-fallback");
 });
 
 // ------------------------------------------------------------- integrity
@@ -337,8 +425,7 @@ test("16 · the fault, the proposal, and an unchanged active plan", async ({ pag
   await open(page);
   await shot(page, "story-1-healthy-today");
 
-  await page.getByTestId("moment-proposed").click();
-  await settle(page);
+  await advance(page);
 
   // The alarm is a reported mechanical event with its source and time.
   const alarm = page.getByTestId("refrigeration-alarm");
@@ -346,6 +433,10 @@ test("16 · the fault, the proposal, and an unchanged active plan", async ({ pag
   await expect(alarm).toContainText(/SIMULATED FLEET TELEMATICS/i);
   await expect(alarm).toContainText(/not derived from position/i);
   await shot(page, "story-2-refrigeration-failure");
+
+  // The proposal is a later committed boundary in the same stable shell.
+  await expect(page.getByTestId("repair-proposal")).toHaveCount(0);
+  await advance(page);
 
   // The proposal is what the agents propose, not an authorization.
   await expect(page.getByTestId("proposal-authority")).toContainText(/AGENT PROPOSAL/i);
@@ -373,8 +464,7 @@ test("17 · approving commits once and the proposal stops being offered", async 
   });
 
   await open(page);
-  await page.getByTestId("moment-proposed").click();
-  await settle(page);
+  await advance(page, 2);
   await expect(page.getByTestId("approve-update")).toBeVisible();
 
   await page.getByTestId("approve-update").click();
@@ -399,8 +489,7 @@ test("18 · a rejected approval changes nothing", async ({ page }) => {
   );
 
   await open(page);
-  await page.getByTestId("moment-proposed").click();
-  await settle(page);
+  await advance(page, 2);
   await page.getByTestId("approve-update").click();
 
   await expect(page.getByTestId("approval-error")).toBeVisible();
@@ -412,8 +501,7 @@ test("18 · a rejected approval changes nothing", async ({ page }) => {
 
 test("19 · no approval control exists once the update is committed", async ({ page }) => {
   await open(page);
-  await page.getByTestId("moment-updated").click();
-  await settle(page);
+  await advance(page, 3);
   await expect(page.getByTestId("repair-proposal")).toHaveCount(0);
   await expect(page.getByTestId("approve-update")).toHaveCount(0);
   await expect(page.getByTestId("auth-rev")).toHaveText("rev08");
