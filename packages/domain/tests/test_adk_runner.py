@@ -54,13 +54,13 @@ def test_recall_extraction_runs_as_a_real_adk_agent_ordered_by_the_coordinator()
     '"source_anchor":"Supplier Safety Bulletin","unapproved":"field"}',
 ])
 def test_invalid_structured_output_requires_manual_review(text):
-    proposal = extract(raw_for={"RecallExtractionAgent": text})
+    proposal = extract(raw_for={"RecallIntakeExtractionAgent": text})
     assert proposal.status == "MANUAL_REVIEW_REQUIRED"
     assert proposal.reason_code == "INVALID_STRUCTURED_OUTPUT"
 
 
 def test_fabricated_value_fails_source_anchor_validation():
-    proposal = extract(overrides={"RecallExtractionAgent": {
+    proposal = extract(overrides={"RecallIntakeExtractionAgent": {
         "lot_id": "LTC-4471", "product_name": "Canonical Baby Spinach",
         "hazard": "E. coli O157:H7", "action_required": "PAUSE_DISTRIBUTION",
         "source_anchor": "Supplier Safety Bulletin",
@@ -70,7 +70,7 @@ def test_fabricated_value_fails_source_anchor_validation():
 
 
 def test_model_error_requires_manual_review_without_fallback():
-    proposal = extract(error_for="RecallExtractionAgent")
+    proposal = extract(error_for="RecallIntakeExtractionAgent")
     assert proposal.status == "MANUAL_REVIEW_REQUIRED"
     assert proposal.reason_code in {"ADK_MODEL_ERROR", "ADK_INVOCATION_FAILED"}
     assert "scripted upstream model failure" not in str(proposal.model_dump())
@@ -78,8 +78,8 @@ def test_model_error_requires_manual_review_without_fallback():
 
 def test_recall_failure_stops_the_whole_sequence():
     calls = []
-    with scripted_gemini(error_for="RecallExtractionAgent", calls=calls):
+    with scripted_gemini(error_for="RecallIntakeExtractionAgent", calls=calls):
         proposal = run_canonical_fleet()["proposal"]
     assert proposal.status == "MANUAL_REVIEW_REQUIRED"
     # No downstream specialist may run once extraction fails.
-    assert calls == ["RecallExtractionAgent"]
+    assert calls == ["RecallIntakeExtractionAgent"]

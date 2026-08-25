@@ -519,3 +519,217 @@ def test_partner_inbound_lot_mismatch_is_refused():
     with pytest.raises(FleetProposalError) as exc:
         validate_partner_inbound_interpretation(interpretation, "LTC-4471")
     assert exc.value.reason_code == "PARTNER_LOT_MISMATCH"
+
+
+def test_partner_inbound_duplicate_claim_type_is_refused():
+    """Duplicate claim types with potentially conflicting values must be refused."""
+    from full_shelf_domain.fleet.contracts import (
+        PartnerInboundInterpretation,
+        PartnerEvidenceClaim,
+    )
+    from full_shelf_domain.fleet.validation import validate_partner_inbound_interpretation
+
+    # Two quantity claims with different values
+    interpretation = PartnerInboundInterpretation(
+        partner_id="SITE-01",
+        response_received_at="2026-08-25T14:30:00Z",
+        claims=[
+            PartnerEvidenceClaim(
+                claim_type="lot_id",
+                value="LTC-4471",
+                source_anchor="Lot LTC-4471"
+            ),
+            PartnerEvidenceClaim(
+                claim_type="quantity",
+                value="8",
+                source_anchor="8 cases"
+            ),
+            PartnerEvidenceClaim(
+                claim_type="quantity",
+                value="12",
+                source_anchor="12 cases"
+            ),
+            PartnerEvidenceClaim(
+                claim_type="location",
+                value="Walk-in",
+                source_anchor="walk-in"
+            ),
+            PartnerEvidenceClaim(
+                claim_type="disposition",
+                value="held",
+                source_anchor="held"
+            ),
+            PartnerEvidenceClaim(
+                claim_type="confirmation_time",
+                value="2026-08-25T14:25:00Z",
+                source_anchor="2:25 PM"
+            ),
+        ],
+        abstain=False,
+        rationale="Contradictory evidence.",
+    )
+    with pytest.raises(FleetProposalError) as exc:
+        validate_partner_inbound_interpretation(interpretation, "LTC-4471")
+    assert "PARTNER_DUPLICATE_CLAIM_TYPE" in exc.value.reason_code
+
+
+def test_partner_inbound_malformed_timestamp_is_refused():
+    """Malformed response_received_at must be rejected at Pydantic construction."""
+    from pydantic import ValidationError
+    from full_shelf_domain.fleet.contracts import PartnerInboundInterpretation
+
+    # Invalid timestamp: impossible date 2026-99-99
+    with pytest.raises(ValidationError) as exc:
+        PartnerInboundInterpretation(
+            partner_id="SITE-01",
+            response_received_at="2026-99-99T99:99:99garbage",
+            claims=[],
+            abstain=True,
+            rationale="Test",
+        )
+    # Pydantic raises ValidationError due to field validator
+    assert "response_received_at" in str(exc.value).lower()
+
+
+def test_partner_inbound_timestamp_outside_clock_skew_is_refused():
+    """Timestamp far outside infrastructure clock skew must be refused."""
+    from datetime import datetime, timezone, timedelta
+    from full_shelf_domain.fleet.contracts import PartnerInboundInterpretation, PartnerEvidenceClaim
+    from full_shelf_domain.fleet.validation import validate_partner_inbound_interpretation
+
+    infra_time = datetime(2026, 8, 25, 14, 30, 0, tzinfo=timezone.utc)
+    # Model's claimed time is 200 seconds in the past (exceeds 60-second skew)
+    model_time = infra_time - timedelta(seconds=200)
+
+    interpretation = PartnerInboundInterpretation(
+        partner_id="SITE-01",
+        response_received_at=model_time.isoformat(),
+        claims=[
+            PartnerEvidenceClaim(
+                claim_type="lot_id",
+                value="LTC-4471",
+                source_anchor="Lot LTC-4471"
+            ),
+            PartnerEvidenceClaim(
+                claim_type="quantity",
+                value="8",
+                source_anchor="8 cases"
+            ),
+            PartnerEvidenceClaim(
+                claim_type="location",
+                value="Walk-in",
+                source_anchor="walk-in"
+            ),
+            PartnerEvidenceClaim(
+                claim_type="disposition",
+                value="held",
+                source_anchor="held"
+            ),
+            PartnerEvidenceClaim(
+                claim_type="confirmation_time",
+                value="2026-08-25T14:25:00Z",
+                source_anchor="2:25 PM"
+            ),
+        ],
+        abstain=False,
+        rationale="Test",
+    )
+    with pytest.raises(FleetProposalError) as exc:
+        validate_partner_inbound_interpretation(interpretation, "LTC-4471", received_at=infra_time)
+    assert "PARTNER_RESPONSE_RECEIVED_AT_CLOCK_SKEW_EXCEEDED" in exc.value.reason_code
+
+
+def test_partner_inbound_quantity_mismatch_against_authoritative_state_is_refused():
+    """Claimed quantity must match authoritative unconfirmed_cases."""
+    from full_shelf_domain.fleet.contracts import (
+        PartnerInboundInterpretation,
+        PartnerEvidenceClaim,
+    )
+    from full_shelf_domain.fleet.validation import validate_partner_inbound_interpretation
+
+    interpretation = PartnerInboundInterpretation(
+        partner_id="SITE-01",
+        response_received_at="2026-08-25T14:30:00Z",
+        claims=[
+            PartnerEvidenceClaim(
+                claim_type="lot_id",
+                value="LTC-4471",
+                source_anchor="Lot LTC-4471"
+            ),
+            PartnerEvidenceClaim(
+                claim_type="quantity",
+                value="12",  # Authoritative is 8
+                source_anchor="12 cases"
+            ),
+            PartnerEvidenceClaim(
+                claim_type="location",
+                value="Walk-in",
+                source_anchor="walk-in"
+            ),
+            PartnerEvidenceClaim(
+                claim_type="disposition",
+                value="held",
+                source_anchor="held"
+            ),
+            PartnerEvidenceClaim(
+                claim_type="confirmation_time",
+                value="2026-08-25T14:25:00Z",
+                source_anchor="2:25 PM"
+            ),
+        ],
+        abstain=False,
+        rationale="Test",
+    )
+    with pytest.raises(FleetProposalError) as exc:
+        validate_partner_inbound_interpretation(
+            interpretation, "LTC-4471", expected_quantity=8
+        )
+    assert exc.value.reason_code == "PARTNER_QUANTITY_NOT_AUTHORITATIVE"
+
+
+def test_partner_inbound_location_mismatch_against_authoritative_state_is_refused():
+    """Claimed location must match authoritative custody node location."""
+    from full_shelf_domain.fleet.contracts import (
+        PartnerInboundInterpretation,
+        PartnerEvidenceClaim,
+    )
+    from full_shelf_domain.fleet.validation import validate_partner_inbound_interpretation
+
+    interpretation = PartnerInboundInterpretation(
+        partner_id="SITE-01",
+        response_received_at="2026-08-25T14:30:00Z",
+        claims=[
+            PartnerEvidenceClaim(
+                claim_type="lot_id",
+                value="LTC-4471",
+                source_anchor="Lot LTC-4471"
+            ),
+            PartnerEvidenceClaim(
+                claim_type="quantity",
+                value="8",
+                source_anchor="8 cases"
+            ),
+            PartnerEvidenceClaim(
+                claim_type="location",
+                value="Freezer",  # Authoritative is "Walk-in cooler, Section B"
+                source_anchor="in our Freezer"
+            ),
+            PartnerEvidenceClaim(
+                claim_type="disposition",
+                value="held",
+                source_anchor="held"
+            ),
+            PartnerEvidenceClaim(
+                claim_type="confirmation_time",
+                value="2026-08-25T14:25:00Z",
+                source_anchor="2:25 PM"
+            ),
+        ],
+        abstain=False,
+        rationale="Test",
+    )
+    with pytest.raises(FleetProposalError) as exc:
+        validate_partner_inbound_interpretation(
+            interpretation, "LTC-4471", expected_location="Walk-in cooler, Section B"
+        )
+    assert exc.value.reason_code == "PARTNER_LOCATION_NOT_AUTHORITATIVE"

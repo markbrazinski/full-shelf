@@ -9,9 +9,11 @@ MANUAL_REVIEW_REQUIRED with zero ledger mutation.
 
 import hashlib
 import json
-from typing import Any, Dict, Sequence
+from datetime import datetime, timezone
+from typing import Any, Dict, Optional, Sequence
 
 from .contracts import (
+    PARTNER_INBOUND_MAX_CLOCK_SKEW_SECONDS,
     PARTNER_MIN_CONFIDENCE,
     PARTNER_TEMPLATE_IDS,
     RECOVERY_MIN_CONFIDENCE,
@@ -209,7 +211,9 @@ def validate_recall_extraction(extracted, raw_notice: str, expected_lot_id: str)
 
 
 def validate_partner_inbound_interpretation(
-    interpretation, expected_lot_id: str, expected_partner_id: str = "", source_text: str = ""
+    interpretation, expected_lot_id: str, expected_partner_id: str = "", source_text: str = "",
+    received_at: Optional[datetime] = None, expected_quantity: Optional[int] = None,
+    expected_location: Optional[str] = None
 ):
     """Validate Partner Operations inbound evidence interpretation.
 
@@ -218,11 +222,18 @@ def validate_partner_inbound_interpretation(
     Missing critical facts trigger abstention (not low confidence).
     Each claim must be quoted verbatim from the authenticated response.
     Claim values must be bound to their own anchors, not just present somewhere
-    in the source. Partner identity and timestamp format are validated.
+    in the source. Partner identity, timestamp format, and authoritative
+    quantity/location are validated.
 
     If source_text is provided, verify that every source anchor appears
     literally in the authenticated response and every claim value appears
     within that claim's own anchor.
+
+    If received_at is provided, validate that the model's response_received_at
+    timestamp is within PARTNER_INBOUND_MAX_CLOCK_SKEW_SECONDS of it.
+
+    If expected_quantity/expected_location are provided, validate that claimed
+    values match authoritative state.
     """
     from .contracts import PartnerInboundInterpretation
 
@@ -245,10 +256,36 @@ def validate_partner_inbound_interpretation(
     if missing_claims:
         raise FleetProposalError(f"PARTNER_MISSING_SOURCE_ANCHORS: {','.join(sorted(missing_claims))}")
 
+    # Reject duplicate claim types (multiple claims of same type with potentially conflicting values)
+    claim_type_counts = {}
+    for claim in interpretation.claims:
+        claim_type_counts[claim.claim_type] = claim_type_counts.get(claim.claim_type, 0) + 1
+    for claim_type, count in claim_type_counts.items():
+        if count > 1:
+            raise FleetProposalError(f"PARTNER_DUPLICATE_CLAIM_TYPE: {claim_type}")
+
     # Validate that lot_id matches the expected lot
     lot_claim = next((c for c in interpretation.claims if c.claim_type == "lot_id"), None)
     if lot_claim and lot_claim.value != expected_lot_id:
         raise FleetProposalError("PARTNER_LOT_MISMATCH")
+
+    # Validate timestamp is within clock skew of infrastructure receipt time
+    if received_at is not None:
+        try:
+            # Parse the model-provided timestamp (already validated by Pydantic)
+            model_ts_str = interpretation.response_received_at.replace("Z", "+00:00")
+            model_ts = datetime.fromisoformat(model_ts_str)
+            if model_ts.tzinfo is None:
+                model_ts = model_ts.replace(tzinfo=timezone.utc)
+            # Ensure received_at is also timezone-aware
+            if received_at.tzinfo is None:
+                received_at = received_at.replace(tzinfo=timezone.utc)
+            # Check clock skew
+            skew_seconds = abs((model_ts - received_at).total_seconds())
+            if skew_seconds > PARTNER_INBOUND_MAX_CLOCK_SKEW_SECONDS:
+                raise FleetProposalError("PARTNER_RESPONSE_RECEIVED_AT_CLOCK_SKEW_EXCEEDED")
+        except ValueError as e:
+            raise FleetProposalError(f"PARTNER_RESPONSE_RECEIVED_AT_PARSE_FAILED: {e}") from e
 
     # Verify source anchors appear literally in the authenticated response
     # and each claim value is bound to its own anchor (not just present in source)
@@ -273,6 +310,22 @@ def validate_partner_inbound_interpretation(
             if claim.claim_type == "confirmation_time":
                 if not _is_valid_hhmm_format(claim.value):
                     raise FleetProposalError("PARTNER_CONFIRMATION_TIME_NOT_HHMM")
+
+    # Compare quantity against authoritative state if available
+    quantity_claim = next((c for c in interpretation.claims if c.claim_type == "quantity"), None)
+    if quantity_claim and expected_quantity is not None:
+        try:
+            claimed_qty = int(quantity_claim.value)
+            if claimed_qty != expected_quantity:
+                raise FleetProposalError("PARTNER_QUANTITY_NOT_AUTHORITATIVE")
+        except ValueError as e:
+            raise FleetProposalError(f"PARTNER_QUANTITY_NOT_INTEGER: {e}") from e
+
+    # Compare location against authoritative state if available
+    location_claim = next((c for c in interpretation.claims if c.claim_type == "location"), None)
+    if location_claim and expected_location is not None:
+        if location_claim.value != expected_location:
+            raise FleetProposalError("PARTNER_LOCATION_NOT_AUTHORITATIVE")
 
     return interpretation
 

@@ -270,6 +270,7 @@ def partner_state_read(
     unconfirmed_cases: int,
     acknowledgment_status: str,
     deadline: Optional[str] = None,
+    location: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Project bounded partner state. No free text leaves this function."""
     return {
@@ -281,6 +282,7 @@ def partner_state_read(
         "unconfirmed_cases": unconfirmed_cases,
         "acknowledgment_status": acknowledgment_status,
         "deadline": deadline,
+        "location": location,
     }
 
 

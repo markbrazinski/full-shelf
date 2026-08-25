@@ -2,24 +2,24 @@
   "agent_activity_as_of": {
     "agents": [
       {
-        "adk_framework": null,
-        "agent_id": "full-shelf.incident-coordinator.v1",
+        "adk_framework": "google-adk-2.6.1",
+        "agent_id": "full-shelf.incident-lead.v1",
         "declared_tools": [],
-        "deterministic_validation": null,
-        "display_name": "Incident Coordinator",
-        "model_used": null,
-        "role": "ROOT_COORDINATOR",
-        "run_id": "fixture-run-coord-1",
-        "session_id": "fixture-sess-coord-1",
+        "deterministic_validation": "INCIDENT_SCOPE_DETERMINED",
+        "display_name": "Incident Lead",
+        "model_used": "gemini-flash-latest",
+        "role": "GOVERNED_SPECIALIST",
+        "run_id": "fixture-run-incident-1",
+        "session_id": "fixture-sess-incident-1",
         "state": "COMPLETED",
         "tool_invocations": []
       },
       {
         "adk_framework": "google-adk-2.6.1",
-        "agent_id": "full-shelf.recall-extraction.v1",
+        "agent_id": "full-shelf.recall-intake-extraction.v2",
         "declared_tools": [],
         "deterministic_validation": "SCHEMA_AND_SOURCE_ANCHORS_VALIDATED",
-        "display_name": "Recall Extraction",
+        "display_name": "Recall Intake & Extraction",
         "model_used": "gemini-flash-latest",
         "role": "GOVERNED_SPECIALIST",
         "run_id": "fixture-run-recall-1",
@@ -29,7 +29,7 @@
       },
       {
         "adk_framework": "google-adk-2.6.1",
-        "agent_id": "full-shelf.network-custody.v1",
+        "agent_id": "full-shelf.network-custody.v2",
         "declared_tools": [
           "custody_graph_read",
           "custody_dependents_read"
@@ -50,10 +50,10 @@
       },
       {
         "adk_framework": "google-adk-2.6.1",
-        "agent_id": "full-shelf.fulfillment-recovery.v1",
+        "agent_id": "full-shelf.fulfillment-planning-recovery.v2",
         "declared_tools": [],
         "deterministic_validation": "CANDIDATE_ID_RESOLVED_DETERMINISTICALLY",
-        "display_name": "Fulfillment & Recovery",
+        "display_name": "Fulfillment Planning & Recovery",
         "model_used": "gemini-flash-latest",
         "role": "GOVERNED_SPECIALIST",
         "run_id": "fixture-run-recovery-1",
@@ -63,7 +63,7 @@
       },
       {
         "adk_framework": "google-adk-2.6.1",
-        "agent_id": "full-shelf.partner-operations.v1",
+        "agent_id": "full-shelf.partner-operations.v2",
         "declared_tools": [],
         "deterministic_validation": "TEMPLATE_AND_PARAMETERS_VALIDATED",
         "display_name": "Partner Operations",
@@ -80,9 +80,23 @@
     "coordinator_session_id": "fixture-sess-coord-1",
     "delegation_trace": [
       {
+        "adk_event_id": "fixture-evt-incident-1",
+        "adk_framework": "google-adk-2.6.1",
+        "agent_id": "full-shelf.incident-lead.v1",
+        "agent_name": "incident",
+        "coordination_run_id": "fixture-run-coord-1",
+        "coordinator_agent_id": "full-shelf.incident-coordinator.v1",
+        "declared_tools": [],
+        "deterministic_validation": "INCIDENT_SCOPE_DETERMINED",
+        "model_used": "gemini-flash-latest",
+        "specialist_run_id": "fixture-run-incident-1",
+        "specialist_session_id": "fixture-sess-incident-1",
+        "tool_invocations": []
+      },
+      {
         "adk_event_id": "fixture-evt-recall-1",
         "adk_framework": "google-adk-2.6.1",
-        "agent_id": "full-shelf.recall-extraction.v1",
+        "agent_id": "full-shelf.recall-intake-extraction.v2",
         "agent_name": "recall",
         "coordination_run_id": "fixture-run-coord-1",
         "coordinator_agent_id": "full-shelf.incident-coordinator.v1",
@@ -96,7 +110,7 @@
       {
         "adk_event_id": "fixture-evt-custody-1",
         "adk_framework": "google-adk-2.6.1",
-        "agent_id": "full-shelf.network-custody.v1",
+        "agent_id": "full-shelf.network-custody.v2",
         "agent_name": "custody",
         "coordination_run_id": "fixture-run-coord-1",
         "coordinator_agent_id": "full-shelf.incident-coordinator.v1",
@@ -118,7 +132,7 @@
       {
         "adk_event_id": "fixture-evt-recovery-1",
         "adk_framework": "google-adk-2.6.1",
-        "agent_id": "full-shelf.fulfillment-recovery.v1",
+        "agent_id": "full-shelf.fulfillment-planning-recovery.v2",
         "agent_name": "recovery",
         "coordination_run_id": "fixture-run-coord-1",
         "coordinator_agent_id": "full-shelf.incident-coordinator.v1",
@@ -132,7 +146,7 @@
       {
         "adk_event_id": "fixture-evt-partner-1",
         "adk_framework": "google-adk-2.6.1",
-        "agent_id": "full-shelf.partner-operations.v1",
+        "agent_id": "full-shelf.partner-operations.v2",
         "agent_name": "partner",
         "coordination_run_id": "fixture-run-coord-1",
         "coordinator_agent_id": "full-shelf.incident-coordinator.v1",
@@ -145,10 +159,11 @@
       }
     ],
     "governed_sequence": [
-      "full-shelf.recall-extraction.v1",
-      "full-shelf.network-custody.v1",
-      "full-shelf.fulfillment-recovery.v1",
-      "full-shelf.partner-operations.v1"
+      "full-shelf.recall-intake-extraction.v2",
+      "full-shelf.incident-lead.v1",
+      "full-shelf.network-custody.v2",
+      "full-shelf.fulfillment-planning-recovery.v2",
+      "full-shelf.partner-operations.v2"
     ],
     "manifest_version": "1.1.0",
     "proposal_status": "PROPOSED",

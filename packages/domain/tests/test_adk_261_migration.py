@@ -203,8 +203,9 @@ def test_noncanonical_proposal_remains_valid_and_distinct():
 
     def run(candidate_id):
         with scripted_gemini(overrides={
-            "FulfillmentAndRecoveryPlannerAgent": {
+            "FulfillmentPlanningRecoveryAgent": {
                 "selected_candidate_id": candidate_id,
+                "operating_objective": "RECALL_RECOVERY",
                 "rationale": "Chosen under the bounded admissible policy.",
                 "cited_constraints": ["45 allocatable cases"],
                 "tradeoffs": "Five cases remain short either way.",

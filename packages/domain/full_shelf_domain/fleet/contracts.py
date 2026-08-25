@@ -10,13 +10,17 @@ signer, or any outbound publisher. `test_fleet_isolation.py` enforces that
 structurally.
 """
 
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 FLEET_MANIFEST_VERSION = "1.1.0"
+
+# Partner inbound callback must stay within this clock skew of infrastructure receipt time.
+PARTNER_INBOUND_MAX_CLOCK_SKEW_SECONDS = 60
 
 
 class ComponentKind(str, Enum):
@@ -221,12 +225,22 @@ class PartnerInboundInterpretation(BaseModel):
 
     partner_id: str = Field(min_length=1, max_length=64)
     response_received_at: str = Field(
-        pattern=r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}",
-        description="ISO8601 timestamp of authenticated response"
+        description="ISO8601 timestamp of authenticated response (must be valid RFC 3339)"
     )
     claims: List[PartnerEvidenceClaim] = Field(default_factory=list)
     abstain: bool = Field(default=False, description="True if critical facts are missing (not confidence-based)")
     rationale: str = Field(min_length=1, max_length=400)
+
+    @field_validator("response_received_at")
+    @classmethod
+    def validate_response_received_at(cls, v: str) -> str:
+        """Validate response_received_at is a well-formed ISO 8601 timestamp."""
+        try:
+            normalized = v.replace("Z", "+00:00") if v.endswith("Z") else v
+            datetime.fromisoformat(normalized)
+            return v
+        except (ValueError, TypeError) as e:
+            raise ValueError(f"response_received_at must be valid ISO 8601 (RFC 3339): {e}") from e
 
 
 class FleetProposal(BaseModel):

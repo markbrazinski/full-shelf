@@ -27,6 +27,7 @@ and remains the only path to the private ledger.
 
 import asyncio
 import json
+from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from .agents import (
@@ -100,7 +101,7 @@ class FleetRunContext:
 
     __slots__ = ("incident_id", "lot_id", "screened_notice_text", "graph_result",
                  "recovery_candidates", "partner_state", "source_event_id", "source_class",
-                 "authorized_playbooks", "authorized_specialists", "trigger_class")
+                 "authorized_playbooks", "authorized_specialists", "trigger_class", "callback_received_at")
 
     def __init__(self, *, incident_id: str, lot_id: str,
                  screened_notice_text: str, graph_result: Dict[str, Any],
@@ -110,7 +111,8 @@ class FleetRunContext:
                  source_class: Optional[str] = None,
                  authorized_playbooks: Optional[List[str]] = None,
                  authorized_specialists: Optional[List[str]] = None,
-                 trigger_class: Optional[Any] = None):
+                 trigger_class: Optional[Any] = None,
+                 callback_received_at: Optional[datetime] = None):
         from .orchestration import TriggerClass
 
         self.incident_id = incident_id
@@ -129,6 +131,7 @@ class FleetRunContext:
             AGENT_PARTNER_OPERATIONS,
         ]
         self.trigger_class = trigger_class or TriggerClass.RECALL
+        self.callback_received_at = callback_received_at or datetime.now(timezone.utc)
 
 
 def _build_hops_for_trigger(
@@ -197,7 +200,10 @@ def _build_hops_for_trigger(
                 context.lot_id
             ),
             lambda parsed: validate_partner_inbound_interpretation(
-                parsed, context.lot_id, context.partner_state.get("partner_id", ""), context.screened_notice_text
+                parsed, context.lot_id, context.partner_state.get("partner_id", ""), context.screened_notice_text,
+                received_at=context.callback_received_at,
+                expected_quantity=context.partner_state.get("unconfirmed_cases"),
+                expected_location=context.partner_state.get("location")
             ),
             "PARTNER_INBOUND_INTERPRETATION_VALIDATED"
         )

@@ -42,7 +42,22 @@ ALTERED_NOTICE = (
 )
 
 ALTERED_REPLIES = {
-    "RecallExtractionAgent": {
+    "IncidentLeadAgent": {
+        "incident_class": "FOOD_SAFETY_RECALL",
+        "source_event_id": "pubsub-altered",
+        "affected_capabilities": ["cold_chain", "fulfillment"],
+        "affected_commitment_ids": ["ORDER-X", "ORDER-Y"],
+        "selected_playbook_id": "recall-response-playbook-v1",
+        "required_specialists": [
+            "full-shelf.recall-intake-extraction.v2",
+            "full-shelf.network-custody.v2",
+            "full-shelf.fulfillment-planning-recovery.v2",
+        ],
+        "immediate_safety_actions": ["pause_distribution", "notify_sites"],
+        "rationale": "Food safety recall scope determined from notice.",
+        "confidence": 0.95,
+    },
+    "RecallIntakeExtractionAgent": {
         "lot_id": "LOT-ALTERED-9001", "product_name": "Baby spinach",
         "hazard": "Listeria monocytogenes",
         "action_required": "PAUSE_DISTRIBUTION", "source_anchor": "Recall Lot",
@@ -54,7 +69,7 @@ ALTERED_REPLIES = {
         "containment_assessment": "UNCONFIRMED_DOWNSTREAM",
         "narrative": "Five cases at Site 77 remain unconfirmed.",
     },
-    "FulfillmentAndRecoveryPlannerAgent": {
+    "FulfillmentPlanningRecoveryAgent": {
         "selected_candidate_id": "CAND-LOT-ASC",
         "rationale": "Only feasible allocation of the available safe stock.",
         "cited_constraints": ["21 safe cases available"],
@@ -163,7 +178,7 @@ def test_same_managed_hero_uses_altered_ids_quantities_and_calculated_outcome():
     # Each specialist reports its own distinct ADK session, never the
     # coordinator's, and no entry claims ADK parentage.
     sessions = {e["specialist_session_id"] for e in fleet["delegation_trace"]}
-    assert len(sessions) == 4
+    assert len(sessions) == 5  # 5 agents: Incident Lead + 4 others
     assert fleet["coordinator_session_id"] not in sessions
     synthetic_field = "_".join(["parent", "agent", "id"])
     assert all(synthetic_field not in e for e in fleet["delegation_trace"])

@@ -113,16 +113,18 @@ FLEET = {
     "proposal_status": "PROPOSED",
     "proposal_hash": "abc123",
     "delegation_trace": [
-        _hop("full-shelf.recall-extraction.v1", "recall",
+        _hop("full-shelf.incident-lead.v1", "incident",
+             "INCIDENT_SCOPE_DETERMINED"),
+        _hop("full-shelf.recall-intake-extraction.v2", "recall",
              "SCHEMA_AND_SOURCE_ANCHORS_VALIDATED"),
-        _hop("full-shelf.network-custody.v1", "custody",
+        _hop("full-shelf.network-custody.v2", "custody",
              "RECONCILED_WITH_DETERMINISTIC_GRAPH",
              declared_tools=["custody_graph_read", "custody_dependents_read"],
              tool_invocations=[{"tool_name": "custody_graph_read",
                                 "status": "SUCCEEDED"}]),
-        _hop("full-shelf.fulfillment-recovery.v1", "recovery",
+        _hop("full-shelf.fulfillment-planning-recovery.v2", "recovery",
              "CANDIDATE_ID_RESOLVED_DETERMINISTICALLY"),
-        _hop("full-shelf.partner-operations.v1", "partner",
+        _hop("full-shelf.partner-operations.v2", "partner",
              "TEMPLATE_AND_PARAMETERS_VALIDATED"),
     ],
 }
@@ -874,7 +876,7 @@ def test_delta3_fleet_evidence_durable_and_boundary_gated():
     fleet = body["agent_activity_as_of"]
     assert fleet["coordination_run_id"] == "fixture-run-coord-1"
     assert fleet["proposal_status"] == "PROPOSED"
-    assert fleet["delegation_trace"][0]["specialist_run_id"] == "fixture-run-recall-1"
+    assert fleet["delegation_trace"][1]["specialist_run_id"] == "fixture-run-recall-1"
 
 
 def test_sse_cursor_binds_receipt_without_projecting_material_fields():
@@ -991,8 +993,8 @@ def test_v2_five_agent_evidence_absent_before_the_fleet_gate_commits():
 def test_v2_all_five_accepted_agents_are_projected_from_persisted_evidence():
     fleet = _beat("refusal")["agent_activity_as_of"]
     assert [a["display_name"] for a in fleet["agents"]] == [
-        "Recall Extraction", "Incident Lead", "Network & Custody",
-        "Fulfillment & Recovery", "Partner Operations",
+        "Incident Lead", "Recall Intake & Extraction", "Network & Custody",
+        "Fulfillment Planning & Recovery", "Partner Operations",
     ]
     assert all(a["state"] == "COMPLETED" for a in fleet["agents"])
     # Each specialist reports its OWN run/session, never the coordinator's.
@@ -1014,9 +1016,9 @@ def test_v2_agent_rail_never_invents_running_waiting_or_durations():
 def test_v2_tool_invocations_claimed_only_where_persisted():
     """Only Network & Custody holds tools today; no other agent may claim any."""
     agents = {a["agent_id"]: a for a in _beat("refusal")["agent_activity_as_of"]["agents"]}
-    assert agents["full-shelf.network-custody.v1"]["tool_invocations"]
+    assert agents["full-shelf.network-custody.v2"]["tool_invocations"]
     for agent_id, agent in agents.items():
-        if agent_id != "full-shelf.network-custody.v1":
+        if agent_id != "full-shelf.network-custody.v2":
             assert agent["tool_invocations"] == [], agent_id
 
 
@@ -1034,9 +1036,9 @@ def test_v2_agent_missing_from_persisted_trace_is_not_yet_reported():
     body = project(T(10, 13), db=_database(incident_rows=rows)).json()
     states = {a["display_name"]: a["state"]
               for a in body["agent_activity_as_of"]["agents"]}
-    assert states["Fulfillment & Recovery"] == "NOT_YET_REPORTED"
+    assert states["Fulfillment Planning & Recovery"] == "NOT_YET_REPORTED"
     assert states["Partner Operations"] == "NOT_YET_REPORTED"
-    assert states["Recall Extraction"] == "COMPLETED"
+    assert states["Recall Intake & Extraction"] == "COMPLETED"
 
 
 def test_v2_model_armor_is_not_a_member_of_the_agent_fleet():
