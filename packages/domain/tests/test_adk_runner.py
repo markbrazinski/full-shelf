@@ -37,7 +37,7 @@ def test_recall_extraction_runs_as_a_real_adk_agent_ordered_by_the_coordinator()
     assert proposal.extraction["lot_id"] == "LTC-4471"
     assert proposal.extraction["product_name"] == "Romaine Lettuce"
     recall_hop = proposal.delegation_trace[0]
-    assert recall_hop["agent_name"] == "RecallExtractionAgent"
+    assert recall_hop["agent_name"] == "RecallIntakeExtractionAgent"
     assert recall_hop["coordinator_agent_id"] == "full-shelf.incident-coordinator.v1"
     assert recall_hop["coordination_run_id"]
     assert recall_hop["specialist_run_id"]

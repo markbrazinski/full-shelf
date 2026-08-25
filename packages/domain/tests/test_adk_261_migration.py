@@ -24,6 +24,7 @@ from fleet_fakes import (  # noqa: E402
 from full_shelf_domain.fleet import contracts  # noqa: E402
 from full_shelf_domain.fleet.agents import (  # noqa: E402
     build_fulfillment_planning_recovery_agent,
+    build_incident_lead_agent,
     build_network_custody_agent,
     build_partner_operations_agent,
     build_recall_intake_extraction_agent,
@@ -87,10 +88,11 @@ def test_all_five_agents_construct_under_this_version():
     )
     coordinator = build_incident_coordinator_agent(context)
     assert isinstance(coordinator, BaseAgent)
-    assert len(coordinator.sub_agents) == 4
+    assert len(coordinator.sub_agents) == 5
     for specialist in coordinator.sub_agents:
         assert isinstance(specialist, LlmAgent)
     for builder in (build_recall_intake_extraction_agent,
+                    build_incident_lead_agent,
                     build_network_custody_agent,
                     build_fulfillment_planning_recovery_agent,
                     build_partner_operations_agent):
@@ -104,7 +106,7 @@ def test_all_five_agents_execute_and_every_output_is_consumed():
         result = run_canonical_fleet()
     proposal = result["proposal"]
     assert proposal.status == "PROPOSED", proposal.reason_code
-    assert len(calls) == 4
+    assert len(calls) == 5
     assert [e["agent_id"] for e in proposal.delegation_trace] == list(
         GOVERNED_SEQUENCE
     )
@@ -123,8 +125,8 @@ def test_successful_executions_retain_distinct_truthful_identifiers():
         proposal = run_canonical_fleet()["proposal"]
     sessions = {e["specialist_session_id"] for e in proposal.delegation_trace}
     runs = {e["specialist_run_id"] for e in proposal.delegation_trace}
-    assert len(sessions) == 4
-    assert len(runs) == 4
+    assert len(sessions) == 5
+    assert len(runs) == 5
     assert proposal.coordinator_session_id not in sessions
     assert proposal.coordination_run_id not in runs
 
