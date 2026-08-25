@@ -240,6 +240,46 @@ def generate_recovery_candidates(
     return candidates
 
 
+def _projected_candidate(candidate: Dict[str, Any]) -> Dict[str, Any]:
+    """Summarize one candidate for the planner agent.
+
+    Recall recovery candidates arrive from generate_recovery_candidates() with
+    precomputed summary fields. The daily, fleet-failure and next-day handlers
+    build their candidates directly and carry only the three outcome categories.
+    Summaries are therefore derived from those categories when absent, rather
+    than requiring every call site to restate arithmetic the data already fixes.
+    """
+    allocations = candidate.get("allocations", [])
+    partner_pickups = candidate.get("partner_pickups", [])
+    shortfalls = candidate.get("shortfalls", [])
+    served = {
+        entry.get("agency_id")
+        for entry in list(allocations) + list(partner_pickups)
+        if entry.get("agency_id")
+    }
+    return {
+        "candidate_id": candidate["candidate_id"],
+        "strategy": candidate.get("strategy", "DETERMINISTIC_SINGLE_CANDIDATE"),
+        "total_allocated_cases": candidate.get(
+            "total_allocated_cases",
+            sum(entry.get("cases") or 0 for entry in allocations),
+        ),
+        "total_partner_pickup_cases": sum(
+            entry.get("cases") or 0 for entry in partner_pickups
+        ),
+        "total_shortfall_cases": candidate.get(
+            "total_shortfall_cases",
+            sum(entry.get("cases") or 0 for entry in shortfalls),
+        ),
+        "distinct_agencies_served": candidate.get(
+            "distinct_agencies_served", len(served)
+        ),
+        "allocations": allocations,
+        "partner_pickups": partner_pickups,
+        "shortfalls": shortfalls,
+    }
+
+
 def recovery_candidates_read(candidates: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     """Project the bounded admissible candidates for the planner agent."""
     return {
@@ -247,18 +287,7 @@ def recovery_candidates_read(candidates: Sequence[Dict[str, Any]]) -> Dict[str, 
         "tool_outcome": "OK" if candidates else "EMPTY",
         "candidate_policy_id": CANDIDATE_POLICY_ID,
         "candidate_ids": [c["candidate_id"] for c in candidates],
-        "candidates": [
-            {
-                "candidate_id": c["candidate_id"],
-                "strategy": c["strategy"],
-                "total_allocated_cases": c["total_allocated_cases"],
-                "total_shortfall_cases": c["total_shortfall_cases"],
-                "distinct_agencies_served": c["distinct_agencies_served"],
-                "allocations": c["allocations"],
-                "shortfalls": c["shortfalls"],
-            }
-            for c in candidates
-        ],
+        "candidates": [_projected_candidate(c) for c in candidates],
     }
 
 

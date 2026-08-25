@@ -920,6 +920,17 @@ def _generate_daily_morning_plan(
                 "content_hash": hashlib.sha256(
                     operating_plan.model_dump_json().encode("utf-8")
                 ).hexdigest(),
+                # The day's committed orders ARE the daily candidate's
+                # allocations. Passing only metadata left every category empty,
+                # so this gate rejected its own plan as a partial input.
+                "allocations": [
+                    {"order_id": order.order_id, "cases": order.cases,
+                     "agency_id": order.destination_agency_id,
+                     "target_vehicle_id": order.assigned_vehicle_id}
+                    for order in operating_plan.orders
+                ],
+                "partner_pickups": [],
+                "shortfalls": [],
             }],
             source_event_id=None,
             trigger=TriggerClass.DAILY_PLANNING,
@@ -2420,6 +2431,20 @@ def _derive_repair_proposal(
                 "content_hash": hashlib.sha256(
                     f"{reroute[0]},{pickup[0]}".encode("utf-8")
                 ).hexdigest(),
+                # The repair objective strands nothing: one commitment moves to
+                # a vehicle with headroom, the other goes to refrigerated
+                # partner pickup. An empty shortfall list is the correct,
+                # truthful output here -- not a missing input.
+                "allocations": [{
+                    "order_id": reroute[0],
+                    "cases": reroute[1],
+                    "target_vehicle_id": absorbing_id,
+                }],
+                "partner_pickups": [{
+                    "order_id": pickup[0],
+                    "cases": pickup[1],
+                }],
+                "shortfalls": [],
             }],
             source_event_id=source_event_id,
             trigger=TriggerClass.FLEET_FAILURE,
@@ -2811,6 +2836,23 @@ def _generate_next_day_plan(
                 "content_hash": hashlib.sha256(
                     json.dumps(candidate, sort_keys=True, separators=(",", ":")).encode()
                 ).hexdigest(),
+                "allocations": [
+                    {"order_id": stop["order_id"], "cases": stop["cases"],
+                     "agency_id": stop.get("agency_id"),
+                     "target_vehicle_id": vehicle.get("vehicle_id")}
+                    for vehicle in candidate.get("candidate_vehicles", [])
+                    for stop in vehicle.get("stops", [])
+                ],
+                "partner_pickups": [],
+                # Carried-forward shortfalls keep their agency identity: Saturday
+                # must be able to show WHICH agency remains short, not just that
+                # some quantity is unserved.
+                "shortfalls": [
+                    {"shortfall_id": item.get("shortfall_id"),
+                     "agency_id": item.get("agency_id"),
+                     "cases": item.get("cases")}
+                    for item in candidate.get("unassigned_demand", [])
+                ],
             }],
             source_event_id=stable_event_id,
             trigger=TriggerClass.NEXT_DAY_DRAFT,

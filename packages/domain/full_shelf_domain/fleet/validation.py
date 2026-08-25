@@ -150,8 +150,16 @@ def validate_recovery_selection(
     if chosen is None:
         raise FleetProposalError("UNKNOWN_RECOVERY_CANDIDATE")
 
-    # Verify candidate has required allocations and shortfalls
-    if not chosen["allocations"] or not chosen["shortfalls"]:
+    # A real candidate must carry at least one category of deterministic
+    # outcome. Requiring shortfalls specifically was wrong: a fleet-failure
+    # repair reroutes and routes to a partner without stranding any cases, and
+    # O203's refrigerated partner pickup is a pickup, not a shortfall. Bare
+    # subscripting also raised KeyError here, surfacing as FLEET_EXECUTION_FAILED
+    # rather than a named refusal.
+    allocations = chosen.get("allocations", [])
+    partner_pickups = chosen.get("partner_pickups", [])
+    shortfalls = chosen.get("shortfalls", [])
+    if not allocations and not partner_pickups and not shortfalls:
         raise FleetProposalError("PARTIAL_RECOVERY_POLICY_INPUTS_REQUIRED")
 
     # Confidence floor is secondary: enforced after facts are verified
