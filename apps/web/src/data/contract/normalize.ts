@@ -41,6 +41,7 @@ import {
   type IncidentSummary,
   type RepairProposalView,
   type RecallSourceView,
+  type PartnerEvidenceProofView,
 } from "../../types/fullShelf";
 import type {
   RawAgent,
@@ -281,6 +282,50 @@ export function normalize(raw: RawProjection, beatId: BeatId): FullShelfProjecti
       inputKind: intakeSource.input_kind,
     };
     projection.recallSource = source;
+  }
+
+  if (raw.partner_evidence_as_of.length) {
+    projection.partnerEvidence = raw.partner_evidence_as_of.map((entry): PartnerEvidenceProofView => {
+      const work = entry.before_after.work_item;
+      return {
+        sourceEventId: entry.source_event_id,
+        eventType: entry.event_type,
+        sourceOccurredAt: entry.source_occurred_at,
+        receivedAt: entry.received_at,
+        committedAt: entry.committed_at,
+        originalResponse: entry.original_response,
+        partnerId: entry.authoritative_partner_id,
+        callbackPrincipal: {
+          subject: entry.callback_principal.subject,
+          email: entry.callback_principal.email,
+          audience: entry.callback_principal.audience,
+          issuer: entry.callback_principal.issuer,
+          provenance: entry.callback_principal.provenance,
+        },
+        decision: entry.decision,
+        reasons: entry.policy_reasons,
+        claims: entry.claim_verification,
+        modelArmorStatus: typeof entry.model_armor.status === "string" ? entry.model_armor.status : "UNKNOWN",
+        proposalRationale: typeof entry.proposal?.rationale === "string" ? entry.proposal.rationale : null,
+        receiptId: entry.receipt?.receipt_id ?? null,
+        receiptStatus: entry.receipt?.status ?? null,
+        domainMutationsApplied: entry.receipt?.domain_mutations_applied ?? 0,
+        evidenceMutationsApplied: entry.receipt?.evidence_mutations_applied ?? 0,
+        totalCases: entry.custody.total_cases,
+        confirmedCasesBefore: entry.custody.confirmed_cases_before,
+        confirmedCasesAfter: entry.custody.confirmed_cases_after,
+        workItemId: work?.work_item_id ?? null,
+        workItemBefore: work?.before ?? null,
+        workItemAfter: work?.after ?? null,
+        agentId: entry.agent.agent_id,
+        modelId: entry.agent.model_id,
+        adkFramework: entry.agent.adk_framework,
+        adkSessionId: entry.agent.adk_session_id,
+        adkInvocationId: entry.agent.adk_invocation_id,
+        adkEventId: entry.agent.adk_event_id,
+        isolatedProof: true,
+      };
+    });
   }
 
   const cdv = projection.currentDay;

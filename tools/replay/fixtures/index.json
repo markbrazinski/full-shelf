@@ -75,5 +75,21 @@
       "include_next_day_draft": true,
       "fixture": "tomorrow.json"
     }
+  ],
+  "proofs": [
+    {
+      "beat": "partner_vague",
+      "as_of": "2026-08-14T10:16:00+00:00",
+      "include_next_day_draft": false,
+      "fixture": "partner_vague.json",
+      "authority": "ISOLATED_SELECTED_PROOF"
+    },
+    {
+      "beat": "partner_complete",
+      "as_of": "2026-08-14T10:19:00+00:00",
+      "include_next_day_draft": false,
+      "fixture": "partner_complete.json",
+      "authority": "ISOLATED_SELECTED_PROOF"
+    }
   ]
 }

@@ -69,6 +69,7 @@ const TOP_LEVEL_REQUIRED = [
   "execution_evidence_as_of",
   "carry_forward_obligations",
   "recall_intake_as_of",
+  "partner_evidence_as_of",
 ] as const;
 
 /**
@@ -87,6 +88,31 @@ export function validateProjection(body: unknown): RawProjection {
   str(root.classification, "$.classification");
   str(root.authority_scope, "$.authority_scope");
   str(root.verified_principal_subject, "$.verified_principal_subject");
+  arr(root.partner_evidence_as_of, "$.partner_evidence_as_of").forEach((entry, i) => {
+    const p = `$.partner_evidence_as_of[${i}]`;
+    const o = obj(entry, p);
+    for (const key of [
+      "source_event_id", "event_type", "incident_id", "authoritative_partner_id",
+      "source_occurred_at", "received_at", "committed_at", "original_response",
+      "decision",
+    ]) str(o[key], `${p}.${key}`);
+    const principal = obj(o.callback_principal, `${p}.callback_principal`);
+    for (const key of ["subject", "email", "audience", "issuer", "provenance"])
+      str(principal[key], `${p}.callback_principal.${key}`);
+    arr(o.policy_reasons, `${p}.policy_reasons`).forEach((reason, j) =>
+      str(reason, `${p}.policy_reasons[${j}]`));
+    obj(o.claim_verification, `${p}.claim_verification`);
+    obj(o.before_after, `${p}.before_after`);
+    obj(o.agent, `${p}.agent`);
+    obj(o.custody, `${p}.custody`);
+    if (o.receipt !== null) {
+      const receipt = obj(o.receipt, `${p}.receipt`);
+      str(receipt.receipt_id, `${p}.receipt.receipt_id`);
+      str(receipt.status, `${p}.receipt.status`);
+      num(receipt.domain_mutations_applied, `${p}.receipt.domain_mutations_applied`);
+      num(receipt.evidence_mutations_applied, `${p}.receipt.evidence_mutations_applied`);
+    }
+  });
 
   // ---- projection_boundary: the as_of contract the whole UI hangs on ----
   const pb = obj(root.projection_boundary, "$.projection_boundary");

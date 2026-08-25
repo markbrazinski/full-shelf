@@ -13,6 +13,7 @@ import { normalize } from "./contract/normalize";
 import { ContractViolation, validateProjection } from "./contract/validate";
 
 const PROJECTION_PATH = "/api/v1/projections/demo-beats";
+const PROJECTION_STREAM_PATH = "/api/v1/projections/stream";
 // The existing verified-human approval route. There is deliberately no
 // second approval surface: one authority path, one place to audit.
 const APPROVAL_PATH = "/api/v1/orchestrator/approvals/approve-and-activate";
@@ -176,6 +177,58 @@ export class LiveOrchestratorDataSource implements FullShelfDataSource {
       credentials: "include",
       authToken: this.authToken,
     });
+  }
+
+  subscribeToProjectionUpdates(
+    onUpdate: () => void,
+    onError: (error: unknown) => void,
+  ): () => void {
+    const controller = new AbortController();
+    const url = new URL(PROJECTION_STREAM_PATH, this.baseUrl);
+    void (async () => {
+      try {
+        const response = await fetch(url.toString(), {
+          headers: {
+            Accept: "text/event-stream",
+            ...(this.authToken ? { Authorization: `Bearer ${this.authToken}` } : {}),
+          },
+          credentials: "include",
+          signal: controller.signal,
+        });
+        if (!response.ok || !response.body) {
+          throw new ProjectionUnavailable(`Projection stream rejected: HTTP ${response.status}`);
+        }
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (!controller.signal.aborted) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          let boundary = buffer.indexOf("\n\n");
+          while (boundary >= 0) {
+            const frame = buffer.slice(0, boundary);
+            buffer = buffer.slice(boundary + 2);
+            const event = frame.split("\n").find((line) => line.startsWith("event: "));
+            const data = frame.split("\n").find((line) => line.startsWith("data: "));
+            if (event === "event: projection_update" && data) {
+              const payload = JSON.parse(data.slice(6)) as Record<string, unknown>;
+              if (
+                Object.keys(payload).length !== 1 ||
+                typeof payload.receipt_cursor !== "string"
+              ) {
+                throw new ContractViolation("$.receipt_cursor", "cursor-only SSE payload required");
+              }
+              onUpdate();
+            }
+            boundary = buffer.indexOf("\n\n");
+          }
+        }
+      } catch (error) {
+        if (!controller.signal.aborted) onError(error);
+      }
+    })();
+    return () => controller.abort();
   }
 
   approveRepair(request: RepairApprovalRequest): Promise<void> {

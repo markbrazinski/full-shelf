@@ -154,6 +154,7 @@
     "receipts_committed": 1
   },
   "operating_day": "2026-08-14",
+  "partner_evidence_as_of": [],
   "projection_boundary": {
     "as_of": "2026-08-14T08:05:00+00:00",
     "mode": "EXPLICIT_AS_OF",

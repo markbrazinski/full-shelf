@@ -37,6 +37,7 @@ import { SaturdayCandidatePlan } from "./components/SaturdayCandidatePlan";
 import { ConnectionError } from "./components/ConnectionError";
 import { ActivitySidecar } from "./components/ActivitySidecar";
 import { RepairProposal } from "./components/RepairProposal";
+import { PartnerEvidenceProof } from "./components/PartnerEvidenceProof";
 
 const dataSource: FullShelfDataSource = createDataSource();
 const MAPS_API_KEY = googleMapsApiKey();
@@ -46,7 +47,7 @@ const MAP_LABEL = isReplayMode()
 
 type View = "today" | "incident" | "history";
 type Day = "fri" | "sat";
-type IncidentTab = "scope" | "custody" | "response" | "evidence";
+type IncidentTab = "scope" | "custody" | "response" | "vague" | "complete" | "evidence";
 
 /** Which boundary each surface reads. Every value is an explicit as_of. */
 // Three Friday moments: the healthy plan, the moment the fault has been
@@ -69,6 +70,8 @@ const INCIDENT_TAB_BEAT: Record<IncidentTab, BeatId> = {
   scope: "recallProcessing",
   custody: "governedRecovery",
   response: "governanceRefusal",
+  vague: "partnerEvidenceVague",
+  complete: "partnerEvidenceComplete",
   evidence: "governanceRefusal",
 };
 
@@ -117,6 +120,15 @@ export default function App() {
   useEffect(() => {
     load(beat);
   }, [beat, load]);
+
+  useEffect(() => dataSource.subscribeToProjectionUpdates?.(
+    () => load(beat),
+    (cause) => {
+      setProjection(null);
+      setError(cause instanceof Error ? cause.message : String(cause));
+      setLoading(false);
+    },
+  ), [beat, load]);
 
   /** A real retry against the same boundary, not a cosmetic reset. */
   const reconnect = useCallback(() => load(beat), [beat, load]);
@@ -456,6 +468,8 @@ export default function App() {
                           ["scope", "Intake"],
                           ["custody", "Custody"],
                           ["response", "Response"],
+                          ["vague", "Vague response"],
+                          ["complete", "Complete response"],
                           ["evidence", "Evidence"],
                         ] as [IncidentTab, string][]
                       ).map(([t, label]) => {
@@ -523,6 +537,9 @@ export default function App() {
                           Open full Execution Record →
                         </button>
                       </>
+                    ) : null}
+                    {(incidentTab === "vague" || incidentTab === "complete") && p.partnerEvidence?.[0] ? (
+                      <PartnerEvidenceProof proof={p.partnerEvidence[0]} />
                     ) : null}
                   </div>
                 </>

@@ -158,11 +158,6 @@
   "authority_scope": "east-bay-food-bank@2026-08-14",
   "carry_forward_obligations": [
     {
-      "incident_id": "INC-2231",
-      "kind": "ACKNOWLEDGMENT_OBLIGATION",
-      "reference_id": "WORK-SITE01"
-    },
-    {
       "kind": "MOVEMENT_BARRIER",
       "lot_id": "LTC-4471",
       "reference_id": "BARRIER-4471"
@@ -461,7 +456,7 @@
   "execution_evidence_as_of": {
     "custody_graph": {
       "classification": "SYNTHETIC_TEST",
-      "confirmed_cases": 88,
+      "confirmed_cases": 96,
       "current_positions": [
         {
           "acknowledgment_status": "CONFIRMED",
@@ -496,7 +491,7 @@
           "path_depth": 1
         },
         {
-          "acknowledgment_status": "UNCONFIRMED",
+          "acknowledgment_status": "CONFIRMED",
           "name": "Site 01",
           "node_id": "N-ST01",
           "node_type": "SUBSITE",
@@ -587,17 +582,8 @@
       ],
       "query_engine": "SPANNER_GRAPH_GQL",
       "tenant_id": "east-bay-food-bank",
-      "unconfirmed_cases": 8,
-      "unconfirmed_positions": [
-        {
-          "acknowledgment_status": "UNCONFIRMED",
-          "name": "Site 01",
-          "node_id": "N-ST01",
-          "node_type": "SUBSITE",
-          "on_hand_cases": 8,
-          "path_depth": 2
-        }
-      ],
+      "unconfirmed_cases": 0,
+      "unconfirmed_positions": [],
       "unique_current_cases": 96
     },
     "history": [
@@ -682,12 +668,131 @@
         "status": "SUCCESS"
       }
     ],
-    "receipts_committed": 10
+    "receipts_committed": 11
   },
   "operating_day": "2026-08-14",
-  "partner_evidence_as_of": [],
+  "partner_evidence_as_of": [
+    {
+      "agent": {
+        "adk_event_id": "fixture-event-fixture-partner-complete",
+        "adk_framework": "google-adk/2.6.1",
+        "adk_invocation_id": "fixture-invocation-fixture-partner-complete",
+        "adk_session_id": "fixture-session-fixture-partner-complete",
+        "agent_id": "full-shelf.partner-operations.v1",
+        "model_id": "gemini-3.5-flash"
+      },
+      "authoritative_partner_id": "PARTNER-AGENCY-01",
+      "before_after": {
+        "custody": {
+          "after": "CONFIRMED",
+          "before": "UNCONFIRMED",
+          "cases": 8,
+          "name": "Site 01",
+          "node_id": "N-ST01"
+        },
+        "work_item": {
+          "after": "COMPLETED",
+          "before": "OPEN",
+          "work_item_id": "WORK-PCF-FIXTURE"
+        }
+      },
+      "callback_principal": {
+        "audience": "https://orchestrator.example.run.app/partner-evidence",
+        "email": "partner-callback@example.com",
+        "issuer": "https://accounts.google.com",
+        "provenance": "AUTHENTICATED_PARTNER_CALLBACK",
+        "subject": "fixture-partner-subject"
+      },
+      "claim_verification": {
+        "confirmation_time": {
+          "reason": "LITERAL_SOURCE_ANCHOR",
+          "state": "PRESENT"
+        },
+        "disposition": {
+          "reason": "LITERAL_SOURCE_ANCHOR",
+          "state": "PRESENT"
+        },
+        "location": {
+          "reason": "LITERAL_SOURCE_ANCHOR",
+          "state": "PRESENT"
+        },
+        "lot": {
+          "reason": "LITERAL_SOURCE_ANCHOR",
+          "state": "PRESENT"
+        },
+        "quantity": {
+          "reason": "LITERAL_SOURCE_ANCHOR",
+          "state": "PRESENT"
+        }
+      },
+      "committed_at": "2026-08-14T10:18:00+00:00",
+      "custody": {
+        "confirmed_cases_after": 96,
+        "confirmed_cases_before": 88,
+        "total_cases": 96
+      },
+      "decision": "APPLIED",
+      "event_type": "PARTNER_CUSTODY_EVIDENCE_RECEIVED",
+      "incident_id": "INC-2231",
+      "model_armor": {
+        "correlation_id": "fixture-trace",
+        "managed_operation": "sanitizeUserPrompt",
+        "safety_verdict": "PASSED",
+        "status": "APPROVED"
+      },
+      "original_response": "LTC-4471 \u00b7 8 cases \u00b7 ISOLATED_IN_QUARANTINE at Site 01 \u00b7 confirmed at 10:18.",
+      "policy_reasons": [],
+      "proposal": {
+        "confidence": 0.99,
+        "confirmation_time": {
+          "quote": "confirmed at 10:18",
+          "value": "10:18"
+        },
+        "custody_node_id": "N-ST01",
+        "disposition": {
+          "quote": "ISOLATED_IN_QUARANTINE",
+          "value": "ISOLATED_IN_QUARANTINE"
+        },
+        "expected_acknowledgment_status": "UNCONFIRMED",
+        "incident_id": "INC-2231",
+        "location": {
+          "quote": "Site 01",
+          "value": "Site 01"
+        },
+        "lot": {
+          "quote": "LTC-4471",
+          "value": "LTC-4471"
+        },
+        "partner_id": "PARTNER-AGENCY-01",
+        "quantity": {
+          "quote": "8 cases",
+          "value": 8
+        },
+        "rationale": "Every required custody fact has a literal source anchor.",
+        "requested_acknowledgment_status": "CONFIRMED",
+        "requested_mutation": "CONFIRM_CUSTODY",
+        "site_id": "SITE-01",
+        "work_item_id": "WORK-PCF-FIXTURE"
+      },
+      "receipt": {
+        "action_id": "fixture-CMD-fixture-partner-complete",
+        "action_type": "PROCESS_PARTNER_EVIDENCE",
+        "committed_at": "2026-08-14T10:18:00+00:00",
+        "domain_mutations_applied": 2,
+        "evidence_mutations_applied": 1,
+        "receipt_id": "fixture-RCT-fixture-partner-complete",
+        "status": "SUCCESS"
+      },
+      "received_at": "2026-08-14T10:18:00+00:00",
+      "requested_mutation": {
+        "type": "CONFIRM_CUSTODY"
+      },
+      "source_event_id": "fixture-partner-complete",
+      "source_occurred_at": "2026-08-14T10:18:00+00:00"
+    }
+  ],
   "projection_boundary": {
-    "as_of": "2026-08-14T16:30:00+00:00",
+    "as_of": "2026-08-14T10:19:00+00:00",
     "mode": "EXPLICIT_AS_OF",
     "omitted_fields": []
   },
@@ -731,7 +836,7 @@
       }
     ]
   },
-  "replay_notice": "Fixture generated from the production handler against a faked snapshot. Not a real execution. No Gemini, ADK, Model Armor, KMS, or ledger evidence.",
+  "replay_notice": "Isolated selected proof generated from the production projection handler against a synthetic authority. It does not rewrite the canonical filmed 88/96 timeline.",
   "tenant_id": "east-bay-food-bank",
   "verified_principal_subject": "operator-subject"
 }

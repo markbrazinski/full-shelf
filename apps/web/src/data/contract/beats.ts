@@ -31,6 +31,8 @@ export const BEAT_BOUNDARIES: BeatBoundary[] = [
   { id: "custodyEstablished", asOf: "2026-08-14T10:05:00+00:00", includeNextDayDraft: false, time: "10:05", label: "Custody established" },
   { id: "governedRecovery",   asOf: "2026-08-14T10:10:00+00:00", includeNextDayDraft: false, time: "10:10", label: "Governed recovery" },
   { id: "governanceRefusal",  asOf: "2026-08-14T10:13:00+00:00", includeNextDayDraft: false, time: "10:13", label: "Governance refusal" },
+  { id: "partnerEvidenceVague", asOf: "2026-08-14T10:16:00+00:00", includeNextDayDraft: false, time: "10:16", label: "Vague response proof" },
+  { id: "partnerEvidenceComplete", asOf: "2026-08-14T10:19:00+00:00", includeNextDayDraft: false, time: "10:19", label: "Complete response proof" },
   { id: "todaysOutcome",      asOf: "2026-08-14T16:30:00+00:00", includeNextDayDraft: false, time: "16:30", label: "Today's Outcome" },
   { id: "tomorrowsDraft",     asOf: "2026-08-14T17:00:00+00:00", includeNextDayDraft: true,  time: "17:00", label: "Tomorrow" },
   // History reads the terminal boundary; it never advances the day.
@@ -47,5 +49,5 @@ export function boundaryFor(beatId: BeatId): BeatBoundary {
 
 /** Navigator metadata; History is presented separately in the shell. */
 export const BEATS: BeatMeta[] = BEAT_BOUNDARIES
-  .filter((b) => b.id !== "history")
+  .filter((b) => !["history", "partnerEvidenceVague", "partnerEvidenceComplete"].includes(b.id))
   .map(({ id, time, label }) => ({ id, time, label }));

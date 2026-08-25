@@ -355,6 +355,56 @@ export interface RawNextDayDraft {
   constraints: { constraint_type: string | null; subject_id: string | null }[];
 }
 
+export interface RawPartnerEvidence {
+  source_event_id: string;
+  event_type: string;
+  incident_id: string;
+  authoritative_partner_id: string;
+  source_occurred_at: string;
+  received_at: string;
+  committed_at: string;
+  original_response: string;
+  callback_principal: {
+    subject: string;
+    email: string;
+    audience: string;
+    issuer: string;
+    provenance: string;
+  };
+  model_armor: Record<string, unknown>;
+  proposal: Record<string, unknown> | null;
+  decision: "APPLIED" | "DENIED";
+  policy_reasons: string[];
+  claim_verification: Record<string, { state: string; reason: string }>;
+  before_after: {
+    custody?: { node_id?: string; before?: string; after?: string; cases?: number };
+    work_item?: { work_item_id?: string; before?: string; after?: string };
+  };
+  requested_mutation: Record<string, unknown> | null;
+  agent: {
+    agent_id: string | null;
+    model_id: string | null;
+    adk_framework: string | null;
+    adk_session_id: string | null;
+    adk_invocation_id: string | null;
+    adk_event_id: string | null;
+  };
+  receipt: {
+    receipt_id: string;
+    action_id: string;
+    action_type: string;
+    status: string;
+    domain_mutations_applied: number;
+    evidence_mutations_applied: number;
+    committed_at: string;
+  } | null;
+  custody: {
+    total_cases: number | null;
+    confirmed_cases_before: number | null;
+    confirmed_cases_after: number | null;
+  };
+}
+
 export interface RawProjection {
   tenant_id: string;
   operating_day: string;
@@ -369,4 +419,5 @@ export interface RawProjection {
   carry_forward_obligations: RawCarryForwardObligation[];
   next_day_draft?: RawNextDayDraft;
   recall_intake_as_of: RawRecallIntake | null;
+  partner_evidence_as_of: RawPartnerEvidence[];
 }

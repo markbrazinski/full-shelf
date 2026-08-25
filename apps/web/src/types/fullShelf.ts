@@ -21,6 +21,8 @@ export type BeatId =
   | "governanceRefusal"
   | "todaysOutcome"
   | "tomorrowsDraft"
+  | "partnerEvidenceVague"
+  | "partnerEvidenceComplete"
   | "history";
 
 export type DataMode = "SYNTHETIC_TEST" | "OBSERVED_LIVE" | "RECORDED_LIVE";
@@ -499,6 +501,45 @@ export interface RecallSourceView {
   inputKind: string;
 }
 
+export interface PartnerEvidenceProofView {
+  sourceEventId: string;
+  eventType: string;
+  sourceOccurredAt: string;
+  receivedAt: string;
+  committedAt: string;
+  originalResponse: string;
+  partnerId: string;
+  callbackPrincipal: {
+    subject: string;
+    email: string;
+    audience: string;
+    issuer: string;
+    provenance: string;
+  };
+  decision: "APPLIED" | "DENIED";
+  reasons: string[];
+  claims: Record<string, { state: string; reason: string }>;
+  modelArmorStatus: string;
+  proposalRationale: string | null;
+  receiptId: string | null;
+  receiptStatus: string | null;
+  domainMutationsApplied: number;
+  evidenceMutationsApplied: number;
+  totalCases: number | null;
+  confirmedCasesBefore: number | null;
+  confirmedCasesAfter: number | null;
+  workItemId: string | null;
+  workItemBefore: string | null;
+  workItemAfter: string | null;
+  agentId: string | null;
+  modelId: string | null;
+  adkFramework: string | null;
+  adkSessionId: string | null;
+  adkInvocationId: string | null;
+  adkEventId: string | null;
+  isolatedProof: true;
+}
+
 export interface FullShelfProjection {
   beatId: BeatId;
   asOf: string;
@@ -506,6 +547,7 @@ export interface FullShelfProjection {
   incidentSummary: IncidentSummary;
   repairProposal?: RepairProposalView;
   recallSource?: RecallSourceView;
+  partnerEvidence?: PartnerEvidenceProofView[];
   currentDay: CurrentDayView;
   incident?: IncidentView;
   recall?: RecallView;

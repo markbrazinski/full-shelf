@@ -16,6 +16,7 @@ Run:  python tools/replay/server.py            # binds 127.0.0.1:8describe
 """
 
 import json
+import os
 import pathlib
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -23,11 +24,15 @@ from urllib.parse import parse_qs, urlparse
 
 FIXTURES = pathlib.Path(__file__).resolve().parent / "fixtures"
 LOOPBACK = "127.0.0.1"
-PORT = 8787
+PORT = int(os.getenv("FULL_SHELF_REPLAY_PORT", "8787"))
+WEB_ORIGIN = os.getenv("FULL_SHELF_WEB_ORIGIN", "http://127.0.0.1:5173")
 
 INDEX = json.loads((FIXTURES / "index.json").read_text())
-BEATS = {b["beat"]: b for b in INDEX["beats"]}
-BY_AS_OF = {b["as_of"]: b for b in INDEX["beats"]}
+ALL_BOUNDARIES = sorted(
+    INDEX["beats"] + INDEX.get("proofs", []), key=lambda item: item["as_of"]
+)
+BEATS = {b["beat"]: b for b in ALL_BOUNDARIES}
+BY_AS_OF = {b["as_of"]: b for b in ALL_BOUNDARIES}
 
 
 def _load(beat: str) -> dict:
@@ -50,11 +55,11 @@ def _select(as_of: str | None, include_next_day: bool) -> dict:
             # crashing, and replay is only useful if it fails the same way.
             raise InvalidAsOf("INVALID_AS_OF") from exc
         eligible = [
-            b for b in INDEX["beats"]
+            b for b in ALL_BOUNDARIES
             if datetime.fromisoformat(b["as_of"]) <= parsed
         ]
         if not eligible:
-            beat = INDEX["beats"][0]["beat"]
+            beat = ALL_BOUNDARIES[0]["beat"]
         else:
             beat = eligible[-1]["beat"]
     else:
@@ -73,7 +78,7 @@ class ReplayHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(raw)))
-        self.send_header("Access-Control-Allow-Origin", "http://127.0.0.1:5173")
+        self.send_header("Access-Control-Allow-Origin", WEB_ORIGIN)
         self.send_header("Access-Control-Allow-Headers",
                          "Authorization, Content-Type, Last-Event-ID")
         self.send_header("X-Full-Shelf-Replay-Mode", "DETERMINISTIC_TEST")
@@ -104,7 +109,7 @@ class ReplayHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache, no-transform")
-        self.send_header("Access-Control-Allow-Origin", "http://127.0.0.1:5173")
+        self.send_header("Access-Control-Allow-Origin", WEB_ORIGIN)
         self.send_header("X-Full-Shelf-Replay-Mode", "DETERMINISTIC_TEST")
         self.end_headers()
         final = _load("refusal")

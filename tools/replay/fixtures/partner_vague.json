@@ -160,7 +160,7 @@
     {
       "incident_id": "INC-2231",
       "kind": "ACKNOWLEDGMENT_OBLIGATION",
-      "reference_id": "WORK-SITE01"
+      "reference_id": "WORK-PCF-FIXTURE"
     },
     {
       "kind": "MOVEMENT_BARRIER",
@@ -682,12 +682,121 @@
         "status": "SUCCESS"
       }
     ],
-    "receipts_committed": 10
+    "receipts_committed": 11
   },
   "operating_day": "2026-08-14",
-  "partner_evidence_as_of": [],
+  "partner_evidence_as_of": [
+    {
+      "agent": {
+        "adk_event_id": "fixture-event-fixture-partner-vague",
+        "adk_framework": "google-adk/2.6.1",
+        "adk_invocation_id": "fixture-invocation-fixture-partner-vague",
+        "adk_session_id": "fixture-session-fixture-partner-vague",
+        "agent_id": "full-shelf.partner-operations.v1",
+        "model_id": "gemini-3.5-flash"
+      },
+      "authoritative_partner_id": "PARTNER-AGENCY-01",
+      "before_after": {
+        "custody": {
+          "after": "UNCONFIRMED",
+          "before": "UNCONFIRMED",
+          "cases": 8,
+          "name": "Site 01",
+          "node_id": "N-ST01"
+        },
+        "work_item": {
+          "after": "OPEN",
+          "before": "OPEN",
+          "work_item_id": "WORK-PCF-FIXTURE"
+        }
+      },
+      "callback_principal": {
+        "audience": "https://orchestrator.example.run.app/partner-evidence",
+        "email": "partner-callback@example.com",
+        "issuer": "https://accounts.google.com",
+        "provenance": "AUTHENTICATED_PARTNER_CALLBACK",
+        "subject": "fixture-partner-subject"
+      },
+      "claim_verification": {
+        "confirmation_time": {
+          "reason": "OPTIONAL_CLAIM_NOT_PRESENT",
+          "state": "MISSING"
+        },
+        "disposition": {
+          "reason": "CLAIM_NOT_PRESENT",
+          "state": "MISSING"
+        },
+        "location": {
+          "reason": "CLAIM_NOT_PRESENT",
+          "state": "MISSING"
+        },
+        "lot": {
+          "reason": "CLAIM_NOT_PRESENT",
+          "state": "MISSING"
+        },
+        "quantity": {
+          "reason": "CLAIM_NOT_PRESENT",
+          "state": "MISSING"
+        }
+      },
+      "committed_at": "2026-08-14T10:15:00+00:00",
+      "custody": {
+        "confirmed_cases_after": 88,
+        "confirmed_cases_before": 88,
+        "total_cases": 96
+      },
+      "decision": "DENIED",
+      "event_type": "PARTNER_CUSTODY_EVIDENCE_RECEIVED",
+      "incident_id": "INC-2231",
+      "model_armor": {
+        "correlation_id": "fixture-trace",
+        "managed_operation": "sanitizeUserPrompt",
+        "safety_verdict": "PASSED",
+        "status": "APPROVED"
+      },
+      "original_response": "We pulled the remaining lettuce. Should be all good.",
+      "policy_reasons": [
+        "MISSING_LOT_EVIDENCE",
+        "MISSING_QUANTITY_EVIDENCE",
+        "MISSING_LOCATION_EVIDENCE",
+        "MISSING_DISPOSITION_EVIDENCE"
+      ],
+      "proposal": {
+        "confidence": 0.72,
+        "confirmation_time": null,
+        "custody_node_id": "N-ST01",
+        "disposition": null,
+        "expected_acknowledgment_status": "UNCONFIRMED",
+        "incident_id": "INC-2231",
+        "location": null,
+        "lot": null,
+        "partner_id": "PARTNER-AGENCY-01",
+        "quantity": null,
+        "rationale": "The response intends completion but omits required custody facts.",
+        "requested_acknowledgment_status": "CONFIRMED",
+        "requested_mutation": "CONFIRM_CUSTODY",
+        "site_id": "SITE-01",
+        "work_item_id": "WORK-PCF-FIXTURE"
+      },
+      "receipt": {
+        "action_id": "fixture-CMD-fixture-partner-vague",
+        "action_type": "PROCESS_PARTNER_EVIDENCE",
+        "committed_at": "2026-08-14T10:15:00+00:00",
+        "domain_mutations_applied": 0,
+        "evidence_mutations_applied": 1,
+        "receipt_id": "fixture-RCT-fixture-partner-vague",
+        "status": "DENIED"
+      },
+      "received_at": "2026-08-14T10:15:00+00:00",
+      "requested_mutation": {
+        "type": "CONFIRM_CUSTODY"
+      },
+      "source_event_id": "fixture-partner-vague",
+      "source_occurred_at": "2026-08-14T10:15:00+00:00"
+    }
+  ],
   "projection_boundary": {
-    "as_of": "2026-08-14T16:30:00+00:00",
+    "as_of": "2026-08-14T10:16:00+00:00",
     "mode": "EXPLICIT_AS_OF",
     "omitted_fields": []
   },
@@ -731,7 +840,7 @@
       }
     ]
   },
-  "replay_notice": "Fixture generated from the production handler against a faked snapshot. Not a real execution. No Gemini, ADK, Model Armor, KMS, or ledger evidence.",
+  "replay_notice": "Isolated selected proof generated from the production projection handler against a synthetic authority. It does not rewrite the canonical filmed 88/96 timeline.",
   "tenant_id": "east-bay-food-bank",
   "verified_principal_subject": "operator-subject"
 }

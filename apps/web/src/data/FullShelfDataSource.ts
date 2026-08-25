@@ -32,6 +32,12 @@ export interface RepairApprovalRequest {
 export interface FullShelfDataSource {
   getProjection(beatId: BeatId): Promise<FullShelfProjection>;
 
+  /** Subscribe to cursor-only committed receipt notifications. */
+  subscribeToProjectionUpdates?(
+    onUpdate: () => void,
+    onError: (error: unknown) => void,
+  ): () => void;
+
   /**
    * Approve a pending repair proposal.
    *

@@ -140,6 +140,38 @@ test("07 · Evidence opens the Execution Record", async ({ page }) => {
   await shot(page, "v6-07-incident-evidence");
 });
 
+test("07a · vague partner response is denied with 88 of 96 and an open work item", async ({ page }) => {
+  await open(page);
+  await page.getByTestId("nav-incident").click();
+  await settle(page);
+  await page.getByTestId("tab-vague").click();
+  await settle(page);
+  const proof = page.getByTestId("partner-evidence-vague");
+  await expect(proof).toContainText("We pulled the remaining lettuce");
+  await expect(proof).toContainText("DENIED");
+  await expect(proof).toContainText("Domain mutations");
+  await expect(proof).toContainText("0");
+  await expect(proof).toContainText("88/96 → 88/96");
+  await expect(proof).toContainText("OPEN → OPEN");
+  await expect(proof).toContainText("ISOLATED SELECTED PROOF");
+  await shot(page, "partner-evidence-vague");
+});
+
+test("07b · complete partner response applies exactly two domain mutations", async ({ page }) => {
+  await open(page);
+  await page.getByTestId("nav-incident").click();
+  await settle(page);
+  await page.getByTestId("tab-complete").click();
+  await settle(page);
+  const proof = page.getByTestId("partner-evidence-complete");
+  await expect(proof).toContainText("LTC-4471 · 8 cases");
+  await expect(proof).toContainText("APPLIED");
+  await expect(proof).toContainText("96/96");
+  await expect(proof).toContainText("OPEN → COMPLETED");
+  await expect(proof).toContainText("invocation fixture-invocation");
+  await shot(page, "partner-evidence-complete");
+});
+
 // -------------------------------------------------------------- History
 
 test("08 · History is read-only", async ({ page }) => {
