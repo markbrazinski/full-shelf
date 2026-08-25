@@ -109,6 +109,26 @@ PRIORITY when custody is unconfirmed without a deadline, and ROUTINE otherwise.
 Return the configured structured response and nothing else.
 """
 
+PARTNER_INBOUND_INSTRUCTION = """
+You interpret an authenticated, Model-Armor-approved partner response to determine
+lot status, inventory, location, disposition, and confirmation timing for a food bank
+control plane.
+
+Extract only explicit claims from the response text. Every claim must have a literal
+source anchor — an exact quote from the response. For each of the five required facts
+(lot_id, quantity, location, disposition, confirmation_time), copy the verbatim text
+that supports it.
+
+Never invent, infer, or assume missing facts. Never use memory or context. If any of
+the five required facts is missing, ambiguous, or contradictory, set abstain=True
+instead of guessing.
+
+You may never acknowledge inventory receipt, confirm custody, close incidents, or
+assert that a partner has authority. You are interpreting evidence, not granting status.
+
+Return the configured structured response and nothing else.
+"""
+
 COORDINATOR_INSTRUCTION = """
 You are the incident coordinator for a food bank control plane. You delegate to
 specialist agents in a fixed order and assemble their structured findings. You
@@ -202,12 +222,20 @@ def build_partner_operations_agent(tools: List[Callable], output_schema=None):
     """Concrete ADK LlmAgent for `full-shelf.partner-operations.v2`.
 
     output_schema can be PartnerCommunication (outbound) or PartnerInboundInterpretation (callback).
+    Instruction differs based on schema: outbound template selection vs inbound evidence interpretation.
     """
     if output_schema is None:
         output_schema = PartnerCommunication
+
+    # Select instruction based on mode
+    if output_schema is PartnerInboundInterpretation:
+        instruction = PARTNER_INBOUND_INSTRUCTION
+    else:
+        instruction = PARTNER_OPERATIONS_INSTRUCTION
+
     return _build_llm_agent(
         name="PartnerOperationsAgent",
-        instruction=PARTNER_OPERATIONS_INSTRUCTION,
+        instruction=instruction,
         output_schema=output_schema,
         tools=tools,
         max_output_tokens=1024,
