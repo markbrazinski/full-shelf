@@ -23,10 +23,10 @@ from fleet_fakes import (  # noqa: E402
 
 from full_shelf_domain.fleet import contracts  # noqa: E402
 from full_shelf_domain.fleet.agents import (  # noqa: E402
-    build_fulfillment_recovery_agent,
+    build_fulfillment_planning_recovery_agent,
     build_network_custody_agent,
     build_partner_operations_agent,
-    build_recall_extraction_agent,
+    build_recall_intake_extraction_agent,
 )
 from full_shelf_domain.fleet.coordinator import (  # noqa: E402
     GOVERNED_SEQUENCE,
@@ -90,11 +90,11 @@ def test_all_five_agents_construct_under_this_version():
     assert len(coordinator.sub_agents) == 4
     for specialist in coordinator.sub_agents:
         assert isinstance(specialist, LlmAgent)
-    for builder in (build_recall_extraction_agent,
+    for builder in (build_recall_intake_extraction_agent,
                     build_network_custody_agent,
-                    build_fulfillment_recovery_agent,
+                    build_fulfillment_planning_recovery_agent,
                     build_partner_operations_agent):
-        agent = builder([]) if builder is not build_recall_extraction_agent else builder()
+        agent = builder([]) if builder is not build_recall_intake_extraction_agent else builder()
         assert isinstance(agent, LlmAgent)
 
 

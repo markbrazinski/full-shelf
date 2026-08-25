@@ -28,7 +28,7 @@ def test_manifest_runtime_names_match_constructed_adk_agents():
         contracts.AGENT_INCIDENT_COORDINATOR: build_incident_coordinator_agent(),
         contracts.AGENT_NETWORK_CUSTODY: agent_module.build_network_custody_agent([]),
         contracts.AGENT_FULFILLMENT_RECOVERY:
-            agent_module.build_fulfillment_recovery_agent([]),
+            agent_module.build_fulfillment_planning_recovery_agent([]),
         contracts.AGENT_PARTNER_OPERATIONS:
             agent_module.build_partner_operations_agent([]),
     }
@@ -41,7 +41,7 @@ def test_manifest_output_schemas_match_runtime_output_schemas():
         (contracts.AGENT_NETWORK_CUSTODY,
          agent_module.build_network_custody_agent([])),
         (contracts.AGENT_FULFILLMENT_RECOVERY,
-         agent_module.build_fulfillment_recovery_agent([])),
+         agent_module.build_fulfillment_planning_recovery_agent([])),
         (contracts.AGENT_PARTNER_OPERATIONS,
          agent_module.build_partner_operations_agent([])),
     ]
@@ -181,12 +181,12 @@ def test_candidate_scope_is_stated_as_a_bounded_policy_not_completeness():
 
 
 def test_governed_sequence_matches_the_executable_coordinator_sequence():
-    from full_shelf_domain.fleet.coordinator import GOVERNED_SEQUENCE
+    from full_shelf_domain.fleet.coordinator import GOVERNED_SEQUENCE, AGENT_INCIDENT_COORDINATOR
 
     assert MANIFEST["governed_sequence"] == list(GOVERNED_SEQUENCE)
-    # The root is not in its own sequence; the four specialists are.
-    assert contracts.AGENT_INCIDENT_COORDINATOR not in MANIFEST["governed_sequence"]
-    assert len(MANIFEST["governed_sequence"]) == 4
+    # The root is not in its own sequence; the five specialists are.
+    assert AGENT_INCIDENT_COORDINATOR not in MANIFEST["governed_sequence"]
+    assert len(MANIFEST["governed_sequence"]) == 5
 
 
 def test_runtime_tool_names_are_unique_and_catalogued():
@@ -237,9 +237,9 @@ def test_coordinator_event_contract_matches_what_it_actually_emits():
 
 
 def test_recall_catalog_schema_matches_the_runtime_agent_schema():
-    from full_shelf_domain.fleet.agents import build_recall_extraction_agent
+    from full_shelf_domain.fleet.agents import build_recall_intake_extraction_agent
 
-    agent = build_recall_extraction_agent()
+    agent = build_recall_intake_extraction_agent()
     entry = BY_ID[contracts.AGENT_RECALL_EXTRACTION]
     assert entry["output_schema"] == agent.output_schema.__name__
     assert entry["runtime_name"] == agent.name
