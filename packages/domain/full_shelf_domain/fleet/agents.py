@@ -202,7 +202,7 @@ def build_partner_operations_agent(tools: List[Callable], output_schema=None):
     """Concrete ADK LlmAgent for `full-shelf.partner-operations.v2`.
 
     Outbound mode only: selects governed follow-up template for partner communications.
-    Inbound evidence interpretation (PARTNER_CALLBACK trigger) is handled separately in
+    Inbound evidence interpretation is handled separately in
     main.py:process_partner_evidence using partner_evidence.py's run_partner_evidence_agent.
     """
     if output_schema is None:

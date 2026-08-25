@@ -37,23 +37,32 @@ class TestTriggerSpecificPaths:
         )
         assert len(path) == 2
 
-    def test_recall_invokes_full_five_agent_sequence(self):
-        """RECALL should invoke all five agents in order."""
+    def test_recall_invokes_four_agent_sequence(self):
+        """RECALL invokes exactly four agents per AGENT_CONTRACT_V2 §6.
+
+        Partner Operations is deliberately absent: §6 assigns it to the separate
+        authenticated partner-evidence scenario, never chained off recall.
+        """
         path = sequence_for_trigger(TriggerClass.RECALL)
         assert path == (
             AGENT_RECALL_INTAKE_EXTRACTION,
             AGENT_INCIDENT_LEAD,
             AGENT_NETWORK_CUSTODY,
             AGENT_FULFILLMENT_PLANNING_RECOVERY,
-            AGENT_PARTNER_OPERATIONS,
         )
-        assert len(path) == 5
+        assert len(path) == 4
+        assert AGENT_PARTNER_OPERATIONS not in path
 
-    def test_partner_callback_invokes_only_partner_operations(self):
-        """PARTNER_CALLBACK should invoke only Partner Operations."""
-        path = sequence_for_trigger(TriggerClass.PARTNER_CALLBACK)
-        assert path == (AGENT_PARTNER_OPERATIONS,)
-        assert len(path) == 1
+    def test_partner_callback_is_not_a_fleet_trigger(self):
+        """Inbound partner callbacks never route through run_fleet.
+
+        The sole governed inbound path is main.py:process_partner_evidence, which
+        is authenticated and Model-Armor screened. Proving the trigger is absent
+        keeps a second, ungoverned path from reappearing.
+        """
+        assert "PARTNER_CALLBACK" not in TriggerClass.__members__
+        for trigger in TriggerClass:
+            assert AGENT_PARTNER_OPERATIONS not in sequence_for_trigger(trigger)
 
     def test_next_day_draft_invokes_only_fulfillment(self):
         """NEXT_DAY_DRAFT should invoke only Fulfillment Planning & Recovery."""
@@ -172,24 +181,28 @@ class TestRecallPathFullSequence:
     """Verify the complete RECALL path matches Agent Contract V2."""
 
     def test_recall_path_has_correct_agent_order(self):
-        """RECALL path should be extraction → incident lead → custody → planning → partner."""
+        """RECALL path is extraction → incident lead → custody → planning."""
         path = sequence_for_trigger(TriggerClass.RECALL)
 
         assert path[0] == AGENT_RECALL_INTAKE_EXTRACTION
         assert path[1] == AGENT_INCIDENT_LEAD
         assert path[2] == AGENT_NETWORK_CUSTODY
         assert path[3] == AGENT_FULFILLMENT_PLANNING_RECOVERY
-        assert path[4] == AGENT_PARTNER_OPERATIONS
+        assert len(path) == 4
 
 
-class TestPartnerCallbackSequence:
-    """Test that Partner callback orchestration invokes only Partner Operations."""
+class TestGovernedSequenceIsDerived:
+    """The coordinator's exported sequence must never drift from its source.
 
-    def test_partner_callback_trigger_invokes_only_partner_agent(self):
-        """PARTNER_CALLBACK should invoke only Partner Operations."""
-        path = sequence_for_trigger(TriggerClass.PARTNER_CALLBACK)
-        assert len(path) == 1
-        assert path[0] == AGENT_PARTNER_OPERATIONS
+    A hand-copied duplicate of the recall tuple previously disagreed with
+    ORCHESTRATION_PATHS after the recall path changed, silently breaking every
+    suite that asserted against the export. This pins them together.
+    """
+
+    def test_governed_sequence_equals_the_authoritative_recall_path(self):
+        from full_shelf_domain.fleet.coordinator import GOVERNED_SEQUENCE
+
+        assert GOVERNED_SEQUENCE == sequence_for_trigger(TriggerClass.RECALL)
 
 
 class TestModelArmorBoundaryDesign:
@@ -214,8 +227,8 @@ class TestModelArmorBoundaryDesign:
 
         # Model Armor ID should not appear in agent paths
         assert not any("armor" in str(agent).lower() for agent in path)
-        # Only the five specialist agents should be in paths (no infrastructure)
-        assert len(path) == 5
+        # Only contracted specialist agents appear in paths (no infrastructure)
+        assert len(path) == 4
         # All agents in path are from FLEET_AGENT_IDS
         from full_shelf_domain.fleet.contracts import FLEET_AGENT_IDS
         assert all(agent in FLEET_AGENT_IDS for agent in path)

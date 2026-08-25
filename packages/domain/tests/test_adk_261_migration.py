@@ -74,10 +74,30 @@ def test_runtime_evidence_strings_report_the_installed_version():
     assert adk_framework() == f"google-adk/{PINNED}"
 
 
-# --- All five agents construct and run --------------------------------------
+# --- The contracted roster constructs; the recall path runs -------------------
+#
+# AGENT_CONTRACT_V2 separates two claims that were previously conflated here:
+# §2 requires all five agents to EXIST and construct, while §6 defines the RECALL
+# SEQUENCE as exactly four (Partner Operations belongs to the separate
+# authenticated partner-evidence scenario). These tests assert each claim against
+# its own surface rather than asserting "five" for both.
 
 
-def test_all_five_agents_construct_under_this_version():
+def test_all_five_contracted_agents_construct_under_this_version():
+    """§2: every contracted agent constructs as a real ADK LlmAgent."""
+    from google.adk.agents import LlmAgent
+
+    for builder in (build_recall_intake_extraction_agent,
+                    build_incident_lead_agent,
+                    build_network_custody_agent,
+                    build_fulfillment_planning_recovery_agent,
+                    build_partner_operations_agent):
+        agent = builder([]) if builder is not build_recall_intake_extraction_agent else builder()
+        assert isinstance(agent, LlmAgent)
+
+
+def test_recall_coordinator_constructs_only_its_four_path_agents():
+    """§6: the RECALL coordinator wires exactly the four sequence agents."""
     from google.adk.agents import BaseAgent, LlmAgent
 
     context = FleetRunContext(
@@ -88,33 +108,27 @@ def test_all_five_agents_construct_under_this_version():
     )
     coordinator = build_incident_coordinator_agent(context)
     assert isinstance(coordinator, BaseAgent)
-    assert len(coordinator.sub_agents) == 5
+    assert len(coordinator.sub_agents) == len(GOVERNED_SEQUENCE) == 4
     for specialist in coordinator.sub_agents:
         assert isinstance(specialist, LlmAgent)
-    for builder in (build_recall_intake_extraction_agent,
-                    build_incident_lead_agent,
-                    build_network_custody_agent,
-                    build_fulfillment_planning_recovery_agent,
-                    build_partner_operations_agent):
-        agent = builder([]) if builder is not build_recall_intake_extraction_agent else builder()
-        assert isinstance(agent, LlmAgent)
 
 
-def test_all_five_agents_execute_and_every_output_is_consumed():
+def test_recall_path_executes_and_every_output_is_consumed():
     calls = []
     with scripted_gemini(calls=calls):
         result = run_canonical_fleet()
     proposal = result["proposal"]
     assert proposal.status == "PROPOSED", proposal.reason_code
-    assert len(calls) == 5
+    assert len(calls) == 4
     assert [e["agent_id"] for e in proposal.delegation_trace] == list(
         GOVERNED_SEQUENCE
     )
     # Every specialist output is load-bearing in the assembled proposal.
-    assert proposal.extraction["lot_id"] == "LTC-4471"
+    # V2 recall extraction carries per-field {value, quote} source anchors.
+    assert proposal.extraction["lot_id"]["value"] == "LTC-4471"
+    assert proposal.extraction["lot_id"]["quote"] in CANONICAL_NOTICE
     assert proposal.custody.total_cases_in_custody == 96
     assert proposal.recovery.selected_candidate_id == "CAND-LOT-ASC"
-    assert proposal.partner.template_id == "partner.acknowledgment-request.v1"
 
 
 # --- Identifier truthfulness -------------------------------------------------
@@ -125,8 +139,8 @@ def test_successful_executions_retain_distinct_truthful_identifiers():
         proposal = run_canonical_fleet()["proposal"]
     sessions = {e["specialist_session_id"] for e in proposal.delegation_trace}
     runs = {e["specialist_run_id"] for e in proposal.delegation_trace}
-    assert len(sessions) == 5
-    assert len(runs) == 5
+    assert len(sessions) == len(GOVERNED_SEQUENCE)
+    assert len(runs) == len(GOVERNED_SEQUENCE)
     assert proposal.coordinator_session_id not in sessions
     assert proposal.coordination_run_id not in runs
 

@@ -4,11 +4,14 @@ Each path represents a distinct sequence of specialists required for a specific
 operational trigger. No agent is invoked for unrelated triggers; each path is
 self-contained and deterministic.
 
-Paths defined in AGENT_CONTRACT_V2:
+Paths defined in AGENT_CONTRACT_V2 §6:
 1. Fleet failure: Incident Lead → Fulfillment Planning & Recovery
-2. Recall: Extraction → Incident Lead → Network & Custody → Planning → Partner Ops
-3. Partner callback: Model Armor → Partner Operations (no planning)
-4. Daily planning: Deterministic candidates → Fulfillment Planning & Recovery
+2. Recall: Extraction → Incident Lead → Network & Custody → Fulfillment Planning
+   & Recovery. Partner Operations is NOT chained off recall; §6 assigns it to the
+   separate authenticated partner-evidence scenario, which runs through
+   main.py:process_partner_evidence rather than this coordinator.
+3. Daily planning: Deterministic candidates → Fulfillment Planning & Recovery
+4. Next-day draft: Deterministic candidates → Fulfillment Planning & Recovery
 """
 
 from enum import Enum
@@ -21,7 +24,6 @@ class TriggerClass(str, Enum):
     DAILY_PLANNING = "DAILY_PLANNING"
     FLEET_FAILURE = "FLEET_FAILURE"
     RECALL = "RECALL"
-    PARTNER_CALLBACK = "PARTNER_CALLBACK"
     NEXT_DAY_DRAFT = "NEXT_DAY_DRAFT"
 
 
@@ -48,14 +50,8 @@ ORCHESTRATION_PATHS = {
             "full-shelf.incident-lead.v1",
             "full-shelf.network-custody.v2",
             "full-shelf.fulfillment-planning-recovery.v2",
-            "full-shelf.partner-operations.v2",
         ),
-        "Food safety recall: extract scope, scope response, reconcile custody, plan recovery, contact partners",
-    ),
-    TriggerClass.PARTNER_CALLBACK: OrchestrationPath(
-        TriggerClass.PARTNER_CALLBACK,
-        ("full-shelf.partner-operations.v2",),
-        "Authenticated partner response: interpret evidence and propose custody actions",
+        "Food safety recall: extract scope, scope response, reconcile custody, plan recovery",
     ),
     TriggerClass.DAILY_PLANNING: OrchestrationPath(
         TriggerClass.DAILY_PLANNING,

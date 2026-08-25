@@ -66,6 +66,7 @@ from .tools import (
     partner_state_read,
     recovery_candidates_read,
 )
+from .orchestration import TriggerClass, sequence_for_trigger
 from .validation import (
     proposal_hash,
     validate_custody_assessment,
@@ -79,16 +80,11 @@ from .validation import (
 # Infrastructure identifier for the coordinator itself (not an agent, not in FLEET_AGENT_IDS)
 AGENT_INCIDENT_COORDINATOR = "full-shelf.incident-coordinator.v1"
 
-# The RECALL sequence: the most common trigger path. Derived from orchestration.RECALL sequence.
-# For validation/acceptance tests: always use orchestration.sequence_for_trigger(TriggerClass.RECALL).
-# Never hand-code a sequence here; all trust claims must derive from the same authoritative source.
-_RECALL_SEQUENCE = (
-    AGENT_RECALL_INTAKE_EXTRACTION,
-    AGENT_INCIDENT_LEAD,
-    AGENT_NETWORK_CUSTODY,
-    AGENT_FULFILLMENT_PLANNING_RECOVERY,
-    AGENT_PARTNER_OPERATIONS,
-)
+# The RECALL sequence, DERIVED from the single authoritative source in
+# orchestration.py. A previously hand-copied duplicate of this tuple silently
+# disagreed with ORCHESTRATION_PATHS when the recall path changed, so it is
+# derived here rather than restated. Never hand-code a sequence in this module.
+_RECALL_SEQUENCE = sequence_for_trigger(TriggerClass.RECALL)
 # GOVERNED_SEQUENCE is for backward compatibility only. All new code uses sequence_for_trigger().
 GOVERNED_SEQUENCE = _RECALL_SEQUENCE
 
@@ -188,7 +184,7 @@ def _build_hops_for_trigger(
     }
 
     # Partner Operations outbound communication mode: select template for partner.
-    # Inbound evidence (PARTNER_CALLBACK trigger) is handled directly in main.py:process_partner_evidence
+    # Inbound partner evidence is handled directly in main.py:process_partner_evidence
     # after Model Armor screening, using partner_evidence.py's run_partner_evidence_agent and
     # verify_partner_custody_proposal. The coordinator does not invoke Partner Operations for callbacks;
     # this route is for outbound template selection only.
@@ -229,15 +225,14 @@ def build_incident_coordinator_agent(run_context: Optional[FleetRunContext] = No
 
     sub_agents = []
     if run_context is not None:
-        from .orchestration import sequence_for_trigger, TriggerClass
-
         # Build only the agents needed for this trigger
         agent_ids = sequence_for_trigger(run_context.trigger_class)
 
-        # Partner Operations output schema depends on trigger
+        # Partner Operations runs outbound-follow-up only from this coordinator.
+        # Inbound partner evidence is governed solely by the authenticated,
+        # Model-Armor-screened main.py:process_partner_evidence path and never
+        # reaches run_fleet, so no inbound schema is selected here.
         partner_schema = None
-        if run_context.trigger_class == TriggerClass.PARTNER_CALLBACK:
-            partner_schema = PartnerInboundInterpretation
 
         sub_agents_by_id = {
             AGENT_INCIDENT_LEAD: build_incident_lead_agent(),
@@ -495,7 +490,8 @@ def run_fleet(
 
     `trigger` specifies which orchestration path to use. Defaults to RECALL for
     backward compatibility. Valid triggers: DAILY_PLANNING, FLEET_FAILURE, RECALL,
-    PARTNER_CALLBACK, NEXT_DAY_DRAFT.
+    NEXT_DAY_DRAFT. Inbound partner callbacks are not a fleet trigger; they are
+    governed solely by main.py:process_partner_evidence.
 
     Every accepted specialist output is consumed by the assembled proposal. Any
     agent, model, tool, schema, timeout, or reconciliation failure returns a
