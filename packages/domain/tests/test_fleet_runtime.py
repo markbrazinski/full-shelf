@@ -58,10 +58,11 @@ def test_coordinator_governs_five_correlated_specialist_executions():
         result = run_canonical_fleet()
     proposal = result["proposal"]
     assert proposal.status == "PROPOSED", proposal.reason_code
-    # Five real model invocations in the RECALL path, in the governed order,
+    # Five real model invocations in the RECALL path, in the correct order
+    # (extraction first, then incident lead uses validated structured scope),
     # each its own Runner/session execution correlated by coordination_run_id.
     assert calls == [
-        "IncidentLeadAgent", "RecallIntakeExtractionAgent", "NetworkAndCustodyAgent",
+        "RecallIntakeExtractionAgent", "IncidentLeadAgent", "NetworkAndCustodyAgent",
         "FulfillmentPlanningRecoveryAgent", "PartnerOperationsAgent",
     ]
 
@@ -95,8 +96,9 @@ def test_evidence_identifiers_come_from_real_execution_and_are_distinct():
         sessions.add(entry["specialist_session_id"])
         runs.add(entry["specialist_run_id"])
     # Every specialist ran in its own session and its own invocation.
-    assert len(sessions) == 4
-    assert len(runs) == 4
+    # Five specialists in RECALL path
+    assert len(sessions) == 5
+    assert len(runs) == 5
 
 
 def test_no_evidence_field_claims_adk_parentage():
@@ -129,8 +131,9 @@ def test_all_four_specialist_outputs_are_consumed_by_the_proposal():
     assert proposal.partner.template_id == "partner.acknowledgment-request.v1"
 
 
-def test_coordinator_is_a_real_adk_base_agent_with_four_sub_agents():
+def test_coordinator_is_a_real_adk_base_agent_with_five_sub_agents():
     from full_shelf_domain.fleet.coordinator import FleetRunContext
+    from full_shelf_domain.fleet.orchestration import TriggerClass
     from google.adk.agents import BaseAgent
 
     context = FleetRunContext(
@@ -138,11 +141,14 @@ def test_coordinator_is_a_real_adk_base_agent_with_four_sub_agents():
         screened_notice_text=CANONICAL_NOTICE, graph_result=CANONICAL_GRAPH,
         recovery_candidates=canonical_candidates(),
         partner_state=CANONICAL_PARTNER_STATE,
+        source_event_id="EVT-001",
+        trigger_class=TriggerClass.RECALL,
     )
     coordinator = build_incident_coordinator_agent(context)
     assert isinstance(coordinator, BaseAgent)
     assert [agent.name for agent in coordinator.sub_agents] == [
-        "RecallIntakeExtractionAgent", "NetworkAndCustodyAgent",
+        "RecallIntakeExtractionAgent", "IncidentLeadAgent",
+        "NetworkAndCustodyAgent",
         "FulfillmentPlanningRecoveryAgent", "PartnerOperationsAgent",
     ]
 
@@ -327,8 +333,8 @@ def test_false_containment_claim_is_refused():
 def test_invented_candidate_is_refused_before_partner_operations():
     calls = []
     with scripted_gemini(overrides={"FulfillmentPlanningRecoveryAgent": {
-        "selected_candidate_id": "CAND-INVENTED-BY-MODEL", "rationale": "r",
-        "cited_constraints": ["c"], "tradeoffs": "t", "confidence": 0.9,
+        "selected_candidate_id": "CAND-INVENTED-BY-MODEL", "operating_objective": "RECALL_RECOVERY",
+        "rationale": "r", "cited_constraints": ["c"], "tradeoffs": "t", "confidence": 0.9,
     }}, calls=calls):
         proposal = run_canonical_fleet()["proposal"]
     assert proposal.reason_code == "UNKNOWN_RECOVERY_CANDIDATE"
@@ -376,6 +382,7 @@ def test_noncanonical_selection_changes_the_proposal_under_real_execution():
         with scripted_gemini(overrides={
             "FulfillmentPlanningRecoveryAgent": {
                 "selected_candidate_id": candidate_id,
+                "operating_objective": "RECALL_RECOVERY",
                 "rationale": "Chosen under the bounded lot-ordering policy.",
                 "cited_constraints": ["45 allocatable cases"],
                 "tradeoffs": "Five cases remain short either way.",

@@ -94,6 +94,7 @@ AGENT_TOOL_ALLOWLIST: Dict[str, tuple] = {
 # Bounded wall-clock budget per agent. No agent may loop or retry internally;
 # re-entry is owned by the existing idempotent Pub/Sub event mechanism.
 AGENT_TIMEOUT_SECONDS: Dict[str, float] = {
+    "full-shelf.incident-coordinator.v1": 180.0,  # Coordinator orchestrates five specialists
     AGENT_FULFILLMENT_PLANNING_RECOVERY: 30.0,
     AGENT_INCIDENT_LEAD: 30.0,
     AGENT_RECALL_INTAKE_EXTRACTION: 30.0,

@@ -78,15 +78,18 @@ from .validation import (
 # Infrastructure identifier for the coordinator itself (not an agent, not in FLEET_AGENT_IDS)
 AGENT_INCIDENT_COORDINATOR = "full-shelf.incident-coordinator.v1"
 
-# The governed specialist order the coordinator owns. Declared as data so the
-# catalog and the parity tests read the same sequence the runtime executes.
-GOVERNED_SEQUENCE = (
-    AGENT_INCIDENT_LEAD,
+# The RECALL sequence: the most common trigger path. Derived from orchestration.RECALL sequence.
+# For validation/acceptance tests: always use orchestration.sequence_for_trigger(TriggerClass.RECALL).
+# Never hand-code a sequence here; all trust claims must derive from the same authoritative source.
+_RECALL_SEQUENCE = (
     AGENT_RECALL_INTAKE_EXTRACTION,
+    AGENT_INCIDENT_LEAD,
     AGENT_NETWORK_CUSTODY,
     AGENT_FULFILLMENT_PLANNING_RECOVERY,
     AGENT_PARTNER_OPERATIONS,
 )
+# GOVERNED_SEQUENCE is for backward compatibility only. All new code uses sequence_for_trigger().
+GOVERNED_SEQUENCE = _RECALL_SEQUENCE
 
 
 class FleetRunContext:
@@ -127,10 +130,12 @@ class FleetRunContext:
 
 def _build_hops_for_trigger(
     context: FleetRunContext,
+    accepted: Dict[str, Any],
 ) -> List[tuple]:
     """Build agent sequence (hops) based on trigger class and context.
 
-    Returns list of (agent_id, prompt, validator, ok_label) tuples.
+    Returns list of (agent_id, prompt_builder, validator, ok_label) tuples.
+    prompt_builder is a callable that accepts previously accepted outputs.
     Agents are only included if they're in the sequence for this trigger.
     """
     from .orchestration import TriggerClass, sequence_for_trigger
@@ -139,9 +144,10 @@ def _build_hops_for_trigger(
     agent_sequence = sequence_for_trigger(trigger)
 
     # Define all possible hop configurations
+    # prompt_builder is a callable that accepts `accepted` dict from previous steps
     hop_configs = {
         AGENT_INCIDENT_LEAD: (
-            incident_lead_prompt(
+            lambda acc: incident_lead_prompt(
                 context.source_event_id or "",
                 context.source_class or "FOOD_SAFETY_RECALL",
                 context.lot_id
@@ -154,21 +160,21 @@ def _build_hops_for_trigger(
             "INCIDENT_SCOPE_DETERMINED"
         ),
         AGENT_RECALL_INTAKE_EXTRACTION: (
-            recall_prompt(context.screened_notice_text),
+            lambda acc: recall_prompt(context.screened_notice_text),
             lambda parsed: validate_recall_extraction(
                 parsed, context.screened_notice_text, context.lot_id
             ),
             "SCHEMA_AND_SOURCE_ANCHORS_VALIDATED"
         ),
         AGENT_NETWORK_CUSTODY: (
-            network_custody_prompt(custody_graph_read(context.graph_result)),
+            lambda acc: network_custody_prompt(custody_graph_read(context.graph_result)),
             lambda parsed: validate_custody_assessment(
                 parsed, context.graph_result
             ),
             "RECONCILED_WITH_DETERMINISTIC_GRAPH"
         ),
         AGENT_FULFILLMENT_PLANNING_RECOVERY: (
-            recovery_prompt(recovery_candidates_read(context.recovery_candidates),
+            lambda acc: recovery_prompt(recovery_candidates_read(context.recovery_candidates),
                           context.trigger_class),
             lambda parsed: (validate_recovery_selection(
                 parsed, context.recovery_candidates
@@ -176,7 +182,7 @@ def _build_hops_for_trigger(
             "CANDIDATE_ID_RESOLVED_DETERMINISTICALLY"
         ),
         AGENT_PARTNER_OPERATIONS: (
-            partner_prompt(partner_state_read(**context.partner_state)),
+            lambda acc: partner_prompt(partner_state_read(**context.partner_state)),
             lambda parsed: validate_partner_communication(
                 parsed, partner_state_read(**context.partner_state)
             ),
@@ -188,8 +194,8 @@ def _build_hops_for_trigger(
     hops = []
     for agent_id in agent_sequence:
         if agent_id in hop_configs:
-            prompt, validator, ok_label = hop_configs[agent_id]
-            hops.append((agent_id, prompt, validator, ok_label))
+            prompt_builder, validator, ok_label = hop_configs[agent_id]
+            hops.append((agent_id, prompt_builder, validator, ok_label))
 
     return hops
 
@@ -253,9 +259,11 @@ def build_incident_coordinator_agent(run_context: Optional[FleetRunContext] = No
             failure: Optional[str] = None
 
             # Build hops based on trigger; only invoke agents needed for this trigger
-            hops = _build_hops_for_trigger(context)
+            hops = _build_hops_for_trigger(context, accepted)
 
-            for index, (agent_id, prompt, validator, ok_label) in enumerate(hops):
+            for index, (agent_id, prompt_builder, validator, ok_label) in enumerate(hops):
+                # Build prompt dynamically, using results from previous steps
+                prompt = prompt_builder(accepted)
                 # Get specialist by index (should match because both derived from same sequence)
                 if index >= len(self.sub_agents):
                     failure = "SUB_AGENTS_MISMATCH"
@@ -457,6 +465,7 @@ def run_fleet(
     graph_result: Dict[str, Any],
     recovery_candidates: List[Dict[str, Any]],
     partner_state: Dict[str, Any],
+    source_event_id: Optional[str] = None,
     trigger: Optional[str] = None,
     coordinator_runner=None,
 ) -> Dict[str, Any]:
@@ -495,6 +504,7 @@ def run_fleet(
         incident_id=incident_id, lot_id=lot_id,
         screened_notice_text=screened_notice_text, graph_result=graph_result,
         recovery_candidates=recovery_candidates, partner_state=partner_state,
+        source_event_id=source_event_id,
         trigger_class=trigger_class,
     )
     runner = coordinator_runner or (

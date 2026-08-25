@@ -1736,6 +1736,7 @@ def _run_agent_fleet_proposal(
     candidates: List[Dict[str, Any]],
     unconfirmed_position: Dict[str, Any],
     unconfirmed_cases: int,
+    source_event_id: Optional[str] = None,
     deadline: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Run one real Incident Coordinator ADK execution and revalidate its output.
@@ -1752,6 +1753,7 @@ def _run_agent_fleet_proposal(
             screened_notice_text=screened_notice_text,
             graph_result=graph,
             recovery_candidates=candidates,
+            source_event_id=source_event_id,
             partner_state={
                 "partner_id": unconfirmed_position["node_id"],
                 "partner_name": unconfirmed_position["name"],
@@ -1945,6 +1947,7 @@ def _execute_managed_recall_event(
         screened_notice_text=notice_text, graph=graph, candidates=candidates,
         unconfirmed_position=unconfirmed_position,
         unconfirmed_cases=graph["unconfirmed_cases"],
+        source_event_id=source_event_id,
     )
     _persist_model_invocation_evidence(
         fleet.get("extraction_evidence") or {}, route="managed-pubsub-recall"

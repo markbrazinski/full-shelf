@@ -51,11 +51,15 @@ CANONICAL_PARTNER_STATE = {
 
 INCIDENT_LEAD_OK = {
     "incident_class": "FOOD_SAFETY_RECALL",
-    "source_event_id": "EVT-RECALL-001",
+    "source_event_id": "EVT-001",
     "affected_capabilities": ["cold_chain", "fulfillment"],
     "affected_commitment_ids": ["O202", "O203"],
     "selected_playbook_id": "recall-response-playbook-v1",
-    "required_specialists": ["extraction", "custody", "recovery"],
+    "required_specialists": [
+        "full-shelf.recall-intake-extraction.v2",
+        "full-shelf.network-custody.v2",
+        "full-shelf.fulfillment-planning-recovery.v2",
+    ],
     "immediate_safety_actions": ["pause_distribution", "notify_sites"],
     "rationale": "Food safety recall scope determined from notice.",
     "confidence": 0.95,
@@ -73,6 +77,7 @@ CUSTODY_OK = {
 }
 RECOVERY_OK = {
     "selected_candidate_id": "CAND-LOT-ASC",
+    "operating_objective": "RECALL_RECOVERY",
     "rationale": "Only feasible allocation of the available safe stock.",
     "cited_constraints": ["40 safe cases available"],
     "tradeoffs": "A truthful shortfall remains for the third agency.",
@@ -185,6 +190,7 @@ def run_canonical_fleet(**kwargs):
         "graph_result": CANONICAL_GRAPH,
         "recovery_candidates": canonical_candidates(),
         "partner_state": CANONICAL_PARTNER_STATE,
+        "source_event_id": "EVT-001",
     }
     params.update(kwargs)
     return run_fleet(**params)

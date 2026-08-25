@@ -89,8 +89,16 @@ def test_every_agent_has_an_explicit_tool_allowlist():
 
 
 def test_every_agent_has_a_bounded_timeout():
-    assert set(contracts.AGENT_TIMEOUT_SECONDS) == set(contracts.FLEET_AGENT_IDS)
-    assert all(0 < s <= 120 for s in contracts.AGENT_TIMEOUT_SECONDS.values())
+    # Five agents + coordinator (infrastructure) have timeouts
+    from full_shelf_domain.fleet.coordinator import AGENT_INCIDENT_COORDINATOR
+    expected_timeout_agents = set(contracts.FLEET_AGENT_IDS) | {AGENT_INCIDENT_COORDINATOR}
+    assert set(contracts.AGENT_TIMEOUT_SECONDS) == expected_timeout_agents
+    # Five specialists: 30s each. Coordinator: 180s (orchestrates all five)
+    for agent_id, timeout in contracts.AGENT_TIMEOUT_SECONDS.items():
+        if agent_id == AGENT_INCIDENT_COORDINATOR:
+            assert timeout == 180.0
+        else:
+            assert 0 < timeout <= 120
 
 
 def test_agent_output_schemas_forbid_extra_fields():
