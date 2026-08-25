@@ -161,8 +161,9 @@ def verify_partner_custody_proposal(
     time_claim = proposal.confirmation_time
     if time_claim is None:
         claims["confirmation_time"] = ClaimResult(
-            state="MISSING", reason="OPTIONAL_CLAIM_NOT_PRESENT"
+            state="MISSING", reason="CLAIM_NOT_PRESENT"
         )
+        reasons.append("MISSING_CONFIRMATION_TIME_EVIDENCE")
     elif not _anchored(source_text, time_claim):
         claims["confirmation_time"] = ClaimResult(
             state="CONFLICTING", reason="QUOTE_OR_VALUE_NOT_ANCHORED"

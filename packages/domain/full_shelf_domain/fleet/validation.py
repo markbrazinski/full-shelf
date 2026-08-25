@@ -250,5 +250,9 @@ def validate_partner_inbound_interpretation(
             anchor = claim.source_anchor.casefold()
             if anchor not in source_normalized:
                 raise FleetProposalError(f"PARTNER_ANCHOR_NOT_IN_SOURCE: {claim.claim_type}")
+            # Also verify the claim value appears somewhere in the source
+            value_normalized = str(claim.value).casefold()
+            if value_normalized not in source_normalized:
+                raise FleetProposalError(f"PARTNER_CLAIM_VALUE_NOT_IN_SOURCE: {claim.claim_type}")
 
     return interpretation
