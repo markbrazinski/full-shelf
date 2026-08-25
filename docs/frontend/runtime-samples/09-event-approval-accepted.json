@@ -1,0 +1,108 @@
+{
+  "http_status": 200,
+  "request": {
+    "actions": [
+      {
+        "cases": 22,
+        "disposition": "TRUCK_2",
+        "order_id": "O202"
+      },
+      {
+        "cases": 20,
+        "disposition": "PARTNER_PICKUP",
+        "order_id": "O203"
+      }
+    ],
+    "expected_revision": "rev07",
+    "idempotency_key": "packet-capture-001",
+    "incident_id": "INC-2210",
+    "plan_diff_hash": "7fa0e4c18872ff8d2de643746c5a29fc1b53970ff6130ac7fe9950f657609e08",
+    "plan_id": "PLAN-2026-08-14",
+    "target_revision": "rev08"
+  },
+  "response": {
+    "duplicate": false,
+    "events": [
+      {
+        "activity_entry": {
+          "action_required": false,
+          "detail": "One click approves the exact diff once.",
+          "headline": "Repair approved",
+          "severity": "SUCCESS"
+        },
+        "actor": {
+          "id": "fixture-synthetic-operations-director",
+          "kind": "HUMAN"
+        },
+        "authority": "CANONICAL",
+        "correlation": {
+          "agent_run_id": null,
+          "incident_id": "INC-2210",
+          "operating_day": "2026-08-14",
+          "plan_id": "PLAN-2026-08-14",
+          "source_event_id": null,
+          "tenant_id": "east-bay-food-bank"
+        },
+        "effective_at": "2026-08-14T08:24:00-07:00",
+        "event_id": "FS-E009-REV08-REPAIR-APPROVED",
+        "event_type": "REV08_REPAIR_APPROVED",
+        "evidence_classification": "SYNTHETIC_TEST",
+        "payload": {},
+        "projection_delta": {},
+        "receipt_refs": [
+          "fixture-RCT-approval-567445b35677"
+        ],
+        "recorded_at": "2026-08-25T21:55:54.158876+00:00",
+        "scenario_id": "full-shelf-friday-2026-08-14",
+        "schema_version": "full-shelf.demo-event.v2",
+        "sequence": 9,
+        "session_id": "fs-replay-1ec9f81a-ee20-4cd2-a130-82a60b4b2f6e",
+        "source_refs": [],
+        "trigger_class": "HUMAN_GATE",
+        "validation": {
+          "reasons": [],
+          "status": "ACCEPTED"
+        }
+      }
+    ],
+    "receipt": {
+      "actions": [
+        {
+          "cases": 22,
+          "disposition": "TRUCK_2",
+          "order_id": "O202"
+        },
+        {
+          "cases": 20,
+          "disposition": "PARTNER_PICKUP",
+          "order_id": "O203"
+        }
+      ],
+      "actor": {
+        "id": "fixture-synthetic-operations-director",
+        "kind": "HUMAN"
+      },
+      "classification": "SYNTHETIC_TEST",
+      "disclosure": "Synthetic replay approval. No real authentication, KMS signature, or human identity is claimed.",
+      "expected_revision": "rev07",
+      "idempotency_key": "packet-capture-001",
+      "incident_id": "INC-2210",
+      "plan_diff_hash": "7fa0e4c18872ff8d2de643746c5a29fc1b53970ff6130ac7fe9950f657609e08",
+      "plan_id": "PLAN-2026-08-14",
+      "receipt_id": "fixture-RCT-approval-567445b35677",
+      "recorded_at": "2026-08-25T21:55:54.158859+00:00",
+      "synthetic": true,
+      "target_revision": "rev08"
+    },
+    "state": {
+      "approval_required": false,
+      "approved": true,
+      "branch": null,
+      "classification": "SYNTHETIC_TEST",
+      "cursor": 9,
+      "mode": "PLAYING",
+      "session_id": "fs-replay-1ec9f81a-ee20-4cd2-a130-82a60b4b2f6e",
+      "synthetic": true
+    }
+  }
+}

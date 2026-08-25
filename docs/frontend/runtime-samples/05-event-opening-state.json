@@ -1,0 +1,371 @@
+{
+  "approval_required": false,
+  "approved": false,
+  "branch": null,
+  "classification": "SYNTHETIC_TEST",
+  "created_at": "2026-08-25T21:55:54.137571+00:00",
+  "cursor": 5,
+  "feed": [
+    {
+      "activity_entry": {
+        "action_required": false,
+        "detail": "Candidate generation begins from current constraints.",
+        "headline": "Morning plan generation triggered",
+        "severity": "INFO"
+      },
+      "actor": {
+        "id": "full-shelf.scheduler",
+        "kind": "SYSTEM"
+      },
+      "authority": "CANONICAL",
+      "correlation": {
+        "agent_run_id": null,
+        "incident_id": null,
+        "operating_day": "2026-08-14",
+        "plan_id": "PLAN-2026-08-14",
+        "source_event_id": null,
+        "tenant_id": "east-bay-food-bank"
+      },
+      "effective_at": "2026-08-14T05:30:00-07:00",
+      "event_id": "FS-E001-PLAN-GENERATION-TRIGGERED",
+      "event_type": "PLAN_GENERATION_TRIGGERED",
+      "evidence_classification": "SYNTHETIC_TEST",
+      "payload": {},
+      "projection_delta": {},
+      "receipt_refs": [],
+      "recorded_at": "2026-08-25T21:55:54.137571+00:00",
+      "scenario_id": "full-shelf-friday-2026-08-14",
+      "schema_version": "full-shelf.demo-event.v2",
+      "sequence": 1,
+      "session_id": "fs-replay-1ec9f81a-ee20-4cd2-a130-82a60b4b2f6e",
+      "source_refs": [],
+      "trigger_class": "AUTONOMOUS_SCHEDULED",
+      "validation": {
+        "reasons": [],
+        "status": "ACCEPTED"
+      }
+    },
+    {
+      "activity_entry": {
+        "action_required": false,
+        "detail": "Deterministically feasible candidate for five stops and 96 cases.",
+        "headline": "rev07 proposed",
+        "severity": "INFO"
+      },
+      "actor": {
+        "id": "full-shelf.fulfillment-planning-recovery.v2",
+        "kind": "AGENT"
+      },
+      "authority": "CANONICAL",
+      "correlation": {
+        "agent_run_id": null,
+        "incident_id": null,
+        "operating_day": "2026-08-14",
+        "plan_id": "PLAN-2026-08-14",
+        "source_event_id": null,
+        "tenant_id": "east-bay-food-bank"
+      },
+      "effective_at": "2026-08-14T05:30:00-07:00",
+      "event_id": "FS-E002-REV07-PROPOSED",
+      "event_type": "REV07_PROPOSED",
+      "evidence_classification": "SYNTHETIC_TEST",
+      "payload": {},
+      "projection_delta": {},
+      "receipt_refs": [],
+      "recorded_at": "2026-08-25T21:55:54.137571+00:00",
+      "scenario_id": "full-shelf-friday-2026-08-14",
+      "schema_version": "full-shelf.demo-event.v2",
+      "sequence": 2,
+      "session_id": "fs-replay-1ec9f81a-ee20-4cd2-a130-82a60b4b2f6e",
+      "source_refs": [],
+      "trigger_class": "AUTONOMOUS_CHAINED",
+      "validation": {
+        "reasons": [],
+        "status": "ACCEPTED"
+      }
+    },
+    {
+      "activity_entry": {
+        "action_required": false,
+        "detail": "Exact rev07 candidate approved and bound.",
+        "headline": "rev07 approved",
+        "severity": "SUCCESS"
+      },
+      "actor": {
+        "id": "fixture-synthetic-operations-director",
+        "kind": "HUMAN"
+      },
+      "authority": "CANONICAL",
+      "correlation": {
+        "agent_run_id": null,
+        "incident_id": null,
+        "operating_day": "2026-08-14",
+        "plan_id": "PLAN-2026-08-14",
+        "source_event_id": null,
+        "tenant_id": "east-bay-food-bank"
+      },
+      "effective_at": "2026-08-14T06:45:00-07:00",
+      "event_id": "FS-E003-REV07-APPROVED",
+      "event_type": "REV07_APPROVED",
+      "evidence_classification": "SYNTHETIC_TEST",
+      "payload": {},
+      "projection_delta": {},
+      "receipt_refs": [],
+      "recorded_at": "2026-08-25T21:55:54.137571+00:00",
+      "scenario_id": "full-shelf-friday-2026-08-14",
+      "schema_version": "full-shelf.demo-event.v2",
+      "sequence": 3,
+      "session_id": "fs-replay-1ec9f81a-ee20-4cd2-a130-82a60b4b2f6e",
+      "source_refs": [],
+      "trigger_class": "HUMAN_GATE",
+      "validation": {
+        "reasons": [],
+        "status": "ACCEPTED"
+      }
+    },
+    {
+      "activity_entry": {
+        "action_required": false,
+        "detail": "Five commitments and manifests are authoritative.",
+        "headline": "rev07 active",
+        "severity": "SUCCESS"
+      },
+      "actor": {
+        "id": "full-shelf.plan-ledger",
+        "kind": "SYSTEM"
+      },
+      "authority": "CANONICAL",
+      "correlation": {
+        "agent_run_id": null,
+        "incident_id": null,
+        "operating_day": "2026-08-14",
+        "plan_id": "PLAN-2026-08-14",
+        "source_event_id": null,
+        "tenant_id": "east-bay-food-bank"
+      },
+      "effective_at": "2026-08-14T07:30:00-07:00",
+      "event_id": "FS-E004-REV07-ACTIVATED",
+      "event_type": "REV07_ACTIVATED",
+      "evidence_classification": "SYNTHETIC_TEST",
+      "payload": {},
+      "projection_delta": {},
+      "receipt_refs": [
+        "fixture-RCT-plan:rev07"
+      ],
+      "recorded_at": "2026-08-25T21:55:54.137571+00:00",
+      "scenario_id": "full-shelf-friday-2026-08-14",
+      "schema_version": "full-shelf.demo-event.v2",
+      "sequence": 4,
+      "session_id": "fs-replay-1ec9f81a-ee20-4cd2-a130-82a60b4b2f6e",
+      "source_refs": [],
+      "trigger_class": "AUTONOMOUS_CHAINED",
+      "validation": {
+        "reasons": [],
+        "status": "ACCEPTED"
+      }
+    },
+    {
+      "activity_entry": {
+        "action_required": false,
+        "detail": "Five stops, 96 cases, Truck 2 at 36/60.",
+        "headline": "Friday opened",
+        "severity": "INFO"
+      },
+      "actor": {
+        "id": "full-shelf.projection",
+        "kind": "SYSTEM"
+      },
+      "authority": "CANONICAL",
+      "correlation": {
+        "agent_run_id": null,
+        "incident_id": null,
+        "operating_day": "2026-08-14",
+        "plan_id": "PLAN-2026-08-14",
+        "source_event_id": null,
+        "tenant_id": "east-bay-food-bank"
+      },
+      "effective_at": "2026-08-14T08:05:00-07:00",
+      "event_id": "FS-E005-DAY-OPENED",
+      "event_type": "DAY_OPENED",
+      "evidence_classification": "SYNTHETIC_TEST",
+      "payload": {},
+      "projection_delta": {},
+      "receipt_refs": [],
+      "recorded_at": "2026-08-25T21:55:54.137571+00:00",
+      "scenario_id": "full-shelf-friday-2026-08-14",
+      "schema_version": "full-shelf.demo-event.v2",
+      "sequence": 5,
+      "session_id": "fs-replay-1ec9f81a-ee20-4cd2-a130-82a60b4b2f6e",
+      "source_refs": [],
+      "trigger_class": "AUTONOMOUS_SCHEDULED",
+      "validation": {
+        "reasons": [],
+        "status": "ACCEPTED"
+      }
+    }
+  ],
+  "history": [
+    {
+      "activity_entry": {
+        "action_required": false,
+        "detail": "Candidate generation begins from current constraints.",
+        "headline": "Morning plan generation triggered",
+        "severity": "INFO"
+      },
+      "actor": {
+        "id": "full-shelf.scheduler",
+        "kind": "SYSTEM"
+      },
+      "authority": "CANONICAL",
+      "correlation": {
+        "agent_run_id": null,
+        "incident_id": null,
+        "operating_day": "2026-08-14",
+        "plan_id": "PLAN-2026-08-14",
+        "source_event_id": null,
+        "tenant_id": "east-bay-food-bank"
+      },
+      "effective_at": "2026-08-14T05:30:00-07:00",
+      "event_id": "FS-E001-PLAN-GENERATION-TRIGGERED",
+      "event_type": "PLAN_GENERATION_TRIGGERED",
+      "evidence_classification": "SYNTHETIC_TEST",
+      "payload": {},
+      "projection_delta": {},
+      "receipt_refs": [],
+      "recorded_at": "2026-08-25T21:55:54.137571+00:00",
+      "scenario_id": "full-shelf-friday-2026-08-14",
+      "schema_version": "full-shelf.demo-event.v2",
+      "sequence": 1,
+      "session_id": "fs-replay-1ec9f81a-ee20-4cd2-a130-82a60b4b2f6e",
+      "source_refs": [],
+      "trigger_class": "AUTONOMOUS_SCHEDULED",
+      "validation": {
+        "reasons": [],
+        "status": "ACCEPTED"
+      }
+    },
+    {
+      "activity_entry": {
+        "action_required": false,
+        "detail": "Deterministically feasible candidate for five stops and 96 cases.",
+        "headline": "rev07 proposed",
+        "severity": "INFO"
+      },
+      "actor": {
+        "id": "full-shelf.fulfillment-planning-recovery.v2",
+        "kind": "AGENT"
+      },
+      "authority": "CANONICAL",
+      "correlation": {
+        "agent_run_id": null,
+        "incident_id": null,
+        "operating_day": "2026-08-14",
+        "plan_id": "PLAN-2026-08-14",
+        "source_event_id": null,
+        "tenant_id": "east-bay-food-bank"
+      },
+      "effective_at": "2026-08-14T05:30:00-07:00",
+      "event_id": "FS-E002-REV07-PROPOSED",
+      "event_type": "REV07_PROPOSED",
+      "evidence_classification": "SYNTHETIC_TEST",
+      "payload": {},
+      "projection_delta": {},
+      "receipt_refs": [],
+      "recorded_at": "2026-08-25T21:55:54.137571+00:00",
+      "scenario_id": "full-shelf-friday-2026-08-14",
+      "schema_version": "full-shelf.demo-event.v2",
+      "sequence": 2,
+      "session_id": "fs-replay-1ec9f81a-ee20-4cd2-a130-82a60b4b2f6e",
+      "source_refs": [],
+      "trigger_class": "AUTONOMOUS_CHAINED",
+      "validation": {
+        "reasons": [],
+        "status": "ACCEPTED"
+      }
+    },
+    {
+      "activity_entry": {
+        "action_required": false,
+        "detail": "Exact rev07 candidate approved and bound.",
+        "headline": "rev07 approved",
+        "severity": "SUCCESS"
+      },
+      "actor": {
+        "id": "fixture-synthetic-operations-director",
+        "kind": "HUMAN"
+      },
+      "authority": "CANONICAL",
+      "correlation": {
+        "agent_run_id": null,
+        "incident_id": null,
+        "operating_day": "2026-08-14",
+        "plan_id": "PLAN-2026-08-14",
+        "source_event_id": null,
+        "tenant_id": "east-bay-food-bank"
+      },
+      "effective_at": "2026-08-14T06:45:00-07:00",
+      "event_id": "FS-E003-REV07-APPROVED",
+      "event_type": "REV07_APPROVED",
+      "evidence_classification": "SYNTHETIC_TEST",
+      "payload": {},
+      "projection_delta": {},
+      "receipt_refs": [],
+      "recorded_at": "2026-08-25T21:55:54.137571+00:00",
+      "scenario_id": "full-shelf-friday-2026-08-14",
+      "schema_version": "full-shelf.demo-event.v2",
+      "sequence": 3,
+      "session_id": "fs-replay-1ec9f81a-ee20-4cd2-a130-82a60b4b2f6e",
+      "source_refs": [],
+      "trigger_class": "HUMAN_GATE",
+      "validation": {
+        "reasons": [],
+        "status": "ACCEPTED"
+      }
+    },
+    {
+      "activity_entry": {
+        "action_required": false,
+        "detail": "Five commitments and manifests are authoritative.",
+        "headline": "rev07 active",
+        "severity": "SUCCESS"
+      },
+      "actor": {
+        "id": "full-shelf.plan-ledger",
+        "kind": "SYSTEM"
+      },
+      "authority": "CANONICAL",
+      "correlation": {
+        "agent_run_id": null,
+        "incident_id": null,
+        "operating_day": "2026-08-14",
+        "plan_id": "PLAN-2026-08-14",
+        "source_event_id": null,
+        "tenant_id": "east-bay-food-bank"
+      },
+      "effective_at": "2026-08-14T07:30:00-07:00",
+      "event_id": "FS-E004-REV07-ACTIVATED",
+      "event_type": "REV07_ACTIVATED",
+      "evidence_classification": "SYNTHETIC_TEST",
+      "payload": {},
+      "projection_delta": {},
+      "receipt_refs": [
+        "fixture-RCT-plan:rev07"
+      ],
+      "recorded_at": "2026-08-25T21:55:54.137571+00:00",
+      "scenario_id": "full-shelf-friday-2026-08-14",
+      "schema_version": "full-shelf.demo-event.v2",
+      "sequence": 4,
+      "session_id": "fs-replay-1ec9f81a-ee20-4cd2-a130-82a60b4b2f6e",
+      "source_refs": [],
+      "trigger_class": "AUTONOMOUS_CHAINED",
+      "validation": {
+        "reasons": [],
+        "status": "ACCEPTED"
+      }
+    }
+  ],
+  "mode": "IDLE",
+  "operating_timestamp": "2026-08-14T08:05:00-07:00",
+  "session_id": "fs-replay-1ec9f81a-ee20-4cd2-a130-82a60b4b2f6e",
+  "synthetic": true
+}

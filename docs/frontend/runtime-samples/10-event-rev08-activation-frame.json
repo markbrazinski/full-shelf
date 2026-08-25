@@ -1,0 +1,44 @@
+{
+  "http_status": 200,
+  "response": {
+    "activity_entry": {
+      "action_required": false,
+      "detail": "Truck 2 at 58/60; O203 partner pickup; INC-2210 resolved.",
+      "headline": "rev08 active",
+      "severity": "SUCCESS"
+    },
+    "actor": {
+      "id": "full-shelf.plan-ledger",
+      "kind": "SYSTEM"
+    },
+    "authority": "CANONICAL",
+    "correlation": {
+      "agent_run_id": null,
+      "incident_id": "INC-2210",
+      "operating_day": "2026-08-14",
+      "plan_id": "PLAN-2026-08-14",
+      "source_event_id": null,
+      "tenant_id": "east-bay-food-bank"
+    },
+    "effective_at": "2026-08-14T08:24:00-07:00",
+    "event_id": "FS-E010-REV08-ACTIVATED",
+    "event_type": "REV08_ACTIVATED",
+    "evidence_classification": "SYNTHETIC_TEST",
+    "payload": {},
+    "projection_delta": {},
+    "receipt_refs": [
+      "fixture-RCT-plan:rev08"
+    ],
+    "recorded_at": "2026-08-25T21:55:54.160198+00:00",
+    "scenario_id": "full-shelf-friday-2026-08-14",
+    "schema_version": "full-shelf.demo-event.v2",
+    "sequence": 10,
+    "session_id": "fs-replay-1ec9f81a-ee20-4cd2-a130-82a60b4b2f6e",
+    "source_refs": [],
+    "trigger_class": "AUTONOMOUS_CHAINED",
+    "validation": {
+      "reasons": [],
+      "status": "ACCEPTED"
+    }
+  }
+}

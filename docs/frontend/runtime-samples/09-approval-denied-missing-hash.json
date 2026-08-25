@@ -1,0 +1,7 @@
+{
+  "http_status": 409,
+  "request_omitted": "plan_diff_hash",
+  "response": {
+    "detail": "APPROVAL_BINDING_MISMATCH"
+  }
+}

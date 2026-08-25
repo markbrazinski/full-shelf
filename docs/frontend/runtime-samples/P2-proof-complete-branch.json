@@ -1,0 +1,173 @@
+{
+  "http_status": 200,
+  "response": {
+    "branch": "complete",
+    "canonical_cursor": 25,
+    "custody": {
+      "confirmed": 96,
+      "unconfirmed": 0,
+      "unique": 96
+    },
+    "domain_mutations": 2,
+    "events": [
+      {
+        "activity_entry": {
+          "action_required": false,
+          "detail": "Authenticated partner callback accepted in an isolated authority.",
+          "headline": "Partner callback received",
+          "severity": "INFO"
+        },
+        "actor": {
+          "id": "fixture-partner-callback",
+          "kind": "EXTERNAL"
+        },
+        "authority": "ISOLATED",
+        "correlation": {
+          "agent_run_id": null,
+          "incident_id": null,
+          "operating_day": "2026-08-14",
+          "plan_id": "PLAN-2026-08-14",
+          "source_event_id": null,
+          "tenant_id": "east-bay-food-bank"
+        },
+        "effective_at": "2026-08-14T10:18:00-07:00",
+        "event_id": "FS-PC1-PARTNER-CALLBACK-RECEIVED",
+        "event_type": "PARTNER_CALLBACK_RECEIVED",
+        "evidence_classification": "SYNTHETIC_TEST",
+        "payload": {},
+        "projection_delta": {},
+        "receipt_refs": [],
+        "recorded_at": "2026-08-25T21:55:54.193729+00:00",
+        "scenario_id": "full-shelf-friday-2026-08-14",
+        "schema_version": "full-shelf.demo-event.v2",
+        "sequence": "b1",
+        "session_id": "fs-replay-1ec9f81a-ee20-4cd2-a130-82a60b4b2f6e",
+        "source_refs": [],
+        "trigger_class": "ISOLATED_PROOF",
+        "validation": {
+          "reasons": [],
+          "status": "ACCEPTED"
+        }
+      },
+      {
+        "activity_entry": {
+          "action_required": false,
+          "detail": "No factual sufficiency implied.",
+          "headline": "Safety screening passed",
+          "severity": "INFO"
+        },
+        "actor": {
+          "id": "full-shelf.model-armor",
+          "kind": "SYSTEM"
+        },
+        "authority": "ISOLATED",
+        "correlation": {
+          "agent_run_id": null,
+          "incident_id": null,
+          "operating_day": "2026-08-14",
+          "plan_id": "PLAN-2026-08-14",
+          "source_event_id": null,
+          "tenant_id": "east-bay-food-bank"
+        },
+        "effective_at": "2026-08-14T10:18:00-07:00",
+        "event_id": "FS-PC2-MODEL-ARMOR-PASSED",
+        "event_type": "MODEL_ARMOR_PASSED",
+        "evidence_classification": "SYNTHETIC_TEST",
+        "payload": {},
+        "projection_delta": {},
+        "receipt_refs": [],
+        "recorded_at": "2026-08-25T21:55:54.193729+00:00",
+        "scenario_id": "full-shelf-friday-2026-08-14",
+        "schema_version": "full-shelf.demo-event.v2",
+        "sequence": "b2",
+        "session_id": "fs-replay-1ec9f81a-ee20-4cd2-a130-82a60b4b2f6e",
+        "source_refs": [],
+        "trigger_class": "ISOLATED_PROOF",
+        "validation": {
+          "reasons": [],
+          "status": "ACCEPTED"
+        }
+      },
+      {
+        "activity_entry": {
+          "action_required": false,
+          "detail": "Literal lot, quantity, location, disposition, and confirmation time support the open obligation.",
+          "headline": "Partner evidence proposed",
+          "severity": "ATTENTION"
+        },
+        "actor": {
+          "id": "full-shelf.partner-operations.v2",
+          "kind": "AGENT"
+        },
+        "authority": "ISOLATED",
+        "correlation": {
+          "agent_run_id": null,
+          "incident_id": null,
+          "operating_day": "2026-08-14",
+          "plan_id": "PLAN-2026-08-14",
+          "source_event_id": null,
+          "tenant_id": "east-bay-food-bank"
+        },
+        "effective_at": "2026-08-14T10:19:00-07:00",
+        "event_id": "FS-PC3-PARTNER-EVIDENCE-PROPOSED",
+        "event_type": "PARTNER_EVIDENCE_PROPOSED",
+        "evidence_classification": "SYNTHETIC_TEST",
+        "payload": {},
+        "projection_delta": {},
+        "receipt_refs": [],
+        "recorded_at": "2026-08-25T21:55:54.193729+00:00",
+        "scenario_id": "full-shelf-friday-2026-08-14",
+        "schema_version": "full-shelf.demo-event.v2",
+        "sequence": "b3",
+        "session_id": "fs-replay-1ec9f81a-ee20-4cd2-a130-82a60b4b2f6e",
+        "source_refs": [],
+        "trigger_class": "ISOLATED_PROOF",
+        "validation": {
+          "reasons": [],
+          "status": "ACCEPTED"
+        }
+      },
+      {
+        "activity_entry": {
+          "action_required": false,
+          "detail": "APPLIED in isolated authority. Domain mutations 2, evidence mutations 1. Branch custody 96/96. Canonical Friday history remains 88/96.",
+          "headline": "Partner evidence applied in isolation",
+          "severity": "SUCCESS"
+        },
+        "actor": {
+          "id": "full-shelf.deterministic-policy",
+          "kind": "SYSTEM"
+        },
+        "authority": "ISOLATED",
+        "correlation": {
+          "agent_run_id": null,
+          "incident_id": null,
+          "operating_day": "2026-08-14",
+          "plan_id": "PLAN-2026-08-14",
+          "source_event_id": null,
+          "tenant_id": "east-bay-food-bank"
+        },
+        "effective_at": "2026-08-14T10:19:00-07:00",
+        "event_id": "FS-PC4-PARTNER-EVIDENCE-APPLIED",
+        "event_type": "PARTNER_EVIDENCE_APPLIED",
+        "evidence_classification": "SYNTHETIC_TEST",
+        "payload": {},
+        "projection_delta": {},
+        "receipt_refs": [],
+        "recorded_at": "2026-08-25T21:55:54.193729+00:00",
+        "scenario_id": "full-shelf-friday-2026-08-14",
+        "schema_version": "full-shelf.demo-event.v2",
+        "sequence": "b4",
+        "session_id": "fs-replay-1ec9f81a-ee20-4cd2-a130-82a60b4b2f6e",
+        "source_refs": [],
+        "trigger_class": "ISOLATED_PROOF",
+        "validation": {
+          "reasons": [],
+          "status": "ACCEPTED"
+        }
+      }
+    ],
+    "evidence_mutations": 1,
+    "label": "ISOLATED SELECTED PROOF"
+  }
+}

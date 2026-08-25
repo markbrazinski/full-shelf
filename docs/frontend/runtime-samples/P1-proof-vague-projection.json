@@ -1,0 +1,862 @@
+{
+  "agent_activity_as_of": {
+    "agents": [
+      {
+        "adk_framework": "google-adk-2.6.1",
+        "agent_id": "full-shelf.incident-lead.v1",
+        "declared_tools": [],
+        "deterministic_validation": "INCIDENT_SCOPE_DETERMINED",
+        "display_name": "Incident Lead",
+        "model_used": "gemini-flash-latest",
+        "role": "GOVERNED_SPECIALIST",
+        "run_id": "fixture-run-incident-1",
+        "session_id": "fixture-sess-incident-1",
+        "state": "COMPLETED",
+        "tool_invocations": []
+      },
+      {
+        "adk_framework": "google-adk-2.6.1",
+        "agent_id": "full-shelf.recall-intake-extraction.v2",
+        "declared_tools": [],
+        "deterministic_validation": "SCHEMA_AND_SOURCE_ANCHORS_VALIDATED",
+        "display_name": "Recall Intake & Extraction",
+        "model_used": "gemini-flash-latest",
+        "role": "GOVERNED_SPECIALIST",
+        "run_id": "fixture-run-recall-1",
+        "session_id": "fixture-sess-recall-1",
+        "state": "COMPLETED",
+        "tool_invocations": []
+      },
+      {
+        "adk_framework": "google-adk-2.6.1",
+        "agent_id": "full-shelf.network-custody.v2",
+        "declared_tools": [
+          "custody_graph_read",
+          "custody_dependents_read"
+        ],
+        "deterministic_validation": "RECONCILED_WITH_DETERMINISTIC_GRAPH",
+        "display_name": "Network & Custody",
+        "model_used": "gemini-flash-latest",
+        "role": "GOVERNED_SPECIALIST",
+        "run_id": "fixture-run-custody-1",
+        "session_id": "fixture-sess-custody-1",
+        "state": "COMPLETED",
+        "tool_invocations": [
+          {
+            "status": "SUCCEEDED",
+            "tool_name": "custody_graph_read"
+          }
+        ]
+      },
+      {
+        "adk_framework": "google-adk-2.6.1",
+        "agent_id": "full-shelf.fulfillment-planning-recovery.v2",
+        "declared_tools": [],
+        "deterministic_validation": "CANDIDATE_ID_RESOLVED_DETERMINISTICALLY",
+        "display_name": "Fulfillment Planning & Recovery",
+        "model_used": "gemini-flash-latest",
+        "role": "GOVERNED_SPECIALIST",
+        "run_id": "fixture-run-recovery-1",
+        "session_id": "fixture-sess-recovery-1",
+        "state": "COMPLETED",
+        "tool_invocations": []
+      },
+      {
+        "adk_framework": "google-adk-2.6.1",
+        "agent_id": "full-shelf.partner-operations.v2",
+        "declared_tools": [],
+        "deterministic_validation": "TEMPLATE_AND_PARAMETERS_VALIDATED",
+        "display_name": "Partner Operations",
+        "model_used": "gemini-flash-latest",
+        "role": "GOVERNED_SPECIALIST",
+        "run_id": "fixture-run-partner-1",
+        "session_id": "fixture-sess-partner-1",
+        "state": "COMPLETED",
+        "tool_invocations": []
+      }
+    ],
+    "committed_at": "2026-08-14T10:10:00-07:00",
+    "coordination_run_id": "fixture-run-coord-1",
+    "coordinator_session_id": "fixture-sess-coord-1",
+    "delegation_trace": [
+      {
+        "adk_event_id": "fixture-evt-incident-1",
+        "adk_framework": "google-adk-2.6.1",
+        "agent_id": "full-shelf.incident-lead.v1",
+        "agent_name": "incident",
+        "coordination_run_id": "fixture-run-coord-1",
+        "coordinator_agent_id": "full-shelf.incident-coordinator.v1",
+        "declared_tools": [],
+        "deterministic_validation": "INCIDENT_SCOPE_DETERMINED",
+        "model_used": "gemini-flash-latest",
+        "specialist_run_id": "fixture-run-incident-1",
+        "specialist_session_id": "fixture-sess-incident-1",
+        "tool_invocations": []
+      },
+      {
+        "adk_event_id": "fixture-evt-recall-1",
+        "adk_framework": "google-adk-2.6.1",
+        "agent_id": "full-shelf.recall-intake-extraction.v2",
+        "agent_name": "recall",
+        "coordination_run_id": "fixture-run-coord-1",
+        "coordinator_agent_id": "full-shelf.incident-coordinator.v1",
+        "declared_tools": [],
+        "deterministic_validation": "SCHEMA_AND_SOURCE_ANCHORS_VALIDATED",
+        "model_used": "gemini-flash-latest",
+        "specialist_run_id": "fixture-run-recall-1",
+        "specialist_session_id": "fixture-sess-recall-1",
+        "tool_invocations": []
+      },
+      {
+        "adk_event_id": "fixture-evt-custody-1",
+        "adk_framework": "google-adk-2.6.1",
+        "agent_id": "full-shelf.network-custody.v2",
+        "agent_name": "custody",
+        "coordination_run_id": "fixture-run-coord-1",
+        "coordinator_agent_id": "full-shelf.incident-coordinator.v1",
+        "declared_tools": [
+          "custody_graph_read",
+          "custody_dependents_read"
+        ],
+        "deterministic_validation": "RECONCILED_WITH_DETERMINISTIC_GRAPH",
+        "model_used": "gemini-flash-latest",
+        "specialist_run_id": "fixture-run-custody-1",
+        "specialist_session_id": "fixture-sess-custody-1",
+        "tool_invocations": [
+          {
+            "status": "SUCCEEDED",
+            "tool_name": "custody_graph_read"
+          }
+        ]
+      },
+      {
+        "adk_event_id": "fixture-evt-recovery-1",
+        "adk_framework": "google-adk-2.6.1",
+        "agent_id": "full-shelf.fulfillment-planning-recovery.v2",
+        "agent_name": "recovery",
+        "coordination_run_id": "fixture-run-coord-1",
+        "coordinator_agent_id": "full-shelf.incident-coordinator.v1",
+        "declared_tools": [],
+        "deterministic_validation": "CANDIDATE_ID_RESOLVED_DETERMINISTICALLY",
+        "model_used": "gemini-flash-latest",
+        "specialist_run_id": "fixture-run-recovery-1",
+        "specialist_session_id": "fixture-sess-recovery-1",
+        "tool_invocations": []
+      },
+      {
+        "adk_event_id": "fixture-evt-partner-1",
+        "adk_framework": "google-adk-2.6.1",
+        "agent_id": "full-shelf.partner-operations.v2",
+        "agent_name": "partner",
+        "coordination_run_id": "fixture-run-coord-1",
+        "coordinator_agent_id": "full-shelf.incident-coordinator.v1",
+        "declared_tools": [],
+        "deterministic_validation": "TEMPLATE_AND_PARAMETERS_VALIDATED",
+        "model_used": "gemini-flash-latest",
+        "specialist_run_id": "fixture-run-partner-1",
+        "specialist_session_id": "fixture-sess-partner-1",
+        "tool_invocations": []
+      }
+    ],
+    "governed_sequence": [
+      "full-shelf.recall-intake-extraction.v2",
+      "full-shelf.incident-lead.v1",
+      "full-shelf.network-custody.v2",
+      "full-shelf.fulfillment-planning-recovery.v2"
+    ],
+    "manifest_version": "1.1.0",
+    "proposal_status": "PROPOSED",
+    "root_agent_id": "full-shelf.incident-coordinator.v1",
+    "topology": "SEPARATELY_CORRELATED_SPECIALIST_RUNNERS"
+  },
+  "authority": "ISOLATED",
+  "authority_scope": "east-bay-food-bank@2026-08-14",
+  "carry_forward_obligations": [
+    {
+      "incident_id": "INC-2231",
+      "kind": "ACKNOWLEDGMENT_OBLIGATION",
+      "reference_id": "WORK-PCF-FIXTURE"
+    },
+    {
+      "kind": "MOVEMENT_BARRIER",
+      "lot_id": "LTC-4471",
+      "reference_id": "BARRIER-4471"
+    },
+    {
+      "incident_id": "INC-2231",
+      "kind": "RECOVERY_SHORTFALL",
+      "reference_id": "SF-A03"
+    },
+    {
+      "kind": "UNRESOLVED_INCIDENT",
+      "reference_id": "INC-2231",
+      "terminal_state": "PARTIALLY_CONTAINED"
+    }
+  ],
+  "classification": "SYNTHETIC_TEST",
+  "current_day": {
+    "active_plan_revision": "rev08",
+    "approvals": [
+      {
+        "approval_id": "fixture-APR-rev08",
+        "approver_domain": "example.com",
+        "approver_identity_class": "VERIFIED_HUMAN_OPERATOR",
+        "authority_scope": "east-bay-food-bank@2026-08-14",
+        "expires_at": "2026-08-14 20:00:00-07:00",
+        "kms_key_version": "projects/p/locations/l/keyRings/k/cryptoKeys/c/cryptoKeyVersions/1",
+        "plan_diff": [
+          {
+            "cases": 22,
+            "change_type": "REROUTE",
+            "order_id": "O202",
+            "target_vehicle": "TRUCK-02"
+          },
+          {
+            "cases": 20,
+            "change_type": "PICKUP",
+            "order_id": "O203",
+            "target_vehicle": null
+          }
+        ],
+        "plan_diff_hash": "fixture-diffhash-rev08",
+        "plan_id": "PLAN-2026-08-14",
+        "proposed_revision": "rev08",
+        "source_revision": "rev07",
+        "state": "VERIFIED",
+        "verified_at": "2026-08-14 08:24:00-07:00"
+      }
+    ],
+    "commitments": [
+      {
+        "agency": "Agency 01",
+        "cases": 18,
+        "lot_id": "LTC-4471",
+        "order_id": "O201",
+        "revision": "rev07",
+        "status": "DELIVERED",
+        "vehicle": "TRUCK-01"
+      },
+      {
+        "agency": "Agency 02",
+        "cases": 22,
+        "lot_id": "LTC-4471",
+        "order_id": "O202",
+        "revision": "rev07",
+        "status": "PLANNED",
+        "vehicle": "TRUCK-01"
+      },
+      {
+        "agency": "Agency 03",
+        "cases": 20,
+        "lot_id": "LTC-4471",
+        "order_id": "O203",
+        "revision": "rev07",
+        "status": "PLANNED",
+        "vehicle": "TRUCK-01"
+      },
+      {
+        "agency": "Agency 04",
+        "cases": 15,
+        "lot_id": "LTC-5090",
+        "order_id": "O204",
+        "revision": "rev07",
+        "status": "PLANNED",
+        "vehicle": "TRUCK-02"
+      },
+      {
+        "agency": "Agency 05",
+        "cases": 21,
+        "lot_id": "LTC-5090",
+        "order_id": "O205",
+        "revision": "rev07",
+        "status": "PLANNED",
+        "vehicle": "TRUCK-02"
+      },
+      {
+        "agency": "Agency 02",
+        "cases": 22,
+        "lot_id": "LTC-4471",
+        "order_id": "O202",
+        "revision": "rev08",
+        "status": "PLANNED",
+        "vehicle": "TRUCK-02"
+      },
+      {
+        "agency": "Agency 03",
+        "cases": 20,
+        "lot_id": "LTC-4471",
+        "order_id": "O203",
+        "revision": "rev08",
+        "status": "PARTNER_PICKUP",
+        "vehicle": null
+      },
+      {
+        "agency": "Agency 04",
+        "cases": 15,
+        "lot_id": "LTC-5090",
+        "order_id": "O204",
+        "revision": "rev08",
+        "status": "PLANNED",
+        "vehicle": "TRUCK-02"
+      },
+      {
+        "agency": "Agency 05",
+        "cases": 21,
+        "lot_id": "LTC-5090",
+        "order_id": "O205",
+        "revision": "rev08",
+        "status": "PLANNED",
+        "vehicle": "TRUCK-02"
+      }
+    ],
+    "dispatch": {
+      "partner_pickups": [
+        {
+          "agency": "Agency 03",
+          "assigned_vehicle_id": null,
+          "assignment_type": "PARTNER_PICKUP",
+          "cases": 20,
+          "lot_id": "LTC-4471",
+          "order_id": "O203",
+          "sequence": null,
+          "status": "PARTNER_PICKUP"
+        }
+      ],
+      "plan_id": "PLAN-2026-08-14",
+      "revision": "rev08",
+      "sequence_basis": "COMMITTED_MANIFEST_ORDER",
+      "vehicles": [
+        {
+          "assigned_cases": 58,
+          "at_capacity": false,
+          "capacity_cases": 60,
+          "is_operational": true,
+          "name": "Refrigerated Truck 2",
+          "remaining_cases": 2,
+          "stop_count": 3,
+          "stops": [
+            {
+              "agency": "Agency 02",
+              "assignment_type": "VEHICLE_ROUTED",
+              "cases": 22,
+              "lot_id": "LTC-4471",
+              "order_id": "O202",
+              "sequence": 1,
+              "status": "PLANNED"
+            },
+            {
+              "agency": "Agency 04",
+              "assignment_type": "VEHICLE_ROUTED",
+              "cases": 15,
+              "lot_id": "LTC-5090",
+              "order_id": "O204",
+              "sequence": 2,
+              "status": "PLANNED"
+            },
+            {
+              "agency": "Agency 05",
+              "assignment_type": "VEHICLE_ROUTED",
+              "cases": 21,
+              "lot_id": "LTC-5090",
+              "order_id": "O205",
+              "sequence": 3,
+              "status": "PLANNED"
+            }
+          ],
+          "vehicle_id": "TRUCK-02"
+        }
+      ]
+    },
+    "incidents": [
+      {
+        "affected_lot_id": null,
+        "incident_id": "INC-2210",
+        "incident_type": "VEHICLE_FAILURE",
+        "model_armor_screening": null,
+        "refusal": null,
+        "status": "RESOLVED",
+        "terminal_state": "NONE"
+      },
+      {
+        "affected_lot_id": "LTC-4471",
+        "incident_id": "INC-2231",
+        "incident_type": "FOOD_SAFETY_RECALL",
+        "model_armor_screening": {
+          "correlation_id": "0123456789abcdef0123456789abcdef",
+          "result": "PASS"
+        },
+        "refusal": {
+          "committed_at": "2026-08-14T10:12:00-07:00",
+          "decided_by": "DETERMINISTIC_POLICY",
+          "decision": "DENIED",
+          "mutations_applied": 0,
+          "policy_action": "RECORD_REFUSAL",
+          "receipt_id": "fixture-RCT-containment-refusal",
+          "requested_action": "CLOSURE_ELIGIBILITY_CHECK",
+          "requested_by_role": "INCIDENT_COORDINATOR"
+        },
+        "status": "PARTIALLY_CONTAINED",
+        "terminal_state": "PARTIALLY_CONTAINED"
+      }
+    ],
+    "plan_constraints": [
+      {
+        "constraint_type": "LOT_EXCLUSION",
+        "description": "LTC-4471 excluded",
+        "plan_id": "PLAN-2026-08-14"
+      }
+    ],
+    "plan_id": "PLAN-2026-08-14",
+    "plan_revisions": [
+      {
+        "plan_id": "PLAN-2026-08-14",
+        "revision": "rev07",
+        "status": "SUPERSEDED"
+      },
+      {
+        "plan_id": "PLAN-2026-08-14",
+        "revision": "rev08",
+        "status": "ACTIVE"
+      }
+    ],
+    "recovery": {
+      "allocations": [
+        {
+          "agency_id": "AGENCY-01",
+          "allocation_id": "ALLOC-1",
+          "cases": 18,
+          "incident_id": "INC-2231",
+          "lot_id": "LTC-5090",
+          "source_facility": null,
+          "source_facility_basis": "CONFIGURED_TENANT_REFERENCE",
+          "status": "COMMITTED"
+        },
+        {
+          "agency_id": "AGENCY-02",
+          "allocation_id": "ALLOC-2",
+          "cases": 22,
+          "incident_id": "INC-2231",
+          "lot_id": "LTC-5090",
+          "source_facility": null,
+          "source_facility_basis": "CONFIGURED_TENANT_REFERENCE",
+          "status": "COMMITTED"
+        }
+      ],
+      "explanation": {
+        "agencies_allocated": 2,
+        "agencies_short": 1,
+        "basis": "DETERMINISTIC_DERIVATION",
+        "cases_allocated": 40,
+        "cases_requested": 60,
+        "cases_short": 20,
+        "persisted_agent_rationale": null,
+        "statement": "40 of 60 cases were allocated from safe stock; 20 cases remain short across 1 agency destinations."
+      },
+      "shortfalls": [
+        {
+          "agency_id": "AGENCY-03",
+          "cases": 20,
+          "incident_id": "INC-2231",
+          "shortfall_id": "SF-A03",
+          "status": "OPEN"
+        }
+      ]
+    },
+    "repair_proposal": null,
+    "vehicles": [
+      {
+        "assigned_cases": 58,
+        "capacity": 60,
+        "is_operational": true,
+        "name": "Refrigerated Truck 2",
+        "vehicle_id": "TRUCK-02"
+      }
+    ]
+  },
+  "execution_evidence_as_of": {
+    "custody_graph": {
+      "classification": "SYNTHETIC_TEST",
+      "confirmed_cases": 88,
+      "current_positions": [
+        {
+          "acknowledgment_status": "CONFIRMED",
+          "name": "Warehouse",
+          "node_id": "N-WH",
+          "node_type": "WAREHOUSE",
+          "on_hand_cases": 24,
+          "path_depth": 0
+        },
+        {
+          "acknowledgment_status": "CONFIRMED",
+          "name": "Truck 2",
+          "node_id": "N-TR2",
+          "node_type": "VEHICLE",
+          "on_hand_cases": 22,
+          "path_depth": 1
+        },
+        {
+          "acknowledgment_status": "CONFIRMED",
+          "name": "Pickup Staging",
+          "node_id": "N-STG",
+          "node_type": "STAGING",
+          "on_hand_cases": 20,
+          "path_depth": 1
+        },
+        {
+          "acknowledgment_status": "CONFIRMED",
+          "name": "Agency 01",
+          "node_id": "N-AG01",
+          "node_type": "AGENCY",
+          "on_hand_cases": 10,
+          "path_depth": 1
+        },
+        {
+          "acknowledgment_status": "UNCONFIRMED",
+          "name": "Site 01",
+          "node_id": "N-ST01",
+          "node_type": "SUBSITE",
+          "on_hand_cases": 8,
+          "path_depth": 2
+        },
+        {
+          "acknowledgment_status": "CONFIRMED",
+          "name": "Direct Rescue",
+          "node_id": "N-RESC",
+          "node_type": "DIRECT_RESCUE",
+          "on_hand_cases": 12,
+          "path_depth": 1
+        }
+      ],
+      "edges": [
+        {
+          "case_count": 22,
+          "edge_id": "E-N-TR2",
+          "is_sub_distribution": false,
+          "lot_id": "LTC-4471",
+          "source_node_id": "N-WH",
+          "target_node_id": "N-TR2"
+        },
+        {
+          "case_count": 20,
+          "edge_id": "E-N-STG",
+          "is_sub_distribution": false,
+          "lot_id": "LTC-4471",
+          "source_node_id": "N-WH",
+          "target_node_id": "N-STG"
+        },
+        {
+          "case_count": 18,
+          "edge_id": "E-N-AG01",
+          "is_sub_distribution": false,
+          "lot_id": "LTC-4471",
+          "source_node_id": "N-WH",
+          "target_node_id": "N-AG01"
+        },
+        {
+          "case_count": 8,
+          "edge_id": "E-N-ST01",
+          "is_sub_distribution": true,
+          "lot_id": "LTC-4471",
+          "source_node_id": "N-AG01",
+          "target_node_id": "N-ST01"
+        },
+        {
+          "case_count": 12,
+          "edge_id": "E-N-RESC",
+          "is_sub_distribution": false,
+          "lot_id": "LTC-4471",
+          "source_node_id": "N-WH",
+          "target_node_id": "N-RESC"
+        }
+      ],
+      "intermediate_subtotals_readded": false,
+      "lot_id": "LTC-4471",
+      "max_path_depth": 2,
+      "node_count": 6,
+      "paths": [
+        {
+          "destination_node_id": "N-TR2",
+          "path_depth": 1,
+          "root_node_id": "N-WH"
+        },
+        {
+          "destination_node_id": "N-STG",
+          "path_depth": 1,
+          "root_node_id": "N-WH"
+        },
+        {
+          "destination_node_id": "N-AG01",
+          "path_depth": 1,
+          "root_node_id": "N-WH"
+        },
+        {
+          "destination_node_id": "N-ST01",
+          "path_depth": 2,
+          "root_node_id": "N-WH"
+        },
+        {
+          "destination_node_id": "N-RESC",
+          "path_depth": 1,
+          "root_node_id": "N-WH"
+        }
+      ],
+      "query_engine": "SPANNER_GRAPH_GQL",
+      "tenant_id": "east-bay-food-bank",
+      "unconfirmed_cases": 8,
+      "unconfirmed_positions": [
+        {
+          "acknowledgment_status": "UNCONFIRMED",
+          "name": "Site 01",
+          "node_id": "N-ST01",
+          "node_type": "SUBSITE",
+          "on_hand_cases": 8,
+          "path_depth": 2
+        }
+      ],
+      "unique_current_cases": 96
+    },
+    "history": [
+      {
+        "action_id": "CMD-81337DC1990351BB97F3566E358C",
+        "action_type": "SAVE_PLAN_REVISION",
+        "committed_at": "2026-08-14T07:30:00-07:00",
+        "mutations_applied": 1,
+        "receipt_id": "fixture-RCT-plan:rev07",
+        "status": "SUCCESS"
+      },
+      {
+        "action_id": "CMD-82A0876D9A428F38C7FCA570A15B",
+        "action_type": "SET_INCIDENT_STATUS",
+        "committed_at": "2026-08-14T08:20:00-07:00",
+        "mutations_applied": 1,
+        "receipt_id": "fixture-RCT-status:SCOPING",
+        "status": "SUCCESS"
+      },
+      {
+        "action_id": "CMD-08DF43D6320B712F1311C5F3DBBE",
+        "action_type": "SAVE_PLAN_REVISION",
+        "committed_at": "2026-08-14T08:24:00-07:00",
+        "mutations_applied": 1,
+        "receipt_id": "fixture-RCT-plan:rev08",
+        "status": "SUCCESS"
+      },
+      {
+        "action_id": "CMD-703DB31A739465A604496B8B3EF8",
+        "action_type": "SET_INCIDENT_STATUS",
+        "committed_at": "2026-08-14T09:36:00-07:00",
+        "mutations_applied": 1,
+        "receipt_id": "fixture-RCT-status:SCOPING",
+        "status": "SUCCESS"
+      },
+      {
+        "action_id": "CMD-4D18163F14822366071B269DAB63",
+        "action_type": "ACTIVATE_MOVEMENT_BARRIER",
+        "committed_at": "2026-08-14T10:05:00-07:00",
+        "mutations_applied": 1,
+        "receipt_id": "fixture-RCT-movement-barrier",
+        "status": "SUCCESS"
+      },
+      {
+        "action_id": "CMD-E8C05D7A1EF1AA2E85C7085A846B",
+        "action_type": "SET_INCIDENT_STATUS",
+        "committed_at": "2026-08-14T10:06:00-07:00",
+        "mutations_applied": 1,
+        "receipt_id": "fixture-RCT-status:CONTAINMENT_IN_PROGRESS",
+        "status": "SUCCESS"
+      },
+      {
+        "action_id": "CMD-26ED813D0781E6733CCC2538882D",
+        "action_type": "INVALIDATE_PLAN",
+        "committed_at": "2026-08-14T10:07:00-07:00",
+        "mutations_applied": 1,
+        "receipt_id": "fixture-RCT-plan:invalidate",
+        "status": "SUCCESS"
+      },
+      {
+        "action_id": "CMD-01060F596F27833BAC96E45D35EE",
+        "action_type": "ALLOCATE_SAFE_STOCK",
+        "committed_at": "2026-08-14T10:10:00-07:00",
+        "mutations_applied": 1,
+        "receipt_id": "fixture-RCT-safe-recovery",
+        "status": "SUCCESS"
+      },
+      {
+        "action_id": "CMD-EB92F0EFF4626473CB8E007CBEF5",
+        "action_type": "RECORD_REFUSAL",
+        "committed_at": "2026-08-14T10:12:00-07:00",
+        "mutations_applied": 0,
+        "receipt_id": "fixture-RCT-containment-refusal",
+        "status": "DENIED"
+      },
+      {
+        "action_id": "CMD-A479AFF12EC29E0C1BE3BA3089D1",
+        "action_type": "SET_INCIDENT_STATUS",
+        "committed_at": "2026-08-14T10:13:00-07:00",
+        "mutations_applied": 1,
+        "receipt_id": "fixture-RCT-status:PARTIALLY_CONTAINED",
+        "status": "SUCCESS"
+      }
+    ],
+    "receipts_committed": 11
+  },
+  "operating_day": "2026-08-14",
+  "partner_evidence_as_of": [
+    {
+      "agent": {
+        "adk_event_id": "fixture-event-fixture-partner-vague",
+        "adk_framework": "google-adk/2.6.1",
+        "adk_invocation_id": "fixture-invocation-fixture-partner-vague",
+        "adk_session_id": "fixture-session-fixture-partner-vague",
+        "agent_id": "full-shelf.partner-operations.v1",
+        "model_id": "gemini-3.5-flash"
+      },
+      "authoritative_partner_id": "PARTNER-AGENCY-01",
+      "before_after": {
+        "custody": {
+          "after": "UNCONFIRMED",
+          "before": "UNCONFIRMED",
+          "cases": 8,
+          "name": "Site 01",
+          "node_id": "N-ST01"
+        },
+        "work_item": {
+          "after": "OPEN",
+          "before": "OPEN",
+          "work_item_id": "WORK-PCF-FIXTURE"
+        }
+      },
+      "callback_principal": {
+        "audience": "https://orchestrator.example.run.app/partner-evidence",
+        "email": "partner-callback@example.com",
+        "issuer": "https://accounts.google.com",
+        "provenance": "AUTHENTICATED_PARTNER_CALLBACK",
+        "subject": "fixture-partner-subject"
+      },
+      "claim_verification": {
+        "confirmation_time": {
+          "reason": "OPTIONAL_CLAIM_NOT_PRESENT",
+          "state": "MISSING"
+        },
+        "disposition": {
+          "reason": "CLAIM_NOT_PRESENT",
+          "state": "MISSING"
+        },
+        "location": {
+          "reason": "CLAIM_NOT_PRESENT",
+          "state": "MISSING"
+        },
+        "lot": {
+          "reason": "CLAIM_NOT_PRESENT",
+          "state": "MISSING"
+        },
+        "quantity": {
+          "reason": "CLAIM_NOT_PRESENT",
+          "state": "MISSING"
+        }
+      },
+      "committed_at": "2026-08-14T10:15:00-07:00",
+      "custody": {
+        "confirmed_cases_after": 88,
+        "confirmed_cases_before": 88,
+        "total_cases": 96
+      },
+      "decision": "DENIED",
+      "event_type": "PARTNER_CUSTODY_EVIDENCE_RECEIVED",
+      "incident_id": "INC-2231",
+      "model_armor": {
+        "correlation_id": "fixture-trace",
+        "managed_operation": "sanitizeUserPrompt",
+        "safety_verdict": "PASSED",
+        "status": "APPROVED"
+      },
+      "original_response": "We pulled the remaining lettuce. Should be all good.",
+      "policy_reasons": [
+        "MISSING_LOT_EVIDENCE",
+        "MISSING_QUANTITY_EVIDENCE",
+        "MISSING_LOCATION_EVIDENCE",
+        "MISSING_DISPOSITION_EVIDENCE"
+      ],
+      "proposal": {
+        "confidence": 0.72,
+        "confirmation_time": null,
+        "custody_node_id": "N-ST01",
+        "disposition": null,
+        "expected_acknowledgment_status": "UNCONFIRMED",
+        "incident_id": "INC-2231",
+        "location": null,
+        "lot": null,
+        "partner_id": "PARTNER-AGENCY-01",
+        "quantity": null,
+        "rationale": "The response intends completion but omits required custody facts.",
+        "requested_acknowledgment_status": "CONFIRMED",
+        "requested_mutation": "CONFIRM_CUSTODY",
+        "site_id": "SITE-01",
+        "work_item_id": "WORK-PCF-FIXTURE"
+      },
+      "receipt": {
+        "action_id": "fixture-CMD-fixture-partner-vague",
+        "action_type": "PROCESS_PARTNER_EVIDENCE",
+        "committed_at": "2026-08-14T10:15:00-07:00",
+        "domain_mutations_applied": 0,
+        "evidence_mutations_applied": 1,
+        "receipt_id": "fixture-RCT-fixture-partner-vague",
+        "status": "DENIED"
+      },
+      "received_at": "2026-08-14T10:15:00-07:00",
+      "requested_mutation": {
+        "type": "CONFIRM_CUSTODY"
+      },
+      "source_event_id": "fixture-partner-vague",
+      "source_occurred_at": "2026-08-14T10:15:00-07:00"
+    }
+  ],
+  "projection_boundary": {
+    "as_of": "2026-08-14T10:16:00-07:00",
+    "mode": "EXPLICIT_AS_OF",
+    "omitted_fields": []
+  },
+  "proof_label": "ISOLATED SELECTED PROOF",
+  "recall_intake_as_of": {
+    "incident_id": "INC-2231",
+    "source": {
+      "channel": "REGULATORY_FEED",
+      "input_kind": "REPRESENTATIVE_REGULATORY_EVENT",
+      "monitoring_claimed": false,
+      "notice_format": "FDA_FORMAT",
+      "received_at": "2026-08-14T09:36:00-07:00"
+    },
+    "steps": [
+      {
+        "state": "COMPLETED",
+        "step": "REGULATORY_EVENT_RECEIVED"
+      },
+      {
+        "state": "COMPLETED",
+        "step": "NOTICE_SCREENED"
+      },
+      {
+        "state": "COMPLETED",
+        "step": "NOTICE_EXTRACTED"
+      },
+      {
+        "state": "COMPLETED",
+        "step": "INCIDENT_OPENED"
+      },
+      {
+        "state": "COMPLETED",
+        "step": "PLAN_INVALIDATED"
+      },
+      {
+        "state": "COMPLETED",
+        "step": "MOVEMENT_BARRIER_ACTIVE"
+      },
+      {
+        "state": "COMPLETED",
+        "step": "FLEET_PROPOSAL_ACCEPTED"
+      }
+    ]
+  },
+  "replay_notice": "Isolated selected proof generated from the production projection handler against a synthetic authority. It does not rewrite the canonical filmed 88/96 timeline.",
+  "tenant_id": "east-bay-food-bank",
+  "verified_principal_subject": "operator-subject"
+}

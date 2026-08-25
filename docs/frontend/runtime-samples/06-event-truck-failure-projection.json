@@ -1,0 +1,192 @@
+{
+  "agent_activity_as_of": null,
+  "authority_scope": "east-bay-food-bank@2026-08-14",
+  "carry_forward_obligations": [],
+  "classification": "SYNTHETIC_TEST",
+  "current_day": {
+    "active_plan_revision": "rev07",
+    "approvals": [],
+    "commitments": [
+      {
+        "agency": "Agency 01",
+        "cases": 18,
+        "lot_id": "LTC-4471",
+        "order_id": "O201",
+        "revision": "rev07",
+        "status": "DELIVERED",
+        "vehicle": "TRUCK-01"
+      },
+      {
+        "agency": "Agency 02",
+        "cases": 22,
+        "lot_id": "LTC-4471",
+        "order_id": "O202",
+        "revision": "rev07",
+        "status": "PLANNED",
+        "vehicle": "TRUCK-01"
+      },
+      {
+        "agency": "Agency 03",
+        "cases": 20,
+        "lot_id": "LTC-4471",
+        "order_id": "O203",
+        "revision": "rev07",
+        "status": "PLANNED",
+        "vehicle": "TRUCK-01"
+      },
+      {
+        "agency": "Agency 04",
+        "cases": 15,
+        "lot_id": "LTC-5090",
+        "order_id": "O204",
+        "revision": "rev07",
+        "status": "PLANNED",
+        "vehicle": "TRUCK-02"
+      },
+      {
+        "agency": "Agency 05",
+        "cases": 21,
+        "lot_id": "LTC-5090",
+        "order_id": "O205",
+        "revision": "rev07",
+        "status": "PLANNED",
+        "vehicle": "TRUCK-02"
+      }
+    ],
+    "dispatch": {
+      "partner_pickups": [],
+      "plan_id": "PLAN-2026-08-14",
+      "revision": "rev07",
+      "sequence_basis": "COMMITTED_MANIFEST_ORDER",
+      "vehicles": [
+        {
+          "assigned_cases": null,
+          "at_capacity": null,
+          "capacity_cases": null,
+          "is_operational": null,
+          "name": null,
+          "remaining_cases": null,
+          "stop_count": 3,
+          "stops": [
+            {
+              "agency": "Agency 01",
+              "assignment_type": "VEHICLE_ROUTED",
+              "cases": 18,
+              "lot_id": "LTC-4471",
+              "order_id": "O201",
+              "sequence": 1,
+              "status": "DELIVERED"
+            },
+            {
+              "agency": "Agency 02",
+              "assignment_type": "VEHICLE_ROUTED",
+              "cases": 22,
+              "lot_id": "LTC-4471",
+              "order_id": "O202",
+              "sequence": 2,
+              "status": "PLANNED"
+            },
+            {
+              "agency": "Agency 03",
+              "assignment_type": "VEHICLE_ROUTED",
+              "cases": 20,
+              "lot_id": "LTC-4471",
+              "order_id": "O203",
+              "sequence": 3,
+              "status": "PLANNED"
+            }
+          ],
+          "vehicle_id": "TRUCK-01"
+        },
+        {
+          "assigned_cases": null,
+          "at_capacity": null,
+          "capacity_cases": null,
+          "is_operational": null,
+          "name": null,
+          "remaining_cases": null,
+          "stop_count": 2,
+          "stops": [
+            {
+              "agency": "Agency 04",
+              "assignment_type": "VEHICLE_ROUTED",
+              "cases": 15,
+              "lot_id": "LTC-5090",
+              "order_id": "O204",
+              "sequence": 1,
+              "status": "PLANNED"
+            },
+            {
+              "agency": "Agency 05",
+              "assignment_type": "VEHICLE_ROUTED",
+              "cases": 21,
+              "lot_id": "LTC-5090",
+              "order_id": "O205",
+              "sequence": 2,
+              "status": "PLANNED"
+            }
+          ],
+          "vehicle_id": "TRUCK-02"
+        }
+      ]
+    },
+    "incidents": [
+      {
+        "affected_lot_id": null,
+        "incident_id": "INC-2210",
+        "incident_type": "VEHICLE_FAILURE",
+        "model_armor_screening": null,
+        "refusal": null,
+        "status": "ACTIVE",
+        "terminal_state": "NONE"
+      }
+    ],
+    "plan_constraints": [],
+    "plan_id": "PLAN-2026-08-14",
+    "plan_revisions": [
+      {
+        "plan_id": "PLAN-2026-08-14",
+        "revision": "rev07",
+        "status": "SUPERSEDED"
+      }
+    ],
+    "vehicles": null
+  },
+  "execution_evidence_as_of": {
+    "history": [
+      {
+        "action_id": "CMD-81337DC1990351BB97F3566E358C",
+        "action_type": "SAVE_PLAN_REVISION",
+        "committed_at": "2026-08-14T07:30:00-07:00",
+        "mutations_applied": 1,
+        "receipt_id": "fixture-RCT-plan:rev07",
+        "status": "SUCCESS"
+      },
+      {
+        "action_id": "CMD-82A0876D9A428F38C7FCA570A15B",
+        "action_type": "SET_INCIDENT_STATUS",
+        "committed_at": "2026-08-14T08:20:00-07:00",
+        "mutations_applied": 1,
+        "receipt_id": "fixture-RCT-status:SCOPING",
+        "status": "SUCCESS"
+      }
+    ],
+    "receipts_committed": 2
+  },
+  "operating_day": "2026-08-14",
+  "partner_evidence_as_of": null,
+  "projection_boundary": {
+    "as_of": "2026-08-14T08:20:00-07:00",
+    "mode": "EXPLICIT_AS_OF",
+    "omitted_fields": [
+      {
+        "field": "current_day.vehicles",
+        "reason": "PRE_BOUNDARY_STATE_NOT_RETAINED"
+      }
+    ]
+  },
+  "recall_intake_as_of": null,
+  "replay_notice": "Fixture generated from the production handler against a faked snapshot. Not a real execution. No Gemini, ADK, Model Armor, KMS, or ledger evidence.",
+  "tenant_id": "east-bay-food-bank",
+  "verified_principal_subject": "operator-subject"
+}

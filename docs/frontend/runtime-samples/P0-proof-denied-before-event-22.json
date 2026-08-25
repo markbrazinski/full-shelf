@@ -1,0 +1,7 @@
+{
+  "cursor": 5,
+  "http_status": 409,
+  "response": {
+    "detail": "PROOF_BRANCH_NOT_AVAILABLE_YET"
+  }
+}

@@ -1,0 +1,158 @@
+{
+  "classification": "SYNTHETIC_TEST",
+  "events": [
+    {
+      "effective_at": "2026-08-14T05:30:00-07:00",
+      "event_id": "FS-E001-PLAN-GENERATION-TRIGGERED",
+      "sequence": 1,
+      "trigger_class": "AUTONOMOUS_SCHEDULED"
+    },
+    {
+      "effective_at": "2026-08-14T05:30:00-07:00",
+      "event_id": "FS-E002-REV07-PROPOSED",
+      "sequence": 2,
+      "trigger_class": "AUTONOMOUS_CHAINED"
+    },
+    {
+      "effective_at": "2026-08-14T06:45:00-07:00",
+      "event_id": "FS-E003-REV07-APPROVED",
+      "sequence": 3,
+      "trigger_class": "HUMAN_GATE"
+    },
+    {
+      "effective_at": "2026-08-14T07:30:00-07:00",
+      "event_id": "FS-E004-REV07-ACTIVATED",
+      "sequence": 4,
+      "trigger_class": "AUTONOMOUS_CHAINED"
+    },
+    {
+      "effective_at": "2026-08-14T08:05:00-07:00",
+      "event_id": "FS-E005-DAY-OPENED",
+      "sequence": 5,
+      "trigger_class": "AUTONOMOUS_SCHEDULED"
+    },
+    {
+      "effective_at": "2026-08-14T08:20:00-07:00",
+      "event_id": "FS-E006-REFRIGERATION-FAILURE-RECEIVED",
+      "sequence": 6,
+      "trigger_class": "EXTERNAL_EVENT"
+    },
+    {
+      "effective_at": "2026-08-14T08:20:00-07:00",
+      "event_id": "FS-E007-FLEET-INCIDENT-SCOPED",
+      "sequence": 7,
+      "trigger_class": "AUTONOMOUS_CHAINED"
+    },
+    {
+      "effective_at": "2026-08-14T08:21:00-07:00",
+      "event_id": "FS-E008-REV08-REPAIR-PROPOSED",
+      "sequence": 8,
+      "trigger_class": "AUTONOMOUS_CHAINED"
+    },
+    {
+      "effective_at": "2026-08-14T08:24:00-07:00",
+      "event_id": "FS-E009-REV08-REPAIR-APPROVED",
+      "sequence": 9,
+      "trigger_class": "HUMAN_GATE"
+    },
+    {
+      "effective_at": "2026-08-14T08:24:00-07:00",
+      "event_id": "FS-E010-REV08-ACTIVATED",
+      "sequence": 10,
+      "trigger_class": "AUTONOMOUS_CHAINED"
+    },
+    {
+      "effective_at": "2026-08-14T09:36:00-07:00",
+      "event_id": "FS-E011-RECALL-NOTICE-RECEIVED",
+      "sequence": 11,
+      "trigger_class": "EXTERNAL_EVENT"
+    },
+    {
+      "effective_at": "2026-08-14T09:36:00-07:00",
+      "event_id": "FS-E012-MODEL-ARMOR-PASSED",
+      "sequence": 12,
+      "trigger_class": "AUTONOMOUS_CHAINED"
+    },
+    {
+      "effective_at": "2026-08-14T10:04:00-07:00",
+      "event_id": "FS-E013-RECALL-SCOPE-EXTRACTED",
+      "sequence": 13,
+      "trigger_class": "AUTONOMOUS_CHAINED"
+    },
+    {
+      "effective_at": "2026-08-14T10:04:00-07:00",
+      "event_id": "FS-E014-RECALL-RESPONSE-SCOPED",
+      "sequence": 14,
+      "trigger_class": "AUTONOMOUS_CHAINED"
+    },
+    {
+      "effective_at": "2026-08-14T10:05:00-07:00",
+      "event_id": "FS-E015-MOVEMENT-BARRIER-ACTIVATED",
+      "sequence": 15,
+      "trigger_class": "AUTONOMOUS_CHAINED"
+    },
+    {
+      "effective_at": "2026-08-14T10:06:00-07:00",
+      "event_id": "FS-E016-CONTAINMENT-IN-PROGRESS",
+      "sequence": 16,
+      "trigger_class": "AUTONOMOUS_CHAINED"
+    },
+    {
+      "effective_at": "2026-08-14T10:07:00-07:00",
+      "event_id": "FS-E017-REV08-INVALIDATED",
+      "sequence": 17,
+      "trigger_class": "AUTONOMOUS_CHAINED"
+    },
+    {
+      "effective_at": "2026-08-14T10:10:00-07:00",
+      "event_id": "FS-E018-CUSTODY-RECONCILED",
+      "sequence": 18,
+      "trigger_class": "AUTONOMOUS_CHAINED"
+    },
+    {
+      "effective_at": "2026-08-14T10:10:00-07:00",
+      "event_id": "FS-E019-SAFE-RECOVERY-PROPOSED",
+      "sequence": 19,
+      "trigger_class": "AUTONOMOUS_CHAINED"
+    },
+    {
+      "effective_at": "2026-08-14T10:10:00-07:00",
+      "event_id": "FS-E020-SAFE-RECOVERY-COMMITTED",
+      "sequence": 20,
+      "trigger_class": "AUTONOMOUS_CHAINED"
+    },
+    {
+      "effective_at": "2026-08-14T10:12:00-07:00",
+      "event_id": "FS-E021-CLOSURE-REFUSED",
+      "sequence": 21,
+      "trigger_class": "AUTONOMOUS_CHAINED"
+    },
+    {
+      "effective_at": "2026-08-14T10:13:00-07:00",
+      "event_id": "FS-E022-PARTIALLY-CONTAINED",
+      "sequence": 22,
+      "trigger_class": "AUTONOMOUS_CHAINED"
+    },
+    {
+      "effective_at": "2026-08-14T16:30:00-07:00",
+      "event_id": "FS-E023-DAY-OUTCOME-PUBLISHED",
+      "sequence": 23,
+      "trigger_class": "AUTONOMOUS_SCHEDULED"
+    },
+    {
+      "effective_at": "2026-08-14T17:00:00-07:00",
+      "event_id": "FS-E024-SATURDAY-DRAFT-PROPOSED",
+      "sequence": 24,
+      "trigger_class": "AUTONOMOUS_SCHEDULED"
+    },
+    {
+      "effective_at": "2026-08-14T17:00:00-07:00",
+      "event_id": "FS-E025-OBLIGATIONS-CARRIED-FORWARD",
+      "sequence": 25,
+      "trigger_class": "AUTONOMOUS_CHAINED"
+    }
+  ],
+  "human_gate": 9,
+  "initial_cursor": 5,
+  "scenario_id": "full-shelf-friday-2026-08-14"
+}
