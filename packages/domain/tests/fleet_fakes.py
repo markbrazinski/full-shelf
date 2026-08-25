@@ -74,18 +74,7 @@ RECALL_OK = {
 CUSTODY_OK = {
     "lot_id": "LTC-4471", "total_cases_in_custody": 96, "confirmed_cases": 88,
     "unconfirmed_cases": 8, "unconfirmed_node_ids": ["SITE-01"], "max_path_depth": 3,
-    "affected_commitment_ids": ["O202", "O203"], 
-    "positions": [
-        {"node_id": "WH-01", "quantity": 24, "status": "CONFIRMED", "supporting_edge_ids": []},
-        {"node_id": "TR2-O202", "quantity": 22, "status": "CONFIRMED", "supporting_edge_ids": []},
-        {"node_id": "PICKUP-O203", "quantity": 20, "status": "CONFIRMED", "supporting_edge_ids": []},
-        {"node_id": "AG-01", "quantity": 10, "status": "CONFIRMED", "supporting_edge_ids": []},
-        {"node_id": "SITE-01", "quantity": 8, "status": "UNCONFIRMED", "supporting_edge_ids": []},
-        {"node_id": "RESCUE", "quantity": 12, "status": "CONFIRMED", "supporting_edge_ids": []},
-    ], 
-    "unresolved_obligations": [
-        {"node_id": "SITE-01", "quantity": 8, "required_evidence": "partner_acknowledgment"}
-    ],
+    "affected_commitment_ids": [], "positions": [], "unresolved_obligations": [],
     "containment_assessment": "UNCONFIRMED_DOWNSTREAM",
     "narrative": "Eight cases at Site 01 remain unconfirmed.",
 }

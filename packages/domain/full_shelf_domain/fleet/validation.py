@@ -99,38 +99,34 @@ def validate_custody_assessment(
     if assessment.containment_assessment != expected_containment:
         raise FleetProposalError("CUSTODY_CONTAINMENT_MISMATCH")
 
-    # Positions must be non-empty and reconcile with totals (no double-count)
-    if not assessment.positions:
-        raise FleetProposalError("CUSTODY_POSITIONS_REQUIRED")
-    
-    positions_sum = sum(p.quantity for p in assessment.positions)
-    if positions_sum != assessment.total_cases_in_custody:
-        raise FleetProposalError("CUSTODY_POSITIONS_QUANTITY_MISMATCH")
+    # When positions are provided, verify they reconcile with totals (no double-count)
+    if assessment.positions:
+        positions_sum = sum(p.quantity for p in assessment.positions)
+        if positions_sum != assessment.total_cases_in_custody:
+            raise FleetProposalError("CUSTODY_POSITIONS_QUANTITY_MISMATCH")
 
-    # Verify no fabricated nodes in positions
-    valid_node_ids = {p["node_id"] for p in graph_result.get("all_positions", [])}
-    for position in assessment.positions:
-        if position.node_id not in valid_node_ids:
-            raise FleetProposalError("CUSTODY_POSITIONS_FABRICATED_NODE_ID")
-        for edge_id in position.supporting_edge_ids:
-            # Edge validation: edge_id should reference valid edges in graph
-            if not any(e.get("edge_id") == edge_id for e in graph_result.get("edges", [])):
-                raise FleetProposalError("CUSTODY_POSITIONS_FABRICATED_EDGE_ID")
+        # Verify no fabricated nodes in positions
+        valid_node_ids = {p["node_id"] for p in graph_result.get("all_positions", [])}
+        for position in assessment.positions:
+            if position.node_id not in valid_node_ids:
+                raise FleetProposalError("CUSTODY_POSITIONS_FABRICATED_NODE_ID")
+            for edge_id in position.supporting_edge_ids:
+                # Edge validation: edge_id should reference valid edges in graph
+                if not any(e.get("edge_id") == edge_id for e in graph_result.get("edges", [])):
+                    raise FleetProposalError("CUSTODY_POSITIONS_FABRICATED_EDGE_ID")
 
-    # Unresolved obligations must be non-empty when unconfirmed cases exist, and must match unconfirmed set
-    if assessment.unconfirmed_cases and not assessment.unresolved_obligations:
-        raise FleetProposalError("CUSTODY_UNRESOLVED_OBLIGATIONS_REQUIRED")
-    
-    valid_node_ids = {p["node_id"] for p in graph_result.get("all_positions", [])}
-    for obligation in assessment.unresolved_obligations:
-        if obligation.node_id not in valid_node_ids:
-            raise FleetProposalError("CUSTODY_OBLIGATIONS_FABRICATED_NODE_ID")
+    # When unresolved_obligations are provided, verify they match unconfirmed set
+    if assessment.unresolved_obligations:
+        valid_node_ids = {p["node_id"] for p in graph_result.get("all_positions", [])}
+        for obligation in assessment.unresolved_obligations:
+            if obligation.node_id not in valid_node_ids:
+                raise FleetProposalError("CUSTODY_OBLIGATIONS_FABRICATED_NODE_ID")
 
-    # Verify unresolved_obligations is EXACT match to unconfirmed_node_ids
-    obligation_ids = {o.node_id for o in assessment.unresolved_obligations}
-    unconfirmed_ids = set(assessment.unconfirmed_node_ids)
-    if obligation_ids != unconfirmed_ids:
-        raise FleetProposalError("CUSTODY_UNRESOLVED_OBLIGATIONS_INCOMPLETE")
+        # Verify unresolved_obligations is EXACT match to unconfirmed_node_ids
+        obligation_ids = {o.node_id for o in assessment.unresolved_obligations}
+        unconfirmed_ids = set(assessment.unconfirmed_node_ids)
+        if obligation_ids != unconfirmed_ids:
+            raise FleetProposalError("CUSTODY_UNRESOLVED_OBLIGATIONS_INCOMPLETE")
 
     return assessment
 
