@@ -130,6 +130,7 @@ CANONICAL_CANDIDATES = generate_recovery_candidates(
 def selection(**overrides):
     payload = {
         "selected_candidate_id": "CAND-LOT-ASC",
+        "operating_objective": "RECALL_RECOVERY",
         "rationale": "Serves both agencies fully within available safe stock.",
         "cited_constraints": ["safe stock 40 cases", "three affected orders"],
         "tradeoffs": "A truthful shortfall remains for the third agency.",

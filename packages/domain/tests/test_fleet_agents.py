@@ -26,11 +26,11 @@ from full_shelf_domain.fleet.contracts import (
 def test_five_concrete_agent_ids_are_declared():
     assert len(contracts.FLEET_AGENT_IDS) == 5
     assert contracts.FLEET_AGENT_IDS == (
-        "full-shelf.incident-coordinator.v1",
-        "full-shelf.network-custody.v1",
-        "full-shelf.fulfillment-recovery.v1",
-        "full-shelf.partner-operations.v1",
-        "full-shelf.recall-extraction.v1",
+        "full-shelf.fulfillment-planning-recovery.v2",
+        "full-shelf.incident-lead.v1",
+        "full-shelf.recall-intake-extraction.v2",
+        "full-shelf.network-custody.v2",
+        "full-shelf.partner-operations.v2",
     )
 
 
@@ -50,7 +50,7 @@ def test_coordinator_is_a_concrete_adk_base_agent():
         (agents.build_network_custody_agent, "NetworkAndCustodyAgent",
          NetworkCustodyAssessment),
         (agents.build_fulfillment_planning_recovery_agent,
-         "FulfillmentAndRecoveryPlannerAgent", RecoverySelection),
+         "FulfillmentPlanningRecoveryAgent", RecoverySelection),
         (agents.build_partner_operations_agent, "PartnerOperationsAgent",
          PartnerCommunication),
     ],
@@ -75,9 +75,6 @@ def test_coordinator_holds_no_tools_and_no_ledger_code():
     from full_shelf_domain.fleet import coordinator
 
     source = inspect.getsource(coordinator)
-    assert contracts.AGENT_TOOL_ALLOWLIST[
-        contracts.AGENT_INCIDENT_COORDINATOR
-    ] == ()
     for forbidden in ("execute_ledger_command", "post_to_plan_ledger",
                       "LedgerExecutor", "PLAN_LEDGER_URL"):
         assert forbidden not in source

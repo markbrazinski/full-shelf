@@ -142,8 +142,8 @@ def test_coordinator_is_a_real_adk_base_agent_with_four_sub_agents():
     coordinator = build_incident_coordinator_agent(context)
     assert isinstance(coordinator, BaseAgent)
     assert [agent.name for agent in coordinator.sub_agents] == [
-        "RecallExtractionAgent", "NetworkAndCustodyAgent",
-        "FulfillmentAndRecoveryPlannerAgent", "PartnerOperationsAgent",
+        "RecallIntakeExtractionAgent", "NetworkAndCustodyAgent",
+        "FulfillmentPlanningRecoveryAgent", "PartnerOperationsAgent",
     ]
 
 
@@ -240,7 +240,7 @@ def test_runtime_tool_names_match_the_governed_catalog_ids():
 
 
 @pytest.mark.parametrize("agent_name,agent_id", [
-    ("RecallExtractionAgent", AGENT_RECALL_INTAKE_EXTRACTION),
+    ("RecallIntakeExtractionAgent", AGENT_RECALL_INTAKE_EXTRACTION),
     ("NetworkAndCustodyAgent", AGENT_NETWORK_CUSTODY),
 ])
 def test_specialist_timeout_is_executable_and_fails_closed(
@@ -264,7 +264,7 @@ def test_coordinator_timeout_is_executable():
     original = coordinator.AGENT_TIMEOUT_SECONDS[AGENT_INCIDENT_COORDINATOR]
     coordinator.AGENT_TIMEOUT_SECONDS[AGENT_INCIDENT_COORDINATOR] = 0.05
     try:
-        with scripted_gemini(hang_for="RecallExtractionAgent"):
+        with scripted_gemini(hang_for="RecallIntakeExtractionAgent"):
             proposal = run_canonical_fleet()["proposal"]
     finally:
         coordinator.AGENT_TIMEOUT_SECONDS[AGENT_INCIDENT_COORDINATOR] = original
@@ -310,7 +310,7 @@ def test_fabricated_custody_total_halts_before_the_planner_runs():
     ):
         proposal = run_canonical_fleet()["proposal"]
     assert proposal.reason_code == "CUSTODY_TOTAL_MISMATCH"
-    assert "FulfillmentAndRecoveryPlannerAgent" not in calls
+    assert "FulfillmentPlanningRecoveryAgent" not in calls
 
 
 def test_false_containment_claim_is_refused():
@@ -326,7 +326,7 @@ def test_false_containment_claim_is_refused():
 
 def test_invented_candidate_is_refused_before_partner_operations():
     calls = []
-    with scripted_gemini(overrides={"FulfillmentAndRecoveryPlannerAgent": {
+    with scripted_gemini(overrides={"FulfillmentPlanningRecoveryAgent": {
         "selected_candidate_id": "CAND-INVENTED-BY-MODEL", "rationale": "r",
         "cited_constraints": ["c"], "tradeoffs": "t", "confidence": 0.9,
     }}, calls=calls):
@@ -336,7 +336,7 @@ def test_invented_candidate_is_refused_before_partner_operations():
 
 
 def test_extracted_lot_must_match_the_authenticated_event():
-    with scripted_gemini(overrides={"RecallExtractionAgent": {
+    with scripted_gemini(overrides={"RecallIntakeExtractionAgent": {
         "lot_id": "LTC-9999", "product_name": "Romaine Lettuce",
         "hazard": "E. coli O157:H7", "action_required": "PAUSE_DISTRIBUTION",
         "source_anchor": "Supplier Safety Bulletin",
@@ -374,7 +374,7 @@ def test_noncanonical_selection_changes_the_proposal_under_real_execution():
 
     def run(candidate_id):
         with scripted_gemini(overrides={
-            "FulfillmentAndRecoveryPlannerAgent": {
+            "FulfillmentPlanningRecoveryAgent": {
                 "selected_candidate_id": candidate_id,
                 "rationale": "Chosen under the bounded lot-ordering policy.",
                 "cited_constraints": ["45 allocatable cases"],

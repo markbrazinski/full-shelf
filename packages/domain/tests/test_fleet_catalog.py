@@ -10,7 +10,10 @@ import pytest
 
 from full_shelf_domain.fleet import agents as agent_module
 from full_shelf_domain.fleet import contracts
-from full_shelf_domain.fleet.coordinator import build_incident_coordinator_agent
+from full_shelf_domain.fleet.coordinator import (
+    build_incident_coordinator_agent,
+    AGENT_INCIDENT_COORDINATOR,
+)
 from full_shelf_domain.fleet.manifest import build_manifest
 
 
@@ -25,22 +28,24 @@ def test_manifest_lists_exactly_the_five_declared_agents():
 
 def test_manifest_runtime_names_match_constructed_adk_agents():
     constructed = {
-        contracts.AGENT_INCIDENT_COORDINATOR: build_incident_coordinator_agent(),
         contracts.AGENT_NETWORK_CUSTODY: agent_module.build_network_custody_agent([]),
-        contracts.AGENT_FULFILLMENT_RECOVERY:
+        contracts.AGENT_FULFILLMENT_PLANNING_RECOVERY:
             agent_module.build_fulfillment_planning_recovery_agent([]),
         contracts.AGENT_PARTNER_OPERATIONS:
             agent_module.build_partner_operations_agent([]),
     }
     for agent_id, agent in constructed.items():
         assert BY_ID[agent_id]["runtime_name"] == agent.name
+    # Coordinator is not in the manifest; it is runtime infrastructure.
+    coordinator_agent = build_incident_coordinator_agent()
+    assert coordinator_agent.name == "IncidentCoordinatorAgent"
 
 
 def test_manifest_output_schemas_match_runtime_output_schemas():
     pairs = [
         (contracts.AGENT_NETWORK_CUSTODY,
          agent_module.build_network_custody_agent([])),
-        (contracts.AGENT_FULFILLMENT_RECOVERY,
+        (contracts.AGENT_FULFILLMENT_PLANNING_RECOVERY,
          agent_module.build_fulfillment_planning_recovery_agent([])),
         (contracts.AGENT_PARTNER_OPERATIONS,
          agent_module.build_partner_operations_agent([])),
@@ -114,9 +119,10 @@ def test_manifest_uses_only_the_five_approved_component_kinds():
         | {entry["component_kind"] for entry in MANIFEST["governance"]}
     )
     assert kinds <= approved
-    # The topology must contain both a workflow root and LLM specialists.
-    assert "ADK_WORKFLOW_AGENT" in kinds
+    # The five agents in the manifest are all LLM specialists.
     assert "ADK_LLM_AGENT" in kinds
+    # The coordinator is separate infrastructure, built at runtime, not in the manifest.
+    # It is ADK_WORKFLOW_AGENT class but not catalogued here.
 
 
 def test_manifest_claims_no_managed_preview_product():
@@ -145,19 +151,21 @@ def test_timeouts_and_failure_behavior_are_catalogued_for_every_agent():
 
 
 def test_only_the_coordinator_is_a_non_gemini_workflow_agent():
+    # The five specialist agents in the manifest are all LLM agents.
     for agent_id, entry in BY_ID.items():
-        if agent_id == contracts.AGENT_INCIDENT_COORDINATOR:
-            assert entry["uses_gemini"] is False
-            assert entry["component_kind"] == "ADK_WORKFLOW_AGENT"
-        else:
-            assert entry["uses_gemini"] is True
-            assert entry["component_kind"] == "ADK_LLM_AGENT"
+        assert entry["uses_gemini"] is True
+        assert entry["component_kind"] == "ADK_LLM_AGENT"
+    # The coordinator is not catalogued in the manifest; it is runtime infrastructure.
+    coordinator_in_manifest = any(
+        a["agent_id"] == AGENT_INCIDENT_COORDINATOR for a in MANIFEST["agents"]
+    )
+    assert coordinator_in_manifest is False
 
 
 def test_untrusted_content_reaches_only_the_screened_extraction_agent():
     for agent_id, entry in BY_ID.items():
         assert "UNTRUSTED_EXTERNAL" not in entry["input_trust_classes"], agent_id
-    assert BY_ID[contracts.AGENT_RECALL_EXTRACTION]["input_trust_classes"] == [
+    assert BY_ID[contracts.AGENT_RECALL_INTAKE_EXTRACTION]["input_trust_classes"] == [
         "MODEL_ARMOR_APPROVED"
     ]
 
@@ -211,36 +219,39 @@ def test_partner_template_parameters_all_have_authoritative_sources():
 
 
 def test_coordinator_is_not_catalogued_with_an_adk_output_schema():
-    """The executable coordinator has output_schema None; the catalog must agree."""
+    """The executable coordinator is not catalogued in the manifest; it is runtime infrastructure."""
     from full_shelf_domain.fleet.coordinator import build_incident_coordinator_agent
 
     agent = build_incident_coordinator_agent()
     assert getattr(agent, "output_schema", None) is None
-    entry = BY_ID[contracts.AGENT_INCIDENT_COORDINATOR]
-    assert entry["adk_output_schema"] is None
-    assert entry["output_schema"] is None
+    # Coordinator is not in the manifest agent roster.
+    coordinator_in_manifest = any(
+        a["agent_id"] == AGENT_INCIDENT_COORDINATOR for a in MANIFEST["agents"]
+    )
+    assert coordinator_in_manifest is False
 
 
 def test_coordinator_event_contract_matches_what_it_actually_emits():
-    """The internal coordination event really carries the catalogued keys."""
+    """The coordinator emits a coordination event (not an ADK output_schema)."""
     import inspect
 
     from full_shelf_domain.fleet import coordinator
 
-    entry = BY_ID[contracts.AGENT_INCIDENT_COORDINATOR]
-    contract = entry["coordination_event_contract"]
-    assert "not an ADK output_schema" in contract
-    assert "FleetProposal is assembled" in contract
     source = inspect.getsource(coordinator)
     for key in ("status", "reason_code", "delegation_trace", "accepted_agent_ids"):
         assert f'"{key}"' in source
+    # Coordinator is runtime infrastructure, not a catalogued agent.
+    coordinator_in_manifest = any(
+        a["agent_id"] == AGENT_INCIDENT_COORDINATOR for a in MANIFEST["agents"]
+    )
+    assert coordinator_in_manifest is False
 
 
 def test_recall_catalog_schema_matches_the_runtime_agent_schema():
     from full_shelf_domain.fleet.agents import build_recall_intake_extraction_agent
 
     agent = build_recall_intake_extraction_agent()
-    entry = BY_ID[contracts.AGENT_RECALL_EXTRACTION]
+    entry = BY_ID[contracts.AGENT_RECALL_INTAKE_EXTRACTION]
     assert entry["output_schema"] == agent.output_schema.__name__
     assert entry["runtime_name"] == agent.name
 
