@@ -91,7 +91,7 @@ class FleetRunContext:
 
     __slots__ = ("incident_id", "lot_id", "screened_notice_text", "graph_result",
                  "recovery_candidates", "partner_state", "source_event_id", "source_class",
-                 "authorized_playbooks", "authorized_specialists")
+                 "authorized_playbooks", "authorized_specialists", "trigger_class")
 
     def __init__(self, *, incident_id: str, lot_id: str,
                  screened_notice_text: str, graph_result: Dict[str, Any],
@@ -100,7 +100,10 @@ class FleetRunContext:
                  source_event_id: Optional[str] = None,
                  source_class: Optional[str] = None,
                  authorized_playbooks: Optional[List[str]] = None,
-                 authorized_specialists: Optional[List[str]] = None):
+                 authorized_specialists: Optional[List[str]] = None,
+                 trigger_class: Optional[Any] = None):
+        from .orchestration import TriggerClass
+
         self.incident_id = incident_id
         self.lot_id = lot_id
         self.screened_notice_text = screened_notice_text
@@ -116,6 +119,7 @@ class FleetRunContext:
             AGENT_FULFILLMENT_PLANNING_RECOVERY,
             AGENT_PARTNER_OPERATIONS,
         ]
+        self.trigger_class = trigger_class or TriggerClass.RECALL
 
 
 def build_incident_coordinator_agent(run_context: Optional[FleetRunContext] = None):
@@ -401,14 +405,19 @@ def run_fleet(
     graph_result: Dict[str, Any],
     recovery_candidates: List[Dict[str, Any]],
     partner_state: Dict[str, Any],
+    trigger: Optional[str] = None,
     coordinator_runner=None,
 ) -> Dict[str, Any]:
     """Run one real Incident Coordinator ADK execution and return its proposal.
 
-    One coordinator Runner/session governs four separately correlated
-    specialist Runner/session executions. Correlation is application-managed
-    through `coordination_run_id`; no native ADK parent-child lineage is
-    claimed.
+    One coordinator Runner/session governs specialist Runner/session executions.
+    The number and type of specialists invoked depends on the trigger class.
+    Correlation is application-managed through `coordination_run_id`; no native
+    ADK parent-child lineage is claimed.
+
+    `trigger` specifies which orchestration path to use. Defaults to RECALL for
+    backward compatibility. Valid triggers: DAILY_PLANNING, FLEET_FAILURE, RECALL,
+    PARTNER_CALLBACK, NEXT_DAY_DRAFT.
 
     Every accepted specialist output is consumed by the assembled proposal. Any
     agent, model, tool, schema, timeout, or reconciliation failure returns a
@@ -417,10 +426,24 @@ def run_fleet(
     `coordinator_runner` is injected only by tests that must drive the sequence
     without a live model. The canonical path always uses real ADK execution.
     """
+    from .orchestration import TriggerClass
+
+    # Default to RECALL for backward compatibility with existing callers
+    if trigger is None:
+        trigger_class = TriggerClass.RECALL
+    else:
+        try:
+            trigger_class = TriggerClass(trigger)
+        except ValueError:
+            return _failed_proposal(
+                incident_id, lot_id, "INVALID_TRIGGER_CLASS", []
+            )
+
     context = FleetRunContext(
         incident_id=incident_id, lot_id=lot_id,
         screened_notice_text=screened_notice_text, graph_result=graph_result,
         recovery_candidates=recovery_candidates, partner_state=partner_state,
+        trigger_class=trigger_class,
     )
     runner = coordinator_runner or (
         lambda ctx: asyncio.run(
