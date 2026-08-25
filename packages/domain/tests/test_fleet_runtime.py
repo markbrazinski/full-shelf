@@ -52,19 +52,22 @@ def test_adk_version_is_the_pinned_deployable_version():
 # --- Finding 1 & 2: genuine coordinator ownership ---------------------------
 
 
-def test_coordinator_governs_five_correlated_specialist_executions():
+def test_coordinator_governs_four_correlated_specialist_executions():
     calls = []
     with scripted_gemini(calls=calls):
         result = run_canonical_fleet()
     proposal = result["proposal"]
     assert proposal.status == "PROPOSED", proposal.reason_code
-    # Five real model invocations in the RECALL path, in the correct order
+    # Four real model invocations in the RECALL path, in the correct order
     # (extraction first, then incident lead uses validated structured scope),
     # each its own Runner/session execution correlated by coordination_run_id.
+    # Partner Operations is absent by contract (§6): inbound partner evidence is
+    # governed by main.py:process_partner_evidence, not chained off recall.
     assert calls == [
         "RecallIntakeExtractionAgent", "IncidentLeadAgent", "NetworkAndCustodyAgent",
-        "FulfillmentPlanningRecoveryAgent", "PartnerOperationsAgent",
+        "FulfillmentPlanningRecoveryAgent",
     ]
+    assert "PartnerOperationsAgent" not in calls
 
 
 def test_delegation_trace_order_equals_the_declared_governed_sequence():
@@ -96,9 +99,8 @@ def test_evidence_identifiers_come_from_real_execution_and_are_distinct():
         sessions.add(entry["specialist_session_id"])
         runs.add(entry["specialist_run_id"])
     # Every specialist ran in its own session and its own invocation.
-    # Five specialists in RECALL path
-    assert len(sessions) == 5
-    assert len(runs) == 5
+    assert len(sessions) == len(GOVERNED_SEQUENCE)
+    assert len(runs) == len(GOVERNED_SEQUENCE)
 
 
 def test_no_evidence_field_claims_adk_parentage():
@@ -128,10 +130,11 @@ def test_all_four_specialist_outputs_are_consumed_by_the_proposal():
     assert proposal.extraction and proposal.extraction["lot_id"]["value"] == "LTC-4471"
     assert proposal.custody.total_cases_in_custody == 96
     assert proposal.recovery.selected_candidate_id == "CAND-LOT-ASC"
-    assert proposal.partner.template_id == "partner.acknowledgment-request.v1"
+    # No partner output on the recall path: Partner Operations does not run here.
+    assert proposal.partner is None
 
 
-def test_coordinator_is_a_real_adk_base_agent_with_five_sub_agents():
+def test_coordinator_is_a_real_adk_base_agent_with_its_four_path_agents():
     from full_shelf_domain.fleet.coordinator import FleetRunContext
     from full_shelf_domain.fleet.orchestration import TriggerClass
     from google.adk.agents import BaseAgent
@@ -149,7 +152,7 @@ def test_coordinator_is_a_real_adk_base_agent_with_five_sub_agents():
     assert [agent.name for agent in coordinator.sub_agents] == [
         "RecallIntakeExtractionAgent", "IncidentLeadAgent",
         "NetworkAndCustodyAgent",
-        "FulfillmentPlanningRecoveryAgent", "PartnerOperationsAgent",
+        "FulfillmentPlanningRecoveryAgent",
     ]
 
 
@@ -342,11 +345,13 @@ def test_invented_candidate_is_refused_before_partner_operations():
 
 
 def test_extracted_lot_must_match_the_authenticated_event():
+    # Every other anchor is valid so the refusal isolates the lot mismatch:
+    # the source event matches, and each value is contained by its own quote.
     with scripted_gemini(overrides={"RecallIntakeExtractionAgent": {
-        "source_event_id": "INC-2026-08-25-001",
+        "source_event_id": "EVT-001",
         "lot_id": {"value": "LTC-9999", "quote": "lot LTC-9999"},
         "hazard": {"value": "E. coli O157:H7", "quote": "E. coli O157:H7"},
-        "notice_scope": [{"value": "Romaine Lettuce", "quote": "Romaine"}],
+        "notice_scope": [{"value": "Romaine Lettuce", "quote": "Romaine Lettuce"}],
         "notice_time": None,
         "missing_required_fields": [],
     }}):
@@ -355,6 +360,40 @@ def test_extracted_lot_must_match_the_authenticated_event():
         "SOURCE_ANCHOR_VALIDATION_FAILED", "LOT_ANCHOR_VALIDATION_FAILED",
         "EXTRACTED_LOT_DOES_NOT_MATCH_EVENT",
     }
+
+
+def test_extraction_must_name_the_source_event_it_was_given():
+    """A fabricated source_event_id is refused before anything downstream."""
+    with scripted_gemini(overrides={"RecallIntakeExtractionAgent": {
+        "source_event_id": "EVT-FABRICATED",
+        "lot_id": {"value": "LTC-4471", "quote": "Lot LTC-4471"},
+        "hazard": {"value": "E. coli O157:H7", "quote": "E. coli O157:H7"},
+        "notice_scope": [],
+        "notice_time": None,
+        "missing_required_fields": [],
+    }}):
+        proposal = run_canonical_fleet()["proposal"]
+    assert proposal.status == "MANUAL_REVIEW_REQUIRED"
+    assert proposal.reason_code == "RECALL_SOURCE_EVENT_MISMATCH"
+
+
+def test_a_real_quote_cannot_launder_a_value_it_does_not_contain():
+    """§4.3: normalized values must be derivable from their own quotes.
+
+    The quote below is a genuine substring of the notice, so a quote-only check
+    would accept it. The hazard value appears nowhere in that quote.
+    """
+    with scripted_gemini(overrides={"RecallIntakeExtractionAgent": {
+        "source_event_id": "EVT-001",
+        "lot_id": {"value": "LTC-4471", "quote": "Lot LTC-4471"},
+        "hazard": {"value": "Listeria monocytogenes", "quote": "Supplier Safety Bulletin"},
+        "notice_scope": [],
+        "notice_time": None,
+        "missing_required_fields": [],
+    }}):
+        proposal = run_canonical_fleet()["proposal"]
+    assert proposal.status == "MANUAL_REVIEW_REQUIRED"
+    assert proposal.reason_code == "SOURCE_ANCHOR_VALIDATION_FAILED"
 
 
 def test_canonical_quantities_are_unchanged_through_real_execution():

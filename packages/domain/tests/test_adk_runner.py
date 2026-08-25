@@ -34,8 +34,9 @@ def test_locked_model_floor_parser():
 def test_recall_extraction_runs_as_a_real_adk_agent_ordered_by_the_coordinator():
     proposal = extract()
     assert proposal.status == "PROPOSED"
-    assert proposal.extraction["lot_id"] == "LTC-4471"
-    assert proposal.extraction["product_name"] == "Romaine Lettuce"
+    # V2 extraction carries per-field {value, quote} source anchors.
+    assert proposal.extraction["lot_id"]["value"] == "LTC-4471"
+    assert proposal.extraction["hazard"]["value"] == "E. coli O157:H7"
     recall_hop = proposal.delegation_trace[0]
     assert recall_hop["agent_name"] == "RecallIntakeExtractionAgent"
     assert recall_hop["coordinator_agent_id"] == "full-shelf.incident-coordinator.v1"
@@ -48,10 +49,12 @@ def test_recall_extraction_runs_as_a_real_adk_agent_ordered_by_the_coordinator()
 
 @pytest.mark.parametrize("text", [
     "not json",
-    '{"lot_id":"LTC-4471"}',
-    '{"lot_id":"LTC-4471","product_name":"Romaine Lettuce",'
-    '"hazard":"E. coli O157:H7","action_required":"PAUSE_DISTRIBUTION",'
-    '"source_anchor":"Supplier Safety Bulletin","unapproved":"field"}',
+    '{"lot_id":{"value":"LTC-4471","quote":"Lot LTC-4471"}}',
+    '{"source_event_id":"EVT-001",'
+    '"lot_id":{"value":"LTC-4471","quote":"Lot LTC-4471"},'
+    '"hazard":{"value":"E. coli O157:H7","quote":"E. coli O157:H7"},'
+    '"notice_scope":[],"notice_time":null,"missing_required_fields":[],'
+    '"unapproved":"field"}',
 ])
 def test_invalid_structured_output_requires_manual_review(text):
     proposal = extract(raw_for={"RecallIntakeExtractionAgent": text})
@@ -60,10 +63,19 @@ def test_invalid_structured_output_requires_manual_review(text):
 
 
 def test_fabricated_value_fails_source_anchor_validation():
+    """A real quote cannot launder a value the notice never states.
+
+    Under V2 per-field anchors, fabrication means pairing a genuine substring
+    quote with a normalized value that is not derivable from it. The quote here
+    is literally present in the notice; the hazard value is not.
+    """
     proposal = extract(overrides={"RecallIntakeExtractionAgent": {
-        "lot_id": "LTC-4471", "product_name": "Canonical Baby Spinach",
-        "hazard": "E. coli O157:H7", "action_required": "PAUSE_DISTRIBUTION",
-        "source_anchor": "Supplier Safety Bulletin",
+        "source_event_id": "EVT-001",
+        "lot_id": {"value": "LTC-4471", "quote": "Lot LTC-4471"},
+        "hazard": {"value": "Listeria monocytogenes", "quote": "Supplier Safety Bulletin"},
+        "notice_scope": [],
+        "notice_time": None,
+        "missing_required_fields": [],
     }})
     assert proposal.status == "MANUAL_REVIEW_REQUIRED"
     assert proposal.reason_code == "SOURCE_ANCHOR_VALIDATION_FAILED"

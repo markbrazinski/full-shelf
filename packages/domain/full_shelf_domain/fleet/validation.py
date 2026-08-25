@@ -250,12 +250,18 @@ def proposal_hash(payload: Dict[str, Any]) -> str:
     ).hexdigest()
 
 
-def validate_recall_extraction(extracted, raw_notice: str, expected_lot_id: str):
+def validate_recall_extraction(
+    extracted, raw_notice: str, expected_lot_id: str, expected_source_event_id: str
+):
     """Re-apply the accepted recall source-anchoring rules inside the fleet.
 
     Every extracted field must carry its own quote, which must be a literal
-    substring of the screened notice. The lot identifier must have an explicit
-    lot anchor and match the authenticated event. Lot must be present (not None).
+    substring of the screened notice, AND its normalized value must be derivable
+    from that quote. Checking the quote alone lets a real substring launder a
+    fabricated value, which AGENT_CONTRACT_V2 §4.3 forbids ("normalized values
+    are derivable from their quotes"). The lot identifier must have an explicit
+    lot anchor and match the authenticated event, and the extraction must name
+    the source event it was actually derived from.
     """
     from full_shelf_domain.recall import _has_explicit_lot_anchor
 
@@ -266,17 +272,29 @@ def validate_recall_extraction(extracted, raw_notice: str, expected_lot_id: str)
         extracted.missing_required_fields.append("lot_id")
         raise FleetProposalError("INSUFFICIENT_SOURCE_ANCHORS")
 
-    # Validate each field's quote is literal substring
+    # The extraction must claim the source event it was actually given.
+    if extracted.source_event_id != expected_source_event_id:
+        raise FleetProposalError("RECALL_SOURCE_EVENT_MISMATCH")
+
+    # Each field: quote must be literal in the notice, and value must derive
+    # from that quote. Both checks are required; neither implies the other.
     for field_name in ["lot_id", "hazard"]:
         field = getattr(extracted, field_name)
-        if field and field.quote.casefold() not in normalized:
+        if not field:
+            continue
+        if field.quote.casefold() not in normalized:
+            raise FleetProposalError("SOURCE_ANCHOR_VALIDATION_FAILED")
+        if field.value.casefold() not in field.quote.casefold():
             raise FleetProposalError("SOURCE_ANCHOR_VALIDATION_FAILED")
 
-    for field_name in ["notice_scope"]:
-        for item in getattr(extracted, field_name, []):
-            if item.quote.casefold() not in normalized:
-                raise FleetProposalError("SOURCE_ANCHOR_VALIDATION_FAILED")
+    for item in getattr(extracted, "notice_scope", []):
+        if item.quote.casefold() not in normalized:
+            raise FleetProposalError("SOURCE_ANCHOR_VALIDATION_FAILED")
+        if item.value.casefold() not in item.quote.casefold():
+            raise FleetProposalError("SOURCE_ANCHOR_VALIDATION_FAILED")
 
+    # notice_time is a normalized reformatting of its quote (HH:MM), so its
+    # value is intentionally not required to appear verbatim inside the quote.
     if extracted.notice_time and extracted.notice_time.quote.casefold() not in normalized:
         raise FleetProposalError("SOURCE_ANCHOR_VALIDATION_FAILED")
 
