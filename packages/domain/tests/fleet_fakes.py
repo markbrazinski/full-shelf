@@ -56,10 +56,8 @@ INCIDENT_LEAD_OK = {
     "affected_commitment_ids": ["O202", "O203"],
     "selected_playbook_id": "recall-response-playbook-v1",
     "required_specialists": [
-        "full-shelf.recall-intake-extraction.v2",
         "full-shelf.network-custody.v2",
         "full-shelf.fulfillment-planning-recovery.v2",
-        "full-shelf.partner-operations.v2",
     ],
     "immediate_safety_actions": ["pause_distribution", "notify_sites"],
     "rationale": "Food safety recall scope determined from notice.",

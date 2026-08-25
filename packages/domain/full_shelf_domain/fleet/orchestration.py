@@ -6,7 +6,7 @@ self-contained and deterministic.
 
 Paths defined in AGENT_CONTRACT_V2:
 1. Fleet failure: Incident Lead → Fulfillment Planning & Recovery
-2. Recall: Extraction → Incident Lead → Network & Custody → Planning → Partner Ops
+2. Recall: Extraction → Incident Lead → Network & Custody → Fulfillment Planning & Recovery
 3. Partner callback: Model Armor → Partner Operations (no planning)
 4. Daily planning: Deterministic candidates → Fulfillment Planning & Recovery
 """
@@ -48,9 +48,8 @@ ORCHESTRATION_PATHS = {
             "full-shelf.incident-lead.v1",
             "full-shelf.network-custody.v2",
             "full-shelf.fulfillment-planning-recovery.v2",
-            "full-shelf.partner-operations.v2",
         ),
-        "Food safety recall: extract scope, scope response, reconcile custody, plan recovery, contact partners",
+        "Food safety recall: extract scope, scope response, reconcile custody, plan recovery",
     ),
     TriggerClass.PARTNER_CALLBACK: OrchestrationPath(
         TriggerClass.PARTNER_CALLBACK,
