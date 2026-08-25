@@ -169,9 +169,10 @@ def test_same_managed_hero_uses_altered_ids_quantities_and_calculated_outcome():
     assert all(synthetic_field not in e for e in fleet["delegation_trace"])
     assert fleet["proposal_status"] == "PROPOSED"
     assert [entry["agent_id"] for entry in fleet["delegation_trace"]] == [
-        "full-shelf.recall-extraction.v1",
-        "full-shelf.network-custody.v1",
-        "full-shelf.fulfillment-recovery.v1",
-        "full-shelf.partner-operations.v1",
+        "full-shelf.recall-intake-extraction.v2",
+        "full-shelf.incident-lead.v1",
+        "full-shelf.network-custody.v2",
+        "full-shelf.fulfillment-planning-recovery.v2",
+        "full-shelf.partner-operations.v2",
     ]
     assert fleet["selected_candidate_id"] in fleet["candidate_ids_offered"]

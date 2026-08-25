@@ -991,13 +991,13 @@ def test_v2_five_agent_evidence_absent_before_the_fleet_gate_commits():
 def test_v2_all_five_accepted_agents_are_projected_from_persisted_evidence():
     fleet = _beat("refusal")["agent_activity_as_of"]
     assert [a["display_name"] for a in fleet["agents"]] == [
-        "Incident Coordinator", "Recall Extraction", "Network & Custody",
+        "Recall Extraction", "Incident Lead", "Network & Custody",
         "Fulfillment & Recovery", "Partner Operations",
     ]
     assert all(a["state"] == "COMPLETED" for a in fleet["agents"])
     # Each specialist reports its OWN run/session, never the coordinator's.
     specialists = [a for a in fleet["agents"] if a["role"] == "GOVERNED_SPECIALIST"]
-    assert len({a["session_id"] for a in specialists}) == 4
+    assert len({a["session_id"] for a in specialists}) == 5
     assert all(a["session_id"] != fleet["coordinator_session_id"] for a in specialists)
     assert fleet["topology"] == "SEPARATELY_CORRELATED_SPECIALIST_RUNNERS"
 
