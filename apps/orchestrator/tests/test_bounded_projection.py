@@ -877,12 +877,13 @@ def test_delta3_fleet_evidence_durable_and_boundary_gated():
     assert fleet["delegation_trace"][0]["specialist_run_id"] == "fixture-run-recall-1"
 
 
-def test_delta3_sse_receipt_projection_carries_mutations_applied():
-    row = ("fixture-RCT-1", "CMD-1", "rev08", "RECORD_REFUSAL", "DENIED", "refused",
-           T(10, 12), CORRELATION, "op@example.com", 0)
-    projected = orchestrator_main._receipt_projection(row)
-    assert projected["status"] == "DENIED"
-    assert projected["mutations_applied"] == 0
+def test_sse_cursor_binds_receipt_without_projecting_material_fields():
+    event_id = orchestrator_main._encode_receipt_cursor(T(10, 12), "fixture-RCT-1")
+    timestamp, receipt_id = orchestrator_main._decode_receipt_cursor(event_id)
+    assert timestamp == T(10, 12)
+    assert receipt_id == "fixture-RCT-1"
+    assert "DENIED" not in event_id
+    assert CORRELATION not in event_id
 
 
 # ---------------------------------------------------------------------------

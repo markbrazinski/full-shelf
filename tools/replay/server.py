@@ -18,7 +18,7 @@ Run:  python tools/replay/server.py            # binds 127.0.0.1:8describe
 import json
 import os
 import pathlib
-from datetime import datetime, timezone
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -115,13 +115,7 @@ class ReplayHandler(BaseHTTPRequestHandler):
         final = _load("refusal")
         receipts = final.get("__replay_receipts") or []
         for event in receipts:
-            payload = {
-                "event_id": event["event_id"],
-                "projection_type": "SPANNER_COMMITTED_RECEIPT",
-                "classification": "SYNTHETIC_TEST",
-                "data": event,
-                "emitted_at": datetime.now(timezone.utc).isoformat(),
-            }
+            payload = {"receipt_cursor": event["event_id"]}
             block = (f"id: {event['event_id']}\n"
                      f"event: projection_update\n"
                      f"data: {json.dumps(payload)}\n\n")
