@@ -173,6 +173,22 @@ def test_low_confidence_selection_is_refused():
     assert exc.value.reason_code == "RECOVERY_CONFIDENCE_BELOW_THRESHOLD"
 
 
+def test_empty_recovery_candidate_set_is_rejected_even_with_high_confidence():
+    """Fact-based gap (empty candidates) rejects even at high confidence."""
+    sel = selection(confidence=0.95)
+    with pytest.raises(FleetProposalError) as exc:
+        validate_recovery_selection(sel, [])
+    assert exc.value.reason_code == "NO_FEASIBLE_RECOVERY_CANDIDATE"
+
+
+def test_selected_candidate_not_in_set_is_rejected_even_with_high_confidence():
+    """Fact-based gap (missing candidate) rejects even at high confidence."""
+    sel = selection(selected_candidate_id="CAND-INVENTED", confidence=0.95)
+    with pytest.raises(FleetProposalError) as exc:
+        validate_recovery_selection(sel, CANONICAL_CANDIDATES)
+    assert exc.value.reason_code == "UNKNOWN_RECOVERY_CANDIDATE"
+
+
 def test_empty_candidate_set_is_refused():
     with pytest.raises(FleetProposalError) as exc:
         validate_recovery_selection(selection(), [])
@@ -276,6 +292,24 @@ def test_low_confidence_partner_output_is_refused():
     with pytest.raises(FleetProposalError) as exc:
         validate_partner_communication(communication(confidence=0.3), PARTNER_STATE)
     assert exc.value.reason_code == "PARTNER_CONFIDENCE_BELOW_THRESHOLD"
+
+
+def test_empty_template_parameter_is_rejected_even_with_high_confidence():
+    """Fact-based gap (empty parameter) rejects even at high confidence."""
+    params = dict(communication().template_parameters, cases="")
+    comm = communication(template_parameters=params, confidence=0.95)
+    with pytest.raises(FleetProposalError) as exc:
+        validate_partner_communication(comm, PARTNER_STATE)
+    assert exc.value.reason_code == "PARTNER_TEMPLATE_PARAMETER_EMPTY"
+
+
+def test_whitespace_only_template_parameter_is_rejected():
+    """Fact-based gap (whitespace-only parameter) rejects even at high confidence."""
+    params = dict(communication().template_parameters, cases="   ")
+    comm = communication(template_parameters=params, confidence=0.95)
+    with pytest.raises(FleetProposalError) as exc:
+        validate_partner_communication(comm, PARTNER_STATE)
+    assert exc.value.reason_code == "PARTNER_TEMPLATE_PARAMETER_EMPTY"
 
 
 def test_partner_schema_cannot_carry_free_prose_body():

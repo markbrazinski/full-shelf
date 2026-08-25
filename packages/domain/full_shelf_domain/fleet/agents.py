@@ -86,8 +86,9 @@ Prefer the candidate that serves the most agencies and leaves the smallest
 truthful shortfall. Cite the specific constraints that drove the choice and
 state the tradeoff honestly, including any shortfall that remains.
 
-If no candidate is acceptable, still return the closest candidate_id with a low
-confidence value. Return the configured structured response and nothing else.
+When candidates are empty, stale, or conflicting, return MANUAL_REVIEW_REQUIRED.
+Never substitute low confidence for missing evidence. Return the configured
+structured response and nothing else.
 """
 
 PARTNER_OPERATIONS_INSTRUCTION = """
@@ -99,8 +100,8 @@ you. You may not write outbound prose; deterministic code renders the message.
 
 You may never acknowledge inventory, confirm cases, close an incident, or
 assert that a partner has responded. If the partner state shows custody is
-already confirmed, or you are unsure which template applies, return a
-confidence at or below 0.5.
+already confirmed, or required template parameters are missing, return
+MANUAL_REVIEW_REQUIRED. Confidence is advisory only.
 
 Escalation level is URGENT when custody is unconfirmed and a deadline exists,
 PRIORITY when custody is unconfirmed without a deadline, and ROUTINE otherwise.

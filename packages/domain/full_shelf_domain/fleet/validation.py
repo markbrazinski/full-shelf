@@ -95,16 +95,24 @@ def validate_recovery_selection(
     from the deterministic candidate set, never from model output, so the model
     cannot alter a quantity, destination, or lot even if it tries.
     """
+    # Fact-based checks first: empty candidate set is not a confidence issue
     if not candidates:
         raise FleetProposalError("NO_FEASIBLE_RECOVERY_CANDIDATE")
-    if selection.confidence < RECOVERY_MIN_CONFIDENCE:
-        raise FleetProposalError("RECOVERY_CONFIDENCE_BELOW_THRESHOLD")
+
+    # Verify selected candidate exists in supplied set
     by_id = {candidate["candidate_id"]: candidate for candidate in candidates}
     chosen = by_id.get(selection.selected_candidate_id)
     if chosen is None:
         raise FleetProposalError("UNKNOWN_RECOVERY_CANDIDATE")
+
+    # Verify candidate has required allocations and shortfalls
     if not chosen["allocations"] or not chosen["shortfalls"]:
         raise FleetProposalError("PARTIAL_RECOVERY_POLICY_INPUTS_REQUIRED")
+
+    # Confidence floor is secondary: enforced after facts are verified
+    if selection.confidence < RECOVERY_MIN_CONFIDENCE:
+        raise FleetProposalError("RECOVERY_CONFIDENCE_BELOW_THRESHOLD")
+
     return chosen
 
 
@@ -112,16 +120,26 @@ def validate_partner_communication(
     communication: PartnerCommunication, partner_state: Dict[str, Any]
 ) -> PartnerCommunication:
     """Restrict partner output to an approved template and bounded parameters."""
-    if communication.confidence < PARTNER_MIN_CONFIDENCE:
-        raise FleetProposalError("PARTNER_CONFIDENCE_BELOW_THRESHOLD")
+    # Fact-based checks first: missing/empty required parameters are not a confidence issue
     if communication.partner_id != partner_state["partner_id"]:
         raise FleetProposalError("PARTNER_IDENTITY_MISMATCH")
     required = PARTNER_TEMPLATE_IDS.get(communication.template_id)
     if required is None:
         raise FleetProposalError("UNKNOWN_PARTNER_TEMPLATE")
+
     supplied = communication.template_parameters.supplied()
     if set(supplied) != set(required):
         raise FleetProposalError("PARTNER_TEMPLATE_PARAMETERS_INVALID")
+
+    # A template requiring a deadline may not be selected when none exists
+    # (check this before empty-parameter check to give correct error)
+    if "deadline" in required and not partner_state.get("deadline"):
+        raise FleetProposalError("PARTNER_TEMPLATE_REQUIRES_MISSING_DEADLINE")
+
+    # Verify all required parameters are non-empty before authoritative check
+    for key, value in supplied.items():
+        if not value or (isinstance(value, str) and not value.strip()):
+            raise FleetProposalError("PARTNER_TEMPLATE_PARAMETER_EMPTY")
 
     # Escalation is recomputed from trusted state, never accepted from the model.
     if communication.escalation_level != deterministic_escalation_level(partner_state):
@@ -142,14 +160,15 @@ def validate_partner_communication(
         if value != authoritative[key]:
             raise FleetProposalError("PARTNER_PARAMETER_NOT_AUTHORITATIVE")
 
-    # A template requiring a deadline may not be selected when none exists.
-    if "deadline" in required and not partner_state.get("deadline"):
-        raise FleetProposalError("PARTNER_TEMPLATE_REQUIRES_MISSING_DEADLINE")
-
-    # Acknowledgment is an authoritative fact owned by the ledger callback path.
+    # Acknowledge is an authoritative fact owned by the ledger callback path.
     # An agent may request one; it may never assert one.
     if partner_state["acknowledgment_status"] == "CONFIRMED":
         raise FleetProposalError("PARTNER_ACKNOWLEDGMENT_NOT_AGENT_AUTHORITY")
+
+    # Confidence floor is secondary: enforced after facts are verified
+    if communication.confidence < PARTNER_MIN_CONFIDENCE:
+        raise FleetProposalError("PARTNER_CONFIDENCE_BELOW_THRESHOLD")
+
     return communication
 
 
