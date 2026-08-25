@@ -389,11 +389,27 @@ def network_custody_prompt(custody_facts: Dict[str, Any]) -> str:
     )
 
 
-def recovery_prompt(candidate_projection: Dict[str, Any]) -> str:
+def recovery_prompt(candidate_projection: Dict[str, Any], trigger_class: Optional[Any] = None) -> str:
     """Trusted, deterministic candidate set. Model Armor is NOT_APPLICABLE here."""
+    from .orchestration import TriggerClass
+
+    trigger = trigger_class or TriggerClass.RECALL
+
+    # Map trigger class to operating_objective
+    trigger_to_objective = {
+        TriggerClass.DAILY_PLANNING: "DAILY_PLAN",
+        TriggerClass.FLEET_FAILURE: "DISRUPTION_RECOVERY",
+        TriggerClass.RECALL: "RECALL_RECOVERY",
+        TriggerClass.PARTNER_CALLBACK: "RECALL_RECOVERY",
+        TriggerClass.NEXT_DAY_DRAFT: "NEXT_DAY_DRAFT",
+    }
+
+    operating_objective = trigger_to_objective.get(trigger, "RECALL_RECOVERY")
+
     return (
         "Select exactly one candidate_id from this deterministic candidate set:\n"
         f"{candidate_projection}\n"
+        f"Set operating_objective to: {operating_objective}\n"
         "You may not modify any value inside a candidate."
     )
 

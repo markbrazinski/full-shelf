@@ -122,6 +122,75 @@ class FleetRunContext:
         self.trigger_class = trigger_class or TriggerClass.RECALL
 
 
+def _build_hops_for_trigger(
+    context: FleetRunContext,
+) -> List[tuple]:
+    """Build agent sequence (hops) based on trigger class and context.
+
+    Returns list of (agent_id, prompt, validator, ok_label) tuples.
+    Agents are only included if they're in the sequence for this trigger.
+    """
+    from .orchestration import TriggerClass, sequence_for_trigger
+
+    trigger = context.trigger_class
+    agent_sequence = sequence_for_trigger(trigger)
+
+    # Define all possible hop configurations
+    hop_configs = {
+        AGENT_INCIDENT_LEAD: (
+            incident_lead_prompt(
+                context.source_event_id or "",
+                context.source_class or "FOOD_SAFETY_RECALL",
+                context.lot_id
+            ),
+            lambda parsed: validate_incident_lead_assessment(
+                parsed, context.source_event_id or "",
+                context.authorized_playbooks,
+                context.authorized_specialists
+            ),
+            "INCIDENT_SCOPE_DETERMINED"
+        ),
+        AGENT_RECALL_INTAKE_EXTRACTION: (
+            recall_prompt(context.screened_notice_text),
+            lambda parsed: validate_recall_extraction(
+                parsed, context.screened_notice_text, context.lot_id
+            ),
+            "SCHEMA_AND_SOURCE_ANCHORS_VALIDATED"
+        ),
+        AGENT_NETWORK_CUSTODY: (
+            network_custody_prompt(custody_graph_read(context.graph_result)),
+            lambda parsed: validate_custody_assessment(
+                parsed, context.graph_result
+            ),
+            "RECONCILED_WITH_DETERMINISTIC_GRAPH"
+        ),
+        AGENT_FULFILLMENT_PLANNING_RECOVERY: (
+            recovery_prompt(recovery_candidates_read(context.recovery_candidates),
+                          context.trigger_class),
+            lambda parsed: (validate_recovery_selection(
+                parsed, context.recovery_candidates
+            ), parsed)[1],
+            "CANDIDATE_ID_RESOLVED_DETERMINISTICALLY"
+        ),
+        AGENT_PARTNER_OPERATIONS: (
+            partner_prompt(partner_state_read(**context.partner_state)),
+            lambda parsed: validate_partner_communication(
+                parsed, partner_state_read(**context.partner_state)
+            ),
+            "TEMPLATE_AND_PARAMETERS_VALIDATED"
+        ),
+    }
+
+    # Build hops only for agents in the sequence
+    hops = []
+    for agent_id in agent_sequence:
+        if agent_id in hop_configs:
+            prompt, validator, ok_label = hop_configs[agent_id]
+            hops.append((agent_id, prompt, validator, ok_label))
+
+    return hops
+
+
 def build_incident_coordinator_agent(run_context: Optional[FleetRunContext] = None):
     """Return the concrete ADK custom agent used as the fleet root.
 
@@ -141,16 +210,22 @@ def build_incident_coordinator_agent(run_context: Optional[FleetRunContext] = No
 
     sub_agents = []
     if run_context is not None:
-        sub_agents = [
-            build_incident_lead_agent(),
-            build_recall_intake_extraction_agent(),
-            build_network_custody_agent([
+        from .orchestration import sequence_for_trigger
+
+        # Build only the agents needed for this trigger
+        agent_ids = sequence_for_trigger(run_context.trigger_class)
+        sub_agents_by_id = {
+            AGENT_INCIDENT_LEAD: build_incident_lead_agent(),
+            AGENT_RECALL_INTAKE_EXTRACTION: build_recall_intake_extraction_agent(),
+            AGENT_NETWORK_CUSTODY: build_network_custody_agent([
                 build_custody_graph_tool(run_context.graph_result),
                 build_custody_dependents_tool(run_context.graph_result),
             ]),
-            build_fulfillment_planning_recovery_agent([]),
-            build_partner_operations_agent([]),
-        ]
+            AGENT_FULFILLMENT_PLANNING_RECOVERY: build_fulfillment_planning_recovery_agent([]),
+            AGENT_PARTNER_OPERATIONS: build_partner_operations_agent([]),
+        }
+        # Only include agents in the sequence
+        sub_agents = [sub_agents_by_id[agent_id] for agent_id in agent_ids]
 
     class IncidentCoordinatorAgent(BaseAgent):
         """ADK custom agent that sequences the Full Shelf specialist fleet.
@@ -174,38 +249,8 @@ def build_incident_coordinator_agent(run_context: Optional[FleetRunContext] = No
             trace: List[Dict[str, Any]] = []
             failure: Optional[str] = None
 
-            hops = [
-                (AGENT_INCIDENT_LEAD,
-                 incident_lead_prompt(
-                     context.source_event_id or "",
-                     context.source_class or "FOOD_SAFETY_RECALL",
-                     context.lot_id
-                 ),
-                 lambda parsed: validate_incident_lead_assessment(
-                     parsed, context.source_event_id or "",
-                     context.authorized_playbooks,
-                     context.authorized_specialists
-                 ), "INCIDENT_SCOPE_DETERMINED"),
-                (AGENT_RECALL_INTAKE_EXTRACTION, recall_prompt(context.screened_notice_text),
-                 lambda parsed: validate_recall_extraction(
-                     parsed, context.screened_notice_text, context.lot_id
-                 ), "SCHEMA_AND_SOURCE_ANCHORS_VALIDATED"),
-                (AGENT_NETWORK_CUSTODY,
-                 network_custody_prompt(custody_graph_read(context.graph_result)),
-                 lambda parsed: validate_custody_assessment(
-                     parsed, context.graph_result
-                 ), "RECONCILED_WITH_DETERMINISTIC_GRAPH"),
-                (AGENT_FULFILLMENT_PLANNING_RECOVERY,
-                 recovery_prompt(recovery_candidates_read(context.recovery_candidates)),
-                 lambda parsed: (validate_recovery_selection(
-                     parsed, context.recovery_candidates
-                 ), parsed)[1], "CANDIDATE_ID_RESOLVED_DETERMINISTICALLY"),
-                (AGENT_PARTNER_OPERATIONS,
-                 partner_prompt(partner_state_read(**context.partner_state)),
-                 lambda parsed: validate_partner_communication(
-                     parsed, partner_state_read(**context.partner_state)
-                 ), "TEMPLATE_AND_PARAMETERS_VALIDATED"),
-            ]
+            # Build hops based on trigger; only invoke agents needed for this trigger
+            hops = _build_hops_for_trigger(context)
 
             for index, (agent_id, prompt, validator, ok_label) in enumerate(hops):
                 specialist = self.sub_agents[index]
@@ -469,40 +514,75 @@ def run_fleet(
             incident_id, lot_id, payload["reason_code"], trace
         )
 
+    from .orchestration import sequence_for_trigger
+
     accepted = outcome["accepted"]
-    # Every governed specialist must have produced a consumed, validated output.
-    if set(accepted) != set(GOVERNED_SEQUENCE):
+
+    # Get the expected agents for this trigger
+    trigger_agents = set(sequence_for_trigger(context.trigger_class))
+    # Verify that all expected agents for this trigger ran
+    if set(accepted) != trigger_agents:
         return _failed_proposal(
             incident_id, lot_id, "INCOMPLETE_SPECIALIST_COVERAGE", trace
         )
 
-    incident_lead: IncidentLeadAssessment = accepted[AGENT_INCIDENT_LEAD]
-    custody: NetworkCustodyAssessment = accepted[AGENT_NETWORK_CUSTODY]
-    recovery: RecoverySelection = accepted[AGENT_FULFILLMENT_PLANNING_RECOVERY]
-    partner: PartnerCommunication = accepted[AGENT_PARTNER_OPERATIONS]
-    extraction = accepted[AGENT_RECALL_INTAKE_EXTRACTION]
-    chosen_candidate = next(
-        candidate for candidate in recovery_candidates
-        if candidate["candidate_id"] == recovery.selected_candidate_id
-    )
+    # Extract only the outputs for agents that ran (are in trigger_agents)
+    proposal_kwargs = {
+        "status": "PROPOSED",
+        "incident_id": incident_id,
+        "lot_id": lot_id,
+        "delegation_trace": trace,
+        "coordinator_session_id": outcome.get("coordinator_session_id"),
+        "coordination_run_id": outcome.get("coordination_run_id"),
+    }
 
-    proposal = FleetProposal(
-        status="PROPOSED", incident_id=incident_id, lot_id=lot_id,
-        incident_lead=incident_lead, extraction=extraction.model_dump(),
-        custody=custody, recovery=recovery, partner=partner,
-        delegation_trace=trace,
-        coordinator_session_id=outcome.get("coordinator_session_id"),
-        coordination_run_id=outcome.get("coordination_run_id"),
-    )
-    proposal.proposal_hash = proposal_hash({
-        "incident_id": incident_id, "lot_id": lot_id,
-        "custody": custody.model_dump(),
-        "selected_candidate_id": recovery.selected_candidate_id,
-        "candidate_hash": chosen_candidate.get("content_hash"),
-        "template_id": partner.template_id,
-        "extracted_lot_id": extraction.lot_id,
-    })
-    return {"proposal": proposal, "recovery_candidate": chosen_candidate}
+    # Optional fields based on which agents ran
+    if AGENT_INCIDENT_LEAD in trigger_agents:
+        proposal_kwargs["incident_lead"] = accepted[AGENT_INCIDENT_LEAD]
+
+    if AGENT_RECALL_INTAKE_EXTRACTION in trigger_agents:
+        proposal_kwargs["extraction"] = accepted[AGENT_RECALL_INTAKE_EXTRACTION].model_dump()
+
+    if AGENT_NETWORK_CUSTODY in trigger_agents:
+        proposal_kwargs["custody"] = accepted[AGENT_NETWORK_CUSTODY]
+
+    if AGENT_FULFILLMENT_PLANNING_RECOVERY in trigger_agents:
+        proposal_kwargs["recovery"] = accepted[AGENT_FULFILLMENT_PLANNING_RECOVERY]
+
+    if AGENT_PARTNER_OPERATIONS in trigger_agents:
+        proposal_kwargs["partner"] = accepted[AGENT_PARTNER_OPERATIONS]
+
+    proposal = FleetProposal(**proposal_kwargs)
+
+    # Only set hash if we have recovery (all recovery objectives require it)
+    if AGENT_FULFILLMENT_PLANNING_RECOVERY in trigger_agents:
+        recovery = accepted[AGENT_FULFILLMENT_PLANNING_RECOVERY]
+        chosen_candidate = next(
+            candidate for candidate in recovery_candidates
+            if candidate["candidate_id"] == recovery.selected_candidate_id
+        )
+        hash_payload = {
+            "incident_id": incident_id,
+            "lot_id": lot_id,
+            "selected_candidate_id": recovery.selected_candidate_id,
+            "candidate_hash": chosen_candidate.get("content_hash"),
+        }
+        # Add optional fields to hash if they exist
+        if AGENT_NETWORK_CUSTODY in trigger_agents:
+            hash_payload["custody"] = accepted[AGENT_NETWORK_CUSTODY].model_dump()
+        if AGENT_PARTNER_OPERATIONS in trigger_agents:
+            hash_payload["template_id"] = accepted[AGENT_PARTNER_OPERATIONS].template_id
+        if AGENT_RECALL_INTAKE_EXTRACTION in trigger_agents:
+            hash_payload["extracted_lot_id"] = accepted[AGENT_RECALL_INTAKE_EXTRACTION].lot_id
+        proposal.proposal_hash = proposal_hash(hash_payload)
+        return {"proposal": proposal, "recovery_candidate": chosen_candidate}
+    else:
+        # For non-recovery triggers, no recovery candidate
+        proposal.proposal_hash = proposal_hash({
+            "incident_id": incident_id,
+            "lot_id": lot_id,
+        })
+        return {"proposal": proposal, "recovery_candidate": None}
 
 
 def _failed_proposal(incident_id, lot_id, reason_code, trace):
