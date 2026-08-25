@@ -1,9 +1,16 @@
 import importlib.util
 import os
+import pathlib
+import sys
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
+
+sys.path.insert(
+    0, str(pathlib.Path(__file__).resolve().parents[3] / "packages/domain/tests")
+)
+from fleet_fakes import scripted_gemini  # noqa: E402
 
 
 orchestrator_main_path = os.path.abspath(
@@ -44,13 +51,37 @@ def test_next_day_plan_is_dynamic_authoritative_and_ledger_bound():
         "idempotent_replay": False,
         "additional_mutations": 6,
     }
+    # Pin the clock so the derived next-day plan_id is stable, and script only
+    # the Gemini network call. The ADK Runner, session service, agent classes,
+    # schema handling and every validator stay real, and the handler still
+    # drives the true run_fleet orchestration path. Without scripting, this
+    # test reached for the live model and only passed because that failure
+    # degraded quietly -- it failed the moment the network was blocked.
+    frozen = datetime.fromisoformat("2026-08-14T17:00:00+00:00")
+
+    class _FrozenDatetime(orchestrator_main.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return frozen if tz else frozen.replace(tzinfo=None)
+
+    next_day_selection = {
+        "selected_candidate_id": "PLAN-2026-08-15",
+        "operating_objective": "NEXT_DAY_DRAFT",
+        "affected_commitment_ids": ["CAND-PLAN-2026-08-15-SHORT-ALT"],
+        "known_shortfalls": [
+            {"agency_id": "AGENCY-X", "quantity": 7,
+             "reason": "Confirmed safe supply does not cover the carried shortfall."},
+        ],
+        "cited_constraints": ["21 confirmed-safe cases available"],
+        "tradeoffs": "Agency X keeps a truthful carried-forward shortfall.",
+        "rationale": "Only feasible draft under the inherited constraints.",
+        "confidence": 0.9,
+    }
     with patch.object(orchestrator_main, "get_spanner_database", return_value=mock_db), patch.object(
         orchestrator_main, "_verify_internal_workload"
     ), patch.object(orchestrator_main, "execute_ledger_command", return_value=ledger) as execute:
-        with patch.object(
-            orchestrator_main,
-            "datetime",
-            wraps=orchestrator_main.datetime,
+        with patch.object(orchestrator_main, "datetime", _FrozenDatetime), scripted_gemini(
+            overrides={"FulfillmentPlanningRecoveryAgent": next_day_selection}
         ):
             response = client.post(
                 "/api/v1/orchestrator/next-day-plan/generate?tenant_id=east-bay-food-bank",

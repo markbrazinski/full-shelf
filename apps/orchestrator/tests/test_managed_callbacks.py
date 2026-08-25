@@ -1,5 +1,7 @@
 import importlib.util
 import os
+import pathlib
+import sys
 import base64
 import json
 from datetime import datetime, timedelta, timezone
@@ -10,6 +12,11 @@ from fastapi.testclient import TestClient
 from google.api_core.exceptions import AlreadyExists
 
 from full_shelf_domain.identity import VerifiedGoogleIdentity
+
+sys.path.insert(
+    0, str(pathlib.Path(__file__).resolve().parents[3] / "packages/domain/tests")
+)
+from fleet_fakes import scripted_gemini  # noqa: E402
 
 
 main_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src", "main.py"))
@@ -317,9 +324,27 @@ def test_distinct_scheduler_message_ids_resolve_to_one_operating_day_command():
         "receipt": {"receipt_id": "RCT-STABLE", "status": "SUCCESS"},
         "idempotent_replay": True,
     }
+    # The daily gate routes through run_fleet, so the Fulfillment agent must
+    # answer. Only the Gemini network call is scripted: the ADK Runner, session
+    # service, agent classes, schema handling and every validator stay real, and
+    # the handler still drives the true orchestration path. Without this the
+    # test reached for the live model and only passed because that failure
+    # degraded quietly.
+    daily_plan_selection = {
+        "selected_candidate_id": "PLAN-AUDIT",
+        "operating_objective": "DAILY_PLAN",
+        "affected_commitment_ids": ["ORDER-A"],
+        "known_shortfalls": [],
+        "cited_constraints": ["Vehicle A has capacity for the scheduled load"],
+        "tradeoffs": "Single feasible assignment; no service tradeoff arises.",
+        "rationale": "Only candidate that satisfies the day's committed orders.",
+        "confidence": 0.9,
+    }
     with patch.object(main, "_resolve_authority_scope"), patch.object(
         main, "execute_ledger_command", side_effect=[first, duplicate]
-    ) as ledger:
+    ) as ledger, scripted_gemini(overrides={
+        "FulfillmentPlanningRecoveryAgent": daily_plan_selection,
+    }):
         first_result = main._generate_daily_morning_plan(request=request)
         duplicate_result = main._generate_daily_morning_plan(request=request)
 
