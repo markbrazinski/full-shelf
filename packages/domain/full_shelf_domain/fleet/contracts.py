@@ -220,7 +220,10 @@ class PartnerInboundInterpretation(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     partner_id: str = Field(min_length=1, max_length=64)
-    response_received_at: str = Field(description="ISO8601 timestamp of authenticated response")
+    response_received_at: str = Field(
+        pattern=r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}",
+        description="ISO8601 timestamp of authenticated response"
+    )
     claims: List[PartnerEvidenceClaim] = Field(default_factory=list)
     abstain: bool = Field(default=False, description="True if critical facts are missing (not confidence-based)")
     rationale: str = Field(min_length=1, max_length=400)

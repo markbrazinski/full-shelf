@@ -209,7 +209,7 @@ def validate_recall_extraction(extracted, raw_notice: str, expected_lot_id: str)
 
 
 def validate_partner_inbound_interpretation(
-    interpretation, expected_lot_id: str, source_text: str = ""
+    interpretation, expected_lot_id: str, expected_partner_id: str = "", source_text: str = ""
 ):
     """Validate Partner Operations inbound evidence interpretation.
 
@@ -217,9 +217,12 @@ def validate_partner_inbound_interpretation(
     lot_id, quantity, location, disposition, and confirmation_time.
     Missing critical facts trigger abstention (not low confidence).
     Each claim must be quoted verbatim from the authenticated response.
+    Claim values must be bound to their own anchors, not just present somewhere
+    in the source. Partner identity and timestamp format are validated.
 
     If source_text is provided, verify that every source anchor appears
-    literally in the authenticated response.
+    literally in the authenticated response and every claim value appears
+    within that claim's own anchor.
     """
     from .contracts import PartnerInboundInterpretation
 
@@ -229,6 +232,10 @@ def validate_partner_inbound_interpretation(
     # If abstaining, no proposal is generated
     if interpretation.abstain:
         return {"abstain": True, "partner_id": interpretation.partner_id}
+
+    # Validate partner identity
+    if expected_partner_id and interpretation.partner_id != expected_partner_id:
+        raise FleetProposalError("PARTNER_INBOUND_IDENTITY_MISMATCH")
 
     # Check for required claim types
     required_claim_types = {"lot_id", "quantity", "location", "disposition", "confirmation_time"}
@@ -244,15 +251,41 @@ def validate_partner_inbound_interpretation(
         raise FleetProposalError("PARTNER_LOT_MISMATCH")
 
     # Verify source anchors appear literally in the authenticated response
+    # and each claim value is bound to its own anchor (not just present in source)
     if source_text:
         source_normalized = source_text.casefold()
         for claim in interpretation.claims:
             anchor = claim.source_anchor.casefold()
             if anchor not in source_normalized:
                 raise FleetProposalError(f"PARTNER_ANCHOR_NOT_IN_SOURCE: {claim.claim_type}")
-            # Also verify the claim value appears somewhere in the source
+
+            # Bind value to its own anchor: value must appear within the anchor quote
             value_normalized = str(claim.value).casefold()
-            if value_normalized not in source_normalized:
-                raise FleetProposalError(f"PARTNER_CLAIM_VALUE_NOT_IN_SOURCE: {claim.claim_type}")
+            if value_normalized not in anchor:
+                raise FleetProposalError(f"PARTNER_CLAIM_VALUE_NOT_IN_ANCHOR: {claim.claim_type}")
+
+            # Validate disposition is the qualifying value
+            if claim.claim_type == "disposition":
+                if claim.value != "ISOLATED_IN_QUARANTINE":
+                    raise FleetProposalError("PARTNER_DISPOSITION_NOT_QUALIFYING")
+
+            # Validate confirmation_time is in HH:MM format
+            if claim.claim_type == "confirmation_time":
+                if not _is_valid_hhmm_format(claim.value):
+                    raise FleetProposalError("PARTNER_CONFIRMATION_TIME_NOT_HHMM")
 
     return interpretation
+
+
+def _is_valid_hhmm_format(value: str) -> bool:
+    """Check if value matches HH:MM (24-hour format)."""
+    if not isinstance(value, str) or len(value) != 5:
+        return False
+    if value[2] != ':':
+        return False
+    try:
+        hour = int(value[0:2])
+        minute = int(value[3:5])
+        return 0 <= hour <= 23 and 0 <= minute <= 59
+    except (ValueError, IndexError):
+        return False

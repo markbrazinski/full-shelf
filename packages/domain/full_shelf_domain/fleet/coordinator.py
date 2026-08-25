@@ -197,7 +197,7 @@ def _build_hops_for_trigger(
                 context.lot_id
             ),
             lambda parsed: validate_partner_inbound_interpretation(
-                parsed, context.lot_id, context.screened_notice_text
+                parsed, context.lot_id, context.partner_state.get("partner_id", ""), context.screened_notice_text
             ),
             "PARTNER_INBOUND_INTERPRETATION_VALIDATED"
         )
