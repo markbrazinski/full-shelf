@@ -32,10 +32,11 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 from .agents import (
     APP_NAME,
     WORKLOAD_USER_ID,
-    build_fulfillment_recovery_agent,
+    build_fulfillment_planning_recovery_agent,
+    build_incident_lead_agent,
     build_network_custody_agent,
     build_partner_operations_agent,
-    build_recall_extraction_agent,
+    build_recall_intake_extraction_agent,
     collect_specialist_output,
     network_custody_prompt,
     partner_prompt,
@@ -43,14 +44,15 @@ from .agents import (
     recovery_prompt,
 )
 from .contracts import (
-    AGENT_FULFILLMENT_RECOVERY,
-    AGENT_INCIDENT_COORDINATOR,
+    AGENT_FULFILLMENT_PLANNING_RECOVERY,
+    AGENT_INCIDENT_LEAD,
+    AGENT_RECALL_INTAKE_EXTRACTION,
     AGENT_NETWORK_CUSTODY,
     AGENT_PARTNER_OPERATIONS,
-    AGENT_RECALL_EXTRACTION,
     AGENT_TIMEOUT_SECONDS,
     FleetProposal,
     FleetProposalError,
+    IncidentLeadAssessment,
     NetworkCustodyAssessment,
     PartnerCommunication,
     RecoverySelection,
@@ -74,9 +76,10 @@ from .validation import (
 # The governed specialist order the coordinator owns. Declared as data so the
 # catalog and the parity tests read the same sequence the runtime executes.
 GOVERNED_SEQUENCE = (
-    AGENT_RECALL_EXTRACTION,
+    AGENT_INCIDENT_LEAD,
+    AGENT_RECALL_INTAKE_EXTRACTION,
     AGENT_NETWORK_CUSTODY,
-    AGENT_FULFILLMENT_RECOVERY,
+    AGENT_FULFILLMENT_PLANNING_RECOVERY,
     AGENT_PARTNER_OPERATIONS,
 )
 
@@ -119,12 +122,13 @@ def build_incident_coordinator_agent(run_context: Optional[FleetRunContext] = No
     sub_agents = []
     if run_context is not None:
         sub_agents = [
-            build_recall_extraction_agent(),
+            build_incident_lead_agent(),
+            build_recall_intake_extraction_agent(),
             build_network_custody_agent([
                 build_custody_graph_tool(run_context.graph_result),
                 build_custody_dependents_tool(run_context.graph_result),
             ]),
-            build_fulfillment_recovery_agent([]),
+            build_fulfillment_planning_recovery_agent([]),
             build_partner_operations_agent([]),
         ]
 
@@ -151,7 +155,7 @@ def build_incident_coordinator_agent(run_context: Optional[FleetRunContext] = No
             failure: Optional[str] = None
 
             hops = [
-                (AGENT_RECALL_EXTRACTION, recall_prompt(context.screened_notice_text),
+                (AGENT_RECALL_INTAKE_EXTRACTION, recall_prompt(context.screened_notice_text),
                  lambda parsed: validate_recall_extraction(
                      parsed, context.screened_notice_text, context.lot_id
                  ), "SCHEMA_AND_SOURCE_ANCHORS_VALIDATED"),
@@ -160,7 +164,7 @@ def build_incident_coordinator_agent(run_context: Optional[FleetRunContext] = No
                  lambda parsed: validate_custody_assessment(
                      parsed, context.graph_result
                  ), "RECONCILED_WITH_DETERMINISTIC_GRAPH"),
-                (AGENT_FULFILLMENT_RECOVERY,
+                (AGENT_FULFILLMENT_PLANNING_RECOVERY,
                  recovery_prompt(recovery_candidates_read(context.recovery_candidates)),
                  lambda parsed: (validate_recovery_selection(
                      parsed, context.recovery_candidates
@@ -423,9 +427,9 @@ def run_fleet(
         )
 
     custody: NetworkCustodyAssessment = accepted[AGENT_NETWORK_CUSTODY]
-    recovery: RecoverySelection = accepted[AGENT_FULFILLMENT_RECOVERY]
+    recovery: RecoverySelection = accepted[AGENT_FULFILLMENT_PLANNING_RECOVERY]
     partner: PartnerCommunication = accepted[AGENT_PARTNER_OPERATIONS]
-    extraction = accepted[AGENT_RECALL_EXTRACTION]
+    extraction = accepted[AGENT_RECALL_INTAKE_EXTRACTION]
     chosen_candidate = next(
         candidate for candidate in recovery_candidates
         if candidate["candidate_id"] == recovery.selected_candidate_id

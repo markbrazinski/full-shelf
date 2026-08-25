@@ -58,11 +58,11 @@ from full_shelf_domain.recall import (
     is_eligible_gemini_model,
 )
 from full_shelf_domain.fleet.contracts import (
-    AGENT_FULFILLMENT_RECOVERY,
-    AGENT_INCIDENT_COORDINATOR,
+    AGENT_FULFILLMENT_PLANNING_RECOVERY,
+    AGENT_INCIDENT_LEAD,
+    AGENT_RECALL_INTAKE_EXTRACTION,
     AGENT_NETWORK_CUSTODY,
     AGENT_PARTNER_OPERATIONS,
-    AGENT_RECALL_EXTRACTION,
     FLEET_MANIFEST_VERSION,
     FleetProposalError,
 )
@@ -1785,7 +1785,7 @@ def _run_agent_fleet_proposal(
     extraction_evidence = dict(dumped.get("extraction") or {})
     recall_hop = next(
         (entry for entry in dumped["delegation_trace"]
-         if entry["agent_id"] == AGENT_RECALL_EXTRACTION),
+         if entry["agent_id"] == AGENT_RECALL_INTAKE_EXTRACTION),
         {},
     )
     # Evidence comes from the recall specialist's actual ADK execution. Built by
@@ -3844,10 +3844,10 @@ def get_demo_beats_projections(
 # four are the governed specialist sequence it orders. Model Armor is an
 # input-screening boundary and is deliberately NOT a member of this list.
 PROJECTED_AGENT_SEQUENCE = (
-    (AGENT_INCIDENT_COORDINATOR, "Incident Coordinator"),
-    (AGENT_RECALL_EXTRACTION, "Recall Extraction"),
+    (AGENT_INCIDENT_LEAD, "Incident Lead"),
+    (AGENT_RECALL_INTAKE_EXTRACTION, "Recall Intake & Extraction"),
     (AGENT_NETWORK_CUSTODY, "Network & Custody"),
-    (AGENT_FULFILLMENT_RECOVERY, "Fulfillment & Recovery"),
+    (AGENT_FULFILLMENT_PLANNING_RECOVERY, "Fulfillment Planning & Recovery"),
     (AGENT_PARTNER_OPERATIONS, "Partner Operations"),
 )
 
