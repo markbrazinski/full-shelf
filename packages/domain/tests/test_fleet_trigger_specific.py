@@ -48,6 +48,12 @@ class TestTriggerSpecificPaths:
         )
         assert len(path) == 4
 
+    def test_partner_callback_invokes_only_partner_operations(self):
+        """PARTNER_CALLBACK should invoke only Partner Operations."""
+        path = sequence_for_trigger(TriggerClass.PARTNER_CALLBACK)
+        assert path == (AGENT_PARTNER_OPERATIONS,)
+        assert len(path) == 1
+
     def test_next_day_draft_invokes_only_fulfillment(self):
         """NEXT_DAY_DRAFT should invoke only Fulfillment Planning & Recovery."""
         path = sequence_for_trigger(TriggerClass.NEXT_DAY_DRAFT)
@@ -174,3 +180,61 @@ class TestRecallPathFullSequence:
         assert path[3] == AGENT_FULFILLMENT_PLANNING_RECOVERY
 
 
+class TestPartnerCallbackSequence:
+    """Test that Partner callback orchestration invokes only Partner Operations."""
+
+    def test_partner_callback_trigger_invokes_only_partner_agent(self):
+        """PARTNER_CALLBACK should invoke only Partner Operations."""
+        path = sequence_for_trigger(TriggerClass.PARTNER_CALLBACK)
+        assert len(path) == 1
+        assert path[0] == AGENT_PARTNER_OPERATIONS
+
+
+class TestModelArmorBoundaryDesign:
+    """Test Model Armor boundary design (not execution - that requires live ADK)."""
+
+    def test_extraction_agent_input_trust_class_is_model_armor_approved(self):
+        """Extraction agent is designed to accept MODEL_ARMOR_APPROVED input only."""
+        # This is a design claim, not an execution test (requires mocking Armor screening)
+        from full_shelf_domain.fleet.manifest import build_manifest
+
+        manifest = build_manifest()
+        extraction_entry = next(
+            (a for a in manifest["agents"]
+             if "recall-intake-extraction" in a["agent_id"]), None
+        )
+        assert extraction_entry is not None
+        assert "MODEL_ARMOR_APPROVED" in extraction_entry["input_trust_classes"]
+
+    def test_model_armor_is_not_an_agent_in_orchestration_sequence(self):
+        """Model Armor is infrastructure, not part of the agent sequence."""
+        path = sequence_for_trigger(TriggerClass.RECALL)
+
+        # Model Armor ID should not appear in agent paths
+        assert not any("armor" in str(agent).lower() for agent in path)
+        # Only the five specialist agents should be in paths (no infrastructure)
+        assert len(path) == 5
+        # All agents in path are from FLEET_AGENT_IDS
+        from full_shelf_domain.fleet.contracts import FLEET_AGENT_IDS
+        assert all(agent in FLEET_AGENT_IDS for agent in path)
+
+    def test_partner_outbound_communication_trust_class(self):
+        """Partner Operations declares distinct trust requirements per mode."""
+        from full_shelf_domain.fleet.manifest import build_manifest
+
+        manifest = build_manifest()
+        partner_entry = next(
+            (a for a in manifest["agents"]
+             if "partner-operations" in a["agent_id"]), None
+        )
+        assert partner_entry is not None
+        # Mode-scoped trust: outbound uses TRUSTED_AUTHORITATIVE only
+        assert "input_trust_by_mode" in partner_entry
+        assert partner_entry["input_trust_by_mode"]["OUTBOUND_FOLLOWUP"] == ["TRUSTED_AUTHORITATIVE"]
+        # Inbound requires all three: AUTHENTICATED_EXTERNAL, MODEL_ARMOR_APPROVED, TRUSTED_AUTHORITATIVE
+        inbound_trust = set(partner_entry["input_trust_by_mode"]["INBOUND_EVIDENCE"])
+        assert inbound_trust == {"AUTHENTICATED_EXTERNAL", "MODEL_ARMOR_APPROVED", "TRUSTED_AUTHORITATIVE"}
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

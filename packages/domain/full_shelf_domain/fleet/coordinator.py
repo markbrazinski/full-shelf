@@ -234,8 +234,10 @@ def build_incident_coordinator_agent(run_context: Optional[FleetRunContext] = No
         # Build only the agents needed for this trigger
         agent_ids = sequence_for_trigger(run_context.trigger_class)
 
-        # Partner Operations output schema
+        # Partner Operations output schema depends on trigger
         partner_schema = None
+        if run_context.trigger_class == TriggerClass.PARTNER_CALLBACK:
+            partner_schema = PartnerInboundInterpretation
 
         sub_agents_by_id = {
             AGENT_INCIDENT_LEAD: build_incident_lead_agent(),
