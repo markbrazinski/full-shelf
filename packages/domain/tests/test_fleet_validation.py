@@ -376,3 +376,146 @@ def test_invented_partner_identity_is_refused():
             communication(partner_id="SITE-99"), PARTNER_STATE
         )
     assert exc.value.reason_code == "PARTNER_IDENTITY_MISMATCH"
+
+
+# --- Partner inbound interpretation ----------------------------------------
+
+
+def test_partner_inbound_interpretation_with_all_required_anchors():
+    """Inbound interpretation must include all five critical source anchors."""
+    from full_shelf_domain.fleet.contracts import (
+        PartnerInboundInterpretation,
+        PartnerEvidenceClaim,
+    )
+    from full_shelf_domain.fleet.validation import validate_partner_inbound_interpretation
+
+    interpretation = PartnerInboundInterpretation(
+        partner_id="SITE-01",
+        response_received_at="2026-08-25T14:30:00Z",
+        claims=[
+            PartnerEvidenceClaim(
+                claim_type="lot_id",
+                value="LTC-4471",
+                source_anchor="Lot LTC-4471"
+            ),
+            PartnerEvidenceClaim(
+                claim_type="quantity",
+                value="8",
+                source_anchor="8 cases on hand"
+            ),
+            PartnerEvidenceClaim(
+                claim_type="location",
+                value="Walk-in cooler, Section B",
+                source_anchor="stored in our walk-in cooler, Section B"
+            ),
+            PartnerEvidenceClaim(
+                claim_type="disposition",
+                value="held_pending_guidance",
+                source_anchor="holding pending your guidance"
+            ),
+            PartnerEvidenceClaim(
+                claim_type="confirmation_time",
+                value="2026-08-25T14:25:00Z",
+                source_anchor="confirmed at 2:25 PM today"
+            ),
+        ],
+        abstain=False,
+        rationale="All critical facts present with explicit source anchors.",
+    )
+    result = validate_partner_inbound_interpretation(interpretation, "LTC-4471")
+    assert result == interpretation
+
+
+def test_partner_inbound_missing_source_anchors_is_refused():
+    """Missing any of the five required source anchors must be refused."""
+    from full_shelf_domain.fleet.contracts import (
+        PartnerInboundInterpretation,
+        PartnerEvidenceClaim,
+    )
+    from full_shelf_domain.fleet.validation import validate_partner_inbound_interpretation
+
+    # Missing: location, disposition, confirmation_time
+    interpretation = PartnerInboundInterpretation(
+        partner_id="SITE-01",
+        response_received_at="2026-08-25T14:30:00Z",
+        claims=[
+            PartnerEvidenceClaim(
+                claim_type="lot_id",
+                value="LTC-4471",
+                source_anchor="Lot LTC-4471"
+            ),
+            PartnerEvidenceClaim(
+                claim_type="quantity",
+                value="8",
+                source_anchor="8 cases"
+            ),
+        ],
+        abstain=False,  # Critical facts missing
+        rationale="Incomplete response from partner.",
+    )
+    with pytest.raises(FleetProposalError) as exc:
+        validate_partner_inbound_interpretation(interpretation, "LTC-4471")
+    assert "PARTNER_MISSING_SOURCE_ANCHORS" in exc.value.reason_code
+
+
+def test_partner_inbound_abstention_prevents_mutation():
+    """When abstain=True, no proposal mutation is proposed."""
+    from full_shelf_domain.fleet.contracts import PartnerInboundInterpretation
+    from full_shelf_domain.fleet.validation import validate_partner_inbound_interpretation
+
+    interpretation = PartnerInboundInterpretation(
+        partner_id="SITE-01",
+        response_received_at="2026-08-25T14:30:00Z",
+        claims=[],
+        abstain=True,  # Critical facts missing, not confidence-based
+        rationale="Partner response too vague to extract required facts.",
+    )
+    result = validate_partner_inbound_interpretation(interpretation, "LTC-4471")
+    assert result["abstain"] is True
+    assert result["partner_id"] == "SITE-01"
+
+
+def test_partner_inbound_lot_mismatch_is_refused():
+    """Lot ID from partner must match the authenticated event lot."""
+    from full_shelf_domain.fleet.contracts import (
+        PartnerInboundInterpretation,
+        PartnerEvidenceClaim,
+    )
+    from full_shelf_domain.fleet.validation import validate_partner_inbound_interpretation
+
+    interpretation = PartnerInboundInterpretation(
+        partner_id="SITE-01",
+        response_received_at="2026-08-25T14:30:00Z",
+        claims=[
+            PartnerEvidenceClaim(
+                claim_type="lot_id",
+                value="LTC-5090",  # Mismatch
+                source_anchor="Lot LTC-5090"
+            ),
+            PartnerEvidenceClaim(
+                claim_type="quantity",
+                value="8",
+                source_anchor="8 cases"
+            ),
+            PartnerEvidenceClaim(
+                claim_type="location",
+                value="Walk-in",
+                source_anchor="walk-in"
+            ),
+            PartnerEvidenceClaim(
+                claim_type="disposition",
+                value="held",
+                source_anchor="held"
+            ),
+            PartnerEvidenceClaim(
+                claim_type="confirmation_time",
+                value="2026-08-25T14:25:00Z",
+                source_anchor="2:25 PM"
+            ),
+        ],
+        abstain=False,
+        rationale="Partner reported different lot.",
+    )
+    with pytest.raises(FleetProposalError) as exc:
+        validate_partner_inbound_interpretation(interpretation, "LTC-4471")
+    assert exc.value.reason_code == "PARTNER_LOT_MISMATCH"

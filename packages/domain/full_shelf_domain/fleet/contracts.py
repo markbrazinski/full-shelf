@@ -203,6 +203,28 @@ class PartnerCommunication(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
 
 
+class PartnerEvidenceClaim(BaseModel):
+    """One factual claim from authenticated partner response with source anchor."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    claim_type: Literal["lot_id", "quantity", "location", "disposition", "confirmation_time"]
+    value: str = Field(min_length=1, max_length=256)
+    source_anchor: str = Field(min_length=1, max_length=512, description="Exact quote from partner response")
+
+
+class PartnerInboundInterpretation(BaseModel):
+    """Partner Operations inbound: interpret authenticated response with source anchors."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    partner_id: str = Field(min_length=1, max_length=64)
+    response_received_at: str = Field(description="ISO8601 timestamp of authenticated response")
+    claims: List[PartnerEvidenceClaim] = Field(default_factory=list)
+    abstain: bool = Field(default=False, description="True if critical facts are missing (not confidence-based)")
+    rationale: str = Field(min_length=1, max_length=400)
+
+
 class FleetProposal(BaseModel):
     """Assembled advisory output of one coordinator run. Never authoritative."""
 

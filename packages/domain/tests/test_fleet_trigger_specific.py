@@ -204,27 +204,77 @@ class TestPartnerCallbackSourceAnchors:
         assert len(path) == 1
         assert path[0] == AGENT_PARTNER_OPERATIONS
 
-    def test_partner_operations_requires_source_anchors_for_evidence_claims(self):
-        """Partner agent output must anchor evidence claims to source."""
-        from full_shelf_domain.fleet.contracts import PartnerCommunication
-
-        # The PartnerCommunication schema enforces template + parameters
-        # Source anchors are implicit: evidence comes only from partner response
-        comm = PartnerCommunication(
-            partner_id="SITE-01",
-            template_id="partner.acknowledgment-request.v1",
-            escalation_level="URGENT",
-            template_parameters={
-                "partner_name": "Site 01",
-                "lot_id": "LTC-4471",
-                "cases": "8",
-                "deadline": "2026-08-08T17:00:00Z"
-            },
-            rationale="Partner must confirm custody of unconfirmed cases.",
-            confidence=0.9,
+    def test_partner_inbound_interpretation_with_literal_anchors(self):
+        """Partner inbound must extract literal source anchors for all critical facts."""
+        from full_shelf_domain.fleet.contracts import (
+            PartnerInboundInterpretation,
+            PartnerEvidenceClaim,
         )
-        assert comm.partner_id == "SITE-01"
-        assert comm.escalation_level in ("ROUTINE", "PRIORITY", "URGENT")
+
+        interpretation = PartnerInboundInterpretation(
+            partner_id="SITE-01",
+            response_received_at="2026-08-25T14:30:00Z",
+            claims=[
+                PartnerEvidenceClaim(
+                    claim_type="lot_id",
+                    value="LTC-4471",
+                    source_anchor="Lot LTC-4471"
+                ),
+                PartnerEvidenceClaim(
+                    claim_type="quantity",
+                    value="8",
+                    source_anchor="8 cases on hand"
+                ),
+                PartnerEvidenceClaim(
+                    claim_type="location",
+                    value="Walk-in cooler, Section B",
+                    source_anchor="stored in our walk-in cooler, Section B"
+                ),
+                PartnerEvidenceClaim(
+                    claim_type="disposition",
+                    value="held_pending_guidance",
+                    source_anchor="holding pending your guidance"
+                ),
+                PartnerEvidenceClaim(
+                    claim_type="confirmation_time",
+                    value="2026-08-25T14:25:00Z",
+                    source_anchor="confirmed at 2:25 PM today"
+                ),
+            ],
+            abstain=False,
+            rationale="All critical facts present with explicit source anchors.",
+        )
+        assert len(interpretation.claims) == 5
+        assert interpretation.abstain is False
+
+    def test_partner_evidence_missing_facts_triggers_abstention(self):
+        """Missing critical facts must trigger abstention (not low confidence)."""
+        from full_shelf_domain.fleet.contracts import (
+            PartnerInboundInterpretation,
+            PartnerEvidenceClaim,
+        )
+
+        interpretation = PartnerInboundInterpretation(
+            partner_id="SITE-01",
+            response_received_at="2026-08-25T14:30:00Z",
+            claims=[
+                PartnerEvidenceClaim(
+                    claim_type="lot_id",
+                    value="LTC-4471",
+                    source_anchor="Lot LTC-4471"
+                ),
+                PartnerEvidenceClaim(
+                    claim_type="quantity",
+                    value="8",
+                    source_anchor="8 cases"
+                ),
+                # Missing: location, disposition, confirmation_time
+            ],
+            abstain=True,  # Critical facts missing, not confidence-based
+            rationale="Location and disposition not stated in partner response.",
+        )
+        assert interpretation.abstain is True
+        assert len(interpretation.claims) == 2
 
     def test_vague_partner_evidence_abstention(self):
         """When partner evidence is vague, agent should abstain from claims."""

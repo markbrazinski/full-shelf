@@ -19,6 +19,7 @@ from .contracts import (
     IncidentLeadAssessment,
     NetworkCustodyAssessment,
     PartnerCommunication,
+    PartnerInboundInterpretation,
     RecoverySelection,
     deterministic_escalation_level,
 )
@@ -205,3 +206,38 @@ def validate_recall_extraction(extracted, raw_notice: str, expected_lot_id: str)
     if extracted.lot_id != expected_lot_id:
         raise FleetProposalError("EXTRACTED_LOT_DOES_NOT_MATCH_EVENT")
     return extracted
+
+
+def validate_partner_inbound_interpretation(
+    interpretation, expected_lot_id: str
+):
+    """Validate Partner Operations inbound evidence interpretation.
+
+    Partner response must contain literal source anchors for all critical facts:
+    lot_id, quantity, location, disposition, and confirmation_time.
+    Missing critical facts trigger abstention (not low confidence).
+    Each claim must be quoted verbatim from the authenticated response.
+    """
+    from .contracts import PartnerInboundInterpretation
+
+    if not isinstance(interpretation, PartnerInboundInterpretation):
+        raise FleetProposalError("PARTNER_INBOUND_INVALID_TYPE")
+
+    # If abstaining, no proposal is generated
+    if interpretation.abstain:
+        return {"abstain": True, "partner_id": interpretation.partner_id}
+
+    # Check for required claim types
+    required_claim_types = {"lot_id", "quantity", "location", "disposition", "confirmation_time"}
+    found_claims = {claim.claim_type for claim in interpretation.claims}
+    missing_claims = required_claim_types - found_claims
+
+    if missing_claims:
+        raise FleetProposalError(f"PARTNER_MISSING_SOURCE_ANCHORS: {','.join(sorted(missing_claims))}")
+
+    # Validate that lot_id matches the expected lot
+    lot_claim = next((c for c in interpretation.claims if c.claim_type == "lot_id"), None)
+    if lot_claim and lot_claim.value != expected_lot_id:
+        raise FleetProposalError("PARTNER_LOT_MISMATCH")
+
+    return interpretation
