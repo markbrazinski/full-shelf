@@ -299,45 +299,47 @@ class TestPartnerCallbackSourceAnchors:
         assert abstract_comm.confidence == 0.3
 
 
-class TestModelArmorBoundaryEnforcement:
-    """Test that Model Armor screening precedes all agent execution."""
+class TestModelArmorBoundaryDesign:
+    """Test Model Armor boundary design (not execution - that requires live ADK)."""
 
-    def test_recall_content_screened_before_extraction_agent(self):
-        """Raw recall notice must be Model Armor screened before Extraction reads it."""
-        # This is enforced by orchestration: run_fleet() receives
-        # screened_notice_text (already through Model Armor)
-        # not raw_notice_text
-        from full_shelf_domain.fleet.contracts import (
-            TrustClass,
+    def test_extraction_agent_input_trust_class_is_model_armor_approved(self):
+        """Extraction agent is designed to accept MODEL_ARMOR_APPROVED input only."""
+        # This is a design claim, not an execution test (requires mocking Armor screening)
+        from full_shelf_domain.fleet.manifest import build_manifest
+
+        manifest = build_manifest()
+        extraction_entry = next(
+            (a for a in manifest["agents"]
+             if "recall-intake-extraction" in a["agent_id"]), None
         )
+        assert extraction_entry is not None
+        assert "MODEL_ARMOR_APPROVED" in extraction_entry["input_trust_classes"]
 
-        # Recall Intake & Extraction requires MODEL_ARMOR_APPROVED input
-        assert (
-            AGENT_RECALL_INTAKE_EXTRACTION in [
-                AGENT_RECALL_INTAKE_EXTRACTION,
-                AGENT_INCIDENT_LEAD,
-                AGENT_NETWORK_CUSTODY,
-                AGENT_FULFILLMENT_PLANNING_RECOVERY,
-                AGENT_PARTNER_OPERATIONS,
-            ]
-        )
-
-    def test_model_armor_is_prerequisite_not_agent(self):
-        """Model Armor is infrastructure, not an agent in the sequence."""
+    def test_model_armor_is_not_an_agent_in_orchestration_sequence(self):
+        """Model Armor is infrastructure, not part of the agent sequence."""
         path = sequence_for_trigger(TriggerClass.RECALL)
 
         # Model Armor ID should not appear in agent paths
         assert not any("armor" in str(agent).lower() for agent in path)
-        # Only the five specialist agents should be in paths
-        assert len(path) <= 5
+        # Only the five specialist agents should be in paths (no infrastructure)
+        assert len(path) == 5
+        # All agents in path are from FLEET_AGENT_IDS
+        from full_shelf_domain.fleet.contracts import FLEET_AGENT_IDS
+        assert all(agent in FLEET_AGENT_IDS for agent in path)
 
-    def test_partner_callback_requires_authenticated_input_not_model_armor(self):
-        """Partner callback input is authenticated (not Model Armor screened)."""
-        # Partner responses come from authenticated partner system
-        # Input trust class is TRUSTED_AUTHORITATIVE, not MODEL_ARMOR_APPROVED
-        path = sequence_for_trigger(TriggerClass.PARTNER_CALLBACK)
-        assert path == (AGENT_PARTNER_OPERATIONS,)
-        # Partner Operations can process authenticated (but not Model Armor screened) input
+    def test_partner_callback_uses_authenticated_input_not_model_armor(self):
+        """Partner callback receives authenticated input, not Model Armor screened."""
+        from full_shelf_domain.fleet.manifest import build_manifest
+
+        manifest = build_manifest()
+        partner_entry = next(
+            (a for a in manifest["agents"]
+             if "partner-operations" in a["agent_id"]), None
+        )
+        assert partner_entry is not None
+        # Partner Operations requires TRUSTED_AUTHORITATIVE, not MODEL_ARMOR_APPROVED
+        assert "TRUSTED_AUTHORITATIVE" in partner_entry["input_trust_classes"]
+        assert "MODEL_ARMOR_APPROVED" not in partner_entry["input_trust_classes"]
 
 
 if __name__ == "__main__":
