@@ -37,16 +37,17 @@ class TestTriggerSpecificPaths:
         )
         assert len(path) == 2
 
-    def test_recall_invokes_four_agent_sequence(self):
-        """RECALL should invoke four agents in order (Extraction, Incident Lead, Custody, Fulfillment)."""
+    def test_recall_invokes_full_five_agent_sequence(self):
+        """RECALL should invoke all five agents in order."""
         path = sequence_for_trigger(TriggerClass.RECALL)
         assert path == (
             AGENT_RECALL_INTAKE_EXTRACTION,
             AGENT_INCIDENT_LEAD,
             AGENT_NETWORK_CUSTODY,
             AGENT_FULFILLMENT_PLANNING_RECOVERY,
+            AGENT_PARTNER_OPERATIONS,
         )
-        assert len(path) == 4
+        assert len(path) == 5
 
     def test_partner_callback_invokes_only_partner_operations(self):
         """PARTNER_CALLBACK should invoke only Partner Operations."""
@@ -171,13 +172,14 @@ class TestRecallPathFullSequence:
     """Verify the complete RECALL path matches Agent Contract V2."""
 
     def test_recall_path_has_correct_agent_order(self):
-        """RECALL path should be extraction → incident lead → custody → fulfillment."""
+        """RECALL path should be extraction → incident lead → custody → planning → partner."""
         path = sequence_for_trigger(TriggerClass.RECALL)
 
         assert path[0] == AGENT_RECALL_INTAKE_EXTRACTION
         assert path[1] == AGENT_INCIDENT_LEAD
         assert path[2] == AGENT_NETWORK_CUSTODY
         assert path[3] == AGENT_FULFILLMENT_PLANNING_RECOVERY
+        assert path[4] == AGENT_PARTNER_OPERATIONS
 
 
 class TestPartnerCallbackSequence:
