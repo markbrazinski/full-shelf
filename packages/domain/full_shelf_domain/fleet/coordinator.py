@@ -38,6 +38,7 @@ from .agents import (
     build_partner_operations_agent,
     build_recall_intake_extraction_agent,
     collect_specialist_output,
+    incident_lead_prompt,
     network_custody_prompt,
     partner_prompt,
     recall_prompt,
@@ -67,6 +68,7 @@ from .tools import (
 from .validation import (
     proposal_hash,
     validate_custody_assessment,
+    validate_incident_lead_assessment,
     validate_partner_communication,
     validate_recall_extraction,
     validate_recovery_selection,
@@ -88,18 +90,32 @@ class FleetRunContext:
     """Immutable deterministic inputs one coordinator invocation may read."""
 
     __slots__ = ("incident_id", "lot_id", "screened_notice_text", "graph_result",
-                 "recovery_candidates", "partner_state")
+                 "recovery_candidates", "partner_state", "source_event_id", "source_class",
+                 "authorized_playbooks", "authorized_specialists")
 
     def __init__(self, *, incident_id: str, lot_id: str,
                  screened_notice_text: str, graph_result: Dict[str, Any],
                  recovery_candidates: List[Dict[str, Any]],
-                 partner_state: Dict[str, Any]):
+                 partner_state: Dict[str, Any],
+                 source_event_id: Optional[str] = None,
+                 source_class: Optional[str] = None,
+                 authorized_playbooks: Optional[List[str]] = None,
+                 authorized_specialists: Optional[List[str]] = None):
         self.incident_id = incident_id
         self.lot_id = lot_id
         self.screened_notice_text = screened_notice_text
         self.graph_result = graph_result
         self.recovery_candidates = recovery_candidates
         self.partner_state = partner_state
+        self.source_event_id = source_event_id
+        self.source_class = source_class
+        self.authorized_playbooks = authorized_playbooks or ["recall-response-playbook-v1"]
+        self.authorized_specialists = authorized_specialists or [
+            AGENT_RECALL_INTAKE_EXTRACTION,
+            AGENT_NETWORK_CUSTODY,
+            AGENT_FULFILLMENT_PLANNING_RECOVERY,
+            AGENT_PARTNER_OPERATIONS,
+        ]
 
 
 def build_incident_coordinator_agent(run_context: Optional[FleetRunContext] = None):
@@ -107,10 +123,10 @@ def build_incident_coordinator_agent(run_context: Optional[FleetRunContext] = No
 
     Built lazily so importing this module never requires ADK at collection time.
     When `run_context` is supplied the coordinator is fully armed: it constructs
-    its four specialists and governs their separate executions. Without one it is
+    the five specialists and governs their separate executions. Without one it is
     still a valid, inspectable ADK agent.
 
-    One coordinator Runner/session governs four separately correlated
+    One coordinator Runner/session governs five separately correlated
     specialist Runner/session executions. Correlation is application-managed
     through `coordination_run_id`; no native ADK parent-child lineage is
     claimed.
@@ -155,6 +171,17 @@ def build_incident_coordinator_agent(run_context: Optional[FleetRunContext] = No
             failure: Optional[str] = None
 
             hops = [
+                (AGENT_INCIDENT_LEAD,
+                 incident_lead_prompt(
+                     context.source_event_id or "",
+                     context.source_class or "FOOD_SAFETY_RECALL",
+                     context.lot_id
+                 ),
+                 lambda parsed: validate_incident_lead_assessment(
+                     parsed, context.source_event_id or "",
+                     context.authorized_playbooks,
+                     context.authorized_specialists
+                 ), "INCIDENT_SCOPE_DETERMINED"),
                 (AGENT_RECALL_INTAKE_EXTRACTION, recall_prompt(context.screened_notice_text),
                  lambda parsed: validate_recall_extraction(
                      parsed, context.screened_notice_text, context.lot_id
@@ -426,6 +453,7 @@ def run_fleet(
             incident_id, lot_id, "INCOMPLETE_SPECIALIST_COVERAGE", trace
         )
 
+    incident_lead: IncidentLeadAssessment = accepted[AGENT_INCIDENT_LEAD]
     custody: NetworkCustodyAssessment = accepted[AGENT_NETWORK_CUSTODY]
     recovery: RecoverySelection = accepted[AGENT_FULFILLMENT_PLANNING_RECOVERY]
     partner: PartnerCommunication = accepted[AGENT_PARTNER_OPERATIONS]
@@ -437,8 +465,9 @@ def run_fleet(
 
     proposal = FleetProposal(
         status="PROPOSED", incident_id=incident_id, lot_id=lot_id,
-        extraction=extraction.model_dump(), custody=custody, recovery=recovery,
-        partner=partner, delegation_trace=trace,
+        incident_lead=incident_lead, extraction=extraction.model_dump(),
+        custody=custody, recovery=recovery, partner=partner,
+        delegation_trace=trace,
         coordinator_session_id=outcome.get("coordinator_session_id"),
         coordination_run_id=outcome.get("coordination_run_id"),
     )

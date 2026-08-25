@@ -211,6 +211,7 @@ class FleetProposal(BaseModel):
     incident_id: str
     lot_id: str
     reason_code: Optional[str] = None
+    incident_lead: Optional[IncidentLeadAssessment] = None
     extraction: Optional[Dict[str, Any]] = None
     custody: Optional[NetworkCustodyAssessment] = None
     recovery: Optional[RecoverySelection] = None

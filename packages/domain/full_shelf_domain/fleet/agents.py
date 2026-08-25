@@ -362,6 +362,19 @@ async def collect_specialist_output(
     return parsed, execution
 
 
+def incident_lead_prompt(source_event_id: str, source_class: str, affected_lot_id: str) -> str:
+    """Trusted incident context for Incident Lead to scope the response."""
+    return (
+        f"An operational exception has been accepted:\n"
+        f"Event ID: {source_event_id}\n"
+        f"Class: {source_class}\n"
+        f"Affected lot: {affected_lot_id}\n"
+        f"Classify the incident type, identify affected capabilities, "
+        f"select the authorized playbook, and list required specialists.\n"
+        f"Do not invent facts. Use only what is supplied."
+    )
+
+
 def recall_prompt(screened_notice_text: str) -> str:
     """Model-Armor-APPROVED notice text. Screening happens before the fleet."""
     return screened_notice_text
