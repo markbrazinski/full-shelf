@@ -136,7 +136,7 @@ def validate_custody_assessment(
 
 
 def validate_recovery_selection(
-    selection: RecoverySelection, candidates: Sequence[Dict[str, Any]]
+    selection: RecoverySelection, candidates: Sequence[Dict[str, Any]], expected_revision: str = None
 ) -> Dict[str, Any]:
     """Resolve a selected candidate ID back to its deterministic contents.
 
@@ -153,6 +153,10 @@ def validate_recovery_selection(
     chosen = by_id.get(selection.selected_candidate_id)
     if chosen is None:
         raise FleetProposalError("UNKNOWN_RECOVERY_CANDIDATE")
+
+    # Verify candidate matches expected plan revision (when provided)
+    if expected_revision and chosen.get("revision") != expected_revision:
+        raise FleetProposalError("RECOVERY_CANDIDATE_REVISION_STALE")
 
     # Verify candidate has required allocations/partner_pickups/shortfalls
     allocations = chosen.get("allocations", [])
