@@ -21,7 +21,6 @@ class TriggerClass(str, Enum):
     DAILY_PLANNING = "DAILY_PLANNING"
     FLEET_FAILURE = "FLEET_FAILURE"
     RECALL = "RECALL"
-    PARTNER_CALLBACK = "PARTNER_CALLBACK"
     NEXT_DAY_DRAFT = "NEXT_DAY_DRAFT"
 
 
@@ -50,11 +49,6 @@ ORCHESTRATION_PATHS = {
             "full-shelf.fulfillment-planning-recovery.v2",
         ),
         "Food safety recall: extract scope, scope response, reconcile custody, plan recovery",
-    ),
-    TriggerClass.PARTNER_CALLBACK: OrchestrationPath(
-        TriggerClass.PARTNER_CALLBACK,
-        ("full-shelf.partner-operations.v2",),
-        "Authenticated partner response: interpret evidence and propose custody actions",
     ),
     TriggerClass.DAILY_PLANNING: OrchestrationPath(
         TriggerClass.DAILY_PLANNING,

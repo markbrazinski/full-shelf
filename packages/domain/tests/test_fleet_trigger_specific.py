@@ -48,12 +48,6 @@ class TestTriggerSpecificPaths:
         )
         assert len(path) == 4
 
-    def test_partner_callback_invokes_only_partner_operations(self):
-        """PARTNER_CALLBACK should invoke only Partner Operations."""
-        path = sequence_for_trigger(TriggerClass.PARTNER_CALLBACK)
-        assert path == (AGENT_PARTNER_OPERATIONS,)
-        assert len(path) == 1
-
     def test_next_day_draft_invokes_only_fulfillment(self):
         """NEXT_DAY_DRAFT should invoke only Fulfillment Planning & Recovery."""
         path = sequence_for_trigger(TriggerClass.NEXT_DAY_DRAFT)
@@ -194,16 +188,6 @@ class TestRecallPathFullSequence:
 
 
 class TestPartnerCallbackSequence:
-    """Test that Partner callback orchestration invokes only Partner Operations."""
-
-    def test_partner_callback_trigger_invokes_only_partner_agent(self):
-        """PARTNER_CALLBACK should invoke only Partner Operations."""
-        path = sequence_for_trigger(TriggerClass.PARTNER_CALLBACK)
-        assert len(path) == 1
-        assert path[0] == AGENT_PARTNER_OPERATIONS
-
-
-class TestModelArmorBoundaryDesign:
     """Test Model Armor boundary design (not execution - that requires live ADK)."""
 
     def test_extraction_agent_input_trust_class_is_model_armor_approved(self):
