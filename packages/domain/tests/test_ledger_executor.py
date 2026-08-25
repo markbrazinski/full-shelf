@@ -599,6 +599,166 @@ def test_separate_activation_reads_persisted_approval_and_derives_only_signed_ch
     assert inserted[2][-2:] == [None, "PARTNER_PICKUP_CONVERTED"]
 
 
+def _activation_command(**payload_overrides):
+    payload = {
+        "plan_id": "PLAN-ALT", "source_revision": "rev42",
+        "proposed_revision": "rev43", "approval_id": "APP-ALT",
+        "operating_day": "2026-08-14",
+        "authority_scope": "audit-tenant@2026-08-14",
+    }
+    payload.update(payload_overrides)
+    return coordinator_command(
+        command_id="CMD-APPROVED-ACTIVATION",
+        idempotency_key="alt:approval:activate",
+        command_type=LedgerCommandType.ACTIVATE_APPROVED_REPAIR_PLAN,
+        agent_role="FULFILLMENT_RECOVERY_PLANNER",
+        payload=payload,
+    )
+
+
+def _approval_row(diff, **overrides):
+    plan_diff_json = json.dumps({
+        "reroute_order_id": diff.reroute_order_id,
+        "reroute_cases": diff.reroute_cases,
+        "reroute_target_vehicle": diff.reroute_target_vehicle,
+        "pickup_order_id": diff.pickup_order_id,
+        "pickup_cases": diff.pickup_cases,
+    }, sort_keys=True, separators=(",", ":"))
+    row = {
+        "incident_id": "INC-ALT-777", "plan_id": "PLAN-ALT",
+        "operating_day": date(2026, 8, 14),
+        "authority_scope": "audit-tenant@2026-08-14",
+        "source_revision": "rev42", "proposed_revision": "rev43",
+        "plan_diff_hash": diff.plan_diff_hash, "plan_diff_json": plan_diff_json,
+        "expires_at": datetime(2099, 1, 1, tzinfo=timezone.utc),
+    }
+    row.update(overrides)
+    return (row["incident_id"], row["plan_id"], row["operating_day"],
+            row["authority_scope"], row["source_revision"],
+            row["proposed_revision"], row["plan_diff_hash"],
+            row["plan_diff_json"], row["expires_at"])
+
+
+_ACTIVATION_SOURCE_ORDERS = [
+    ("O201", "AG1", "Agency 1", 18, "LOT-X", "TRUCK-01", "PLANNED"),
+    ("ORDER-REROUTE", "AG2", "Agency 2", 22, "LOT-X", "TRUCK-01", "PLANNED"),
+    ("ORDER-PICKUP", "AG3", "Agency 3", 20, "LOT-X", "TRUCK-01", "PLANNED"),
+]
+
+
+# --- Event 10 requires event 9's exact approval receipt ----------------------
+#
+# GOLDEN_DEMO_EVENT_CONTRACT §10.4: activation cannot occur without the
+# persisted approval it claims. These refusal branches existed in the executor
+# but had zero test coverage, so nothing proved activation actually fails
+# closed rather than proceeding on an absent or altered approval.
+
+
+def test_activation_without_a_persisted_approval_is_refused_with_zero_mutations():
+    """Event 10 cannot execute without event 9's receipt."""
+    transaction = FakeTransaction(
+        source_orders=_ACTIVATION_SOURCE_ORDERS, approval_rows=[]
+    )
+    with pytest.raises(ValueError, match="PERSISTED_REPAIR_APPROVAL_NOT_FOUND"):
+        SpannerLedgerCommandExecutor(
+            FakeDatabase(transaction), allowed_tenant_ids={"audit-tenant"}
+        ).execute(_activation_command(), IDENTITY)
+    assert transaction.inserts == []
+    assert transaction.updates == []
+
+
+def test_activation_against_a_different_plan_than_approved_is_refused():
+    """An approval for one plan cannot activate another."""
+    diff = _signed_diff()
+    transaction = FakeTransaction(
+        source_orders=_ACTIVATION_SOURCE_ORDERS,
+        approval_rows=[_approval_row(diff, plan_id="PLAN-SOMETHING-ELSE")],
+    )
+    with pytest.raises(ValueError, match="PERSISTED_APPROVAL_SCOPE_MISMATCH"):
+        SpannerLedgerCommandExecutor(
+            FakeDatabase(transaction), allowed_tenant_ids={"audit-tenant"}
+        ).execute(_activation_command(), IDENTITY)
+    assert transaction.inserts == []
+    assert transaction.updates == []
+
+
+def test_activation_on_an_expired_approval_is_refused():
+    diff = _signed_diff()
+    transaction = FakeTransaction(
+        source_orders=_ACTIVATION_SOURCE_ORDERS,
+        approval_rows=[_approval_row(
+            diff, expires_at=datetime(2020, 1, 1, tzinfo=timezone.utc)
+        )],
+    )
+    with pytest.raises(ValueError, match="PERSISTED_APPROVAL_EXPIRED"):
+        SpannerLedgerCommandExecutor(
+            FakeDatabase(transaction), allowed_tenant_ids={"audit-tenant"}
+        ).execute(_activation_command(), IDENTITY)
+    assert transaction.inserts == []
+    assert transaction.updates == []
+
+
+def test_activation_with_an_altered_plan_diff_is_refused_with_zero_mutations():
+    """Altered binding is denied: the stored diff must hash to its receipt.
+
+    The quantity is changed after signing, so the persisted hash no longer
+    describes the diff being activated.
+    """
+    diff = _signed_diff()
+    tampered = json.dumps({
+        "reroute_order_id": diff.reroute_order_id,
+        "reroute_cases": diff.reroute_cases + 1,
+        "reroute_target_vehicle": diff.reroute_target_vehicle,
+        "pickup_order_id": diff.pickup_order_id,
+        "pickup_cases": diff.pickup_cases,
+    }, sort_keys=True, separators=(",", ":"))
+    transaction = FakeTransaction(
+        source_orders=_ACTIVATION_SOURCE_ORDERS,
+        approval_rows=[_approval_row(diff, plan_diff_json=tampered)],
+    )
+    with pytest.raises(ValueError, match="PERSISTED_PLAN_DIFF_HASH_MISMATCH"):
+        SpannerLedgerCommandExecutor(
+            FakeDatabase(transaction), allowed_tenant_ids={"audit-tenant"}
+        ).execute(_activation_command(), IDENTITY)
+    assert transaction.inserts == []
+    assert transaction.updates == []
+
+
+def test_duplicate_identical_activation_returns_the_original_receipt():
+    """§8.7: a duplicate identical action replays its receipt, mutating nothing."""
+    diff = _signed_diff()
+    command = _activation_command()
+    existing = (
+        "RCT-ORIGINAL-ACTIVATION",
+        command.command_id,
+        "rev43",
+        "ACTIVATE_APPROVED_REPAIR_PLAN",
+        "SUCCESS",
+        2,
+        "ACTIVATE_APPROVED_REPAIR_PLAN committed",
+        "activation-trace-000000000000000",
+        datetime(2026, 8, 14, 8, 24, tzinfo=timezone.utc),
+        IDENTITY.subject,
+        IDENTITY.email,
+        "FULFILLMENT_RECOVERY_PLANNER",
+        command.request_fingerprint(),
+    )
+    transaction = FakeTransaction(
+        source_orders=_ACTIVATION_SOURCE_ORDERS,
+        approval_rows=[_approval_row(diff)],
+        existing_receipt=existing,
+    )
+    result = SpannerLedgerCommandExecutor(
+        FakeDatabase(transaction), allowed_tenant_ids={"audit-tenant"}
+    ).execute(command, IDENTITY)
+
+    assert result.idempotent_replay is True
+    assert result.additional_mutations == 0
+    assert result.receipt["receipt_id"] == "RCT-ORIGINAL-ACTIVATION"
+    assert transaction.inserts == []
+    assert transaction.updates == []
+
+
 def test_incident_status_command_refuses_skipped_lifecycle_transition():
     command = coordinator_command(
         command_type=LedgerCommandType.SET_INCIDENT_STATUS,
