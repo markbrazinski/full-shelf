@@ -16,6 +16,7 @@ from fleet_fakes import (  # noqa: E402
     CANONICAL_GRAPH,
     CANONICAL_NOTICE,
     CANONICAL_PARTNER_STATE,
+    INCIDENT_LEAD_OK,
     canonical_candidates,
     run_canonical_fleet,
     scripted_gemini,
@@ -360,6 +361,29 @@ def test_extracted_lot_must_match_the_authenticated_event():
         "SOURCE_ANCHOR_VALIDATION_FAILED", "LOT_ANCHOR_VALIDATION_FAILED",
         "EXTRACTED_LOT_DOES_NOT_MATCH_EVENT",
     }
+
+
+def test_unauthorized_specialist_is_never_invoked_at_all():
+    """§4.2: Incident Lead gates dispatch, so refusal precedes execution.
+
+    The playbook authorizes only Network & Custody. Fulfillment must therefore
+    never reach the model -- proven by its absence from the recorded Gemini
+    calls, not merely by its absence from the assembled proposal.
+    """
+    lead = dict(INCIDENT_LEAD_OK,
+                required_specialists=["full-shelf.network-custody.v2"])
+    calls = []
+    with scripted_gemini(calls=calls, overrides={"IncidentLeadAgent": lead}):
+        proposal = run_canonical_fleet()["proposal"]
+
+    assert proposal.status == "MANUAL_REVIEW_REQUIRED"
+    assert proposal.reason_code == "PLAYBOOK_DID_NOT_AUTHORIZE_SEQUENCE"
+    # The unauthorized agent never ran: no model call, no trace entry.
+    assert "FulfillmentPlanningRecoveryAgent" not in calls
+    traced = [entry["agent_id"] for entry in proposal.delegation_trace]
+    assert AGENT_FULFILLMENT_PLANNING_RECOVERY not in traced
+    # The authorized one did run.
+    assert "NetworkAndCustodyAgent" in calls
 
 
 def test_extraction_must_name_the_source_event_it_was_given():

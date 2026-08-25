@@ -272,11 +272,28 @@ def build_incident_coordinator_agent(run_context: Optional[FleetRunContext] = No
 
             # Build hops based on trigger; only invoke agents needed for this trigger
             hops = _build_hops_for_trigger(context, accepted)
+            # Agents the playbook forbade, recorded so the run can fail closed
+            # with a named reason after the loop rather than silently truncating.
+            unauthorized: List[str] = []
 
             for index, (agent_id, prompt_builder, validator, ok_label) in enumerate(hops):
+                # Incident Lead is a dispatch gate, not a post-hoc audit. Once it
+                # has been accepted, every remaining hop must appear in its
+                # required_specialists before it is prompted or invoked, so an
+                # unauthorized specialist never executes at all.
+                if accepted.get(AGENT_INCIDENT_LEAD) is not None:
+                    authorized = set(
+                        accepted[AGENT_INCIDENT_LEAD].required_specialists
+                    )
+                    if agent_id not in authorized:
+                        unauthorized.append(agent_id)
+                        continue
+
                 # Build prompt dynamically, using results from previous steps
                 prompt = prompt_builder(accepted)
-                # Get specialist by index (should match because both derived from same sequence)
+                # Both hops and sub_agents derive from the same trigger sequence,
+                # so index pairs them. Skipped hops keep that alignment because
+                # index comes from the hop list, not from a running counter.
                 if index >= len(self.sub_agents):
                     failure = "SUB_AGENTS_MISMATCH"
                     break
@@ -350,9 +367,16 @@ def build_incident_coordinator_agent(run_context: Optional[FleetRunContext] = No
                     execution=execution, validation=ok_label,
                 ))
 
+            # The trigger expected an agent the playbook did not authorize. It
+            # was never constructed or invoked; the run fails closed rather than
+            # returning a proposal assembled from a truncated sequence.
+            if failure is None and unauthorized:
+                failure = "PLAYBOOK_DID_NOT_AUTHORIZE_SEQUENCE"
+
             payload = {
                 "status": "MANUAL_REVIEW_REQUIRED" if failure else "PROPOSED",
                 "reason_code": failure,
+                "unauthorized_agent_ids": sorted(unauthorized),
                 "delegation_trace": trace,
                 "accepted_agent_ids": list(accepted),
             }
@@ -557,20 +581,11 @@ def run_fleet(
             incident_id, lot_id, "INCOMPLETE_SPECIALIST_COVERAGE", trace
         )
 
-    # If Incident Lead ran, verify it authorized all agents that actually ran.
-    # Incident Lead's required_specialists must be a superset of agents that ran (minus Incident Lead itself).
-    if AGENT_INCIDENT_LEAD in trigger_agents:
-        incident_lead_output = accepted.get(AGENT_INCIDENT_LEAD)
-        if incident_lead_output:
-            authorized_specialists = set(incident_lead_output.required_specialists)
-            agents_after_incident_lead = trigger_agents - {AGENT_INCIDENT_LEAD, AGENT_RECALL_INTAKE_EXTRACTION}
-            if not agents_after_incident_lead.issubset(authorized_specialists):
-                unauthorized = agents_after_incident_lead - authorized_specialists
-                return _failed_proposal(
-                    incident_id, lot_id,
-                    f"PLAYBOOK_DID_NOT_AUTHORIZE_SEQUENCE: {','.join(sorted(unauthorized))}",
-                    trace
-                )
+    # Authorization is enforced at dispatch inside the coordinator loop, so an
+    # unauthorized specialist is never constructed or invoked. Re-checking it
+    # here would only re-derive what the gate already refused; a run that
+    # skipped a hop cannot reach this point because it fails closed above with
+    # PLAYBOOK_DID_NOT_AUTHORIZE_SEQUENCE.
 
     # Extract only the outputs for agents that ran (are in trigger_agents)
     proposal_kwargs = {
