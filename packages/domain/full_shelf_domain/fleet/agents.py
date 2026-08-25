@@ -434,7 +434,6 @@ def recovery_prompt(candidate_projection: Dict[str, Any], trigger_class: Optiona
         TriggerClass.DAILY_PLANNING: "DAILY_PLAN",
         TriggerClass.FLEET_FAILURE: "DISRUPTION_RECOVERY",
         TriggerClass.RECALL: "RECALL_RECOVERY",
-        TriggerClass.PARTNER_CALLBACK: "RECALL_RECOVERY",
         TriggerClass.NEXT_DAY_DRAFT: "NEXT_DAY_DRAFT",
     }
 
