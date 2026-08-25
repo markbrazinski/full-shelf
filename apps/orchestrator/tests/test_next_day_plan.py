@@ -61,9 +61,19 @@ def test_next_day_plan_is_dynamic_authoritative_and_ledger_bound():
     draft = response.json()["next_day_draft"]
     assert draft["revision"] == "rev01"
     assert draft["status"] == "DRAFT_WITH_CONSTRAINTS — HUMAN APPROVAL REQUIRED"
-    assert draft["inherited_constraints"][0]["affected_lot"] == "LOT-ALTERED"
-    assert draft["inherited_constraints"][1]["shortfall_cases"] == 7
-    assert draft["inherited_constraints"][2]["unconfirmed_cases"] == 3
+    # Event 25 requires all FOUR inherited obligations. Indexed positionally
+    # before, which silently tolerated a missing fourth entry.
+    constraints = {c["type"]: c for c in draft["inherited_constraints"]}
+    assert set(constraints) == {
+        "LOT_MOVEMENT_BARRIER", "RECOVERY_PRIORITY",
+        "ACKNOWLEDGMENT_HOLD", "UNRESOLVED_INCIDENT",
+    }
+    assert constraints["LOT_MOVEMENT_BARRIER"]["affected_lot"] == "LOT-ALTERED"
+    assert constraints["RECOVERY_PRIORITY"]["shortfall_cases"] == 7
+    assert constraints["ACKNOWLEDGMENT_HOLD"]["unconfirmed_cases"] == 3
+    # The draft must not read as though the recall settled overnight.
+    assert constraints["UNRESOLVED_INCIDENT"]["incident_id"] == "INC-ALTERED"
+    assert constraints["UNRESOLVED_INCIDENT"]["incident_status"] == "PARTIALLY_CONTAINED"
     command = execute.call_args.kwargs
     assert command["command_type"] == "CREATE_NEXT_DAY_DRAFT"
     assert command["expected_plan_revision"] == "rev08"

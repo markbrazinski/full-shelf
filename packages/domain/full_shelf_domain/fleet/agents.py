@@ -390,13 +390,32 @@ def incident_lead_prompt(
     if extraction:
         # Handle both dict and Pydantic model instances
         extract_dict = extraction if isinstance(extraction, dict) else extraction.model_dump()
-        lines.extend([
-            f"Extracted from notice:",
-            f"  Product: {extract_dict.get('product_name', 'unknown')}",
-            f"  Hazard: {extract_dict.get('hazard', 'unknown')}",
-            f"  Action required: {extract_dict.get('action_required', 'unknown')}",
-            f"  Source anchor: {extract_dict.get('source_anchor', 'unknown')}",
-        ])
+
+        def anchored_value(field_name):
+            """Read a V2 {value, quote} claim, tolerating absence.
+
+            These fields were previously read under their deleted V1 names
+            (product_name, action_required, source_anchor) with an 'unknown'
+            default, so every prompt rendered 'unknown' and Incident Lead
+            scoped the incident without ever seeing the extracted facts.
+            """
+            claim = extract_dict.get(field_name)
+            if isinstance(claim, dict):
+                return claim.get("value")
+            return claim
+
+        scope = extract_dict.get("notice_scope") or []
+        scope_values = [
+            item.get("value") if isinstance(item, dict) else item for item in scope
+        ]
+        extracted_lines = [f"Extracted from notice:"]
+        if anchored_value("lot_id"):
+            extracted_lines.append(f"  Lot: {anchored_value('lot_id')}")
+        if anchored_value("hazard"):
+            extracted_lines.append(f"  Hazard: {anchored_value('hazard')}")
+        if scope_values:
+            extracted_lines.append(f"  Scope: {', '.join(filter(None, scope_values))}")
+        lines.extend(extracted_lines)
 
     lines.extend([
         "Classify the incident type, identify affected capabilities,",

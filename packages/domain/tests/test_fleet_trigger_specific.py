@@ -176,6 +176,31 @@ class TestIncidentLeadOnlyAfterExtraction:
         assert "Model-Armor" not in prompt
         assert "screened" not in prompt.lower()
 
+    def test_incident_lead_prompt_renders_real_extracted_values(self):
+        """The prompt must carry the facts, not an 'unknown' placeholder.
+
+        These fields were read under their deleted V1 names with an 'unknown'
+        default, so Incident Lead scoped every incident without seeing what
+        extraction had established.
+        """
+        from full_shelf_domain.fleet.agents import incident_lead_prompt
+
+        prompt = incident_lead_prompt(
+            source_event_id="EVT-001",
+            source_class="FOOD_SAFETY_RECALL",
+            affected_lot_id="LTC-4471",
+            extraction={
+                "lot_id": {"value": "LTC-4471", "quote": "Lot LTC-4471"},
+                "hazard": {"value": "E. coli O157:H7", "quote": "E. coli O157:H7"},
+                "notice_scope": [
+                    {"value": "Romaine Lettuce", "quote": "Romaine Lettuce"},
+                ],
+            },
+        )
+        assert "E. coli O157:H7" in prompt
+        assert "Romaine Lettuce" in prompt
+        assert "unknown" not in prompt
+
 
 class TestRecallPathFullSequence:
     """Verify the complete RECALL path matches Agent Contract V2."""

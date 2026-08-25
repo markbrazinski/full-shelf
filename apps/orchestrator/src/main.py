@@ -2906,7 +2906,18 @@ def _generate_next_day_plan(
                 "site_id": row[1]["site_id"],
                 "unconfirmed_cases": row[1]["unconfirmed_cases"],
                 "status": "ACKNOWLEDGMENT_HOLD_ACTIVE"
-            } for row in holds]),
+            } for row in holds] + [{
+                # Event 25's fourth inherited obligation. The unresolved
+                # incident was previously only a 409 precondition and a scalar
+                # flag, so the draft carried three of the four obligations the
+                # contract requires and could read as though the recall were
+                # settled overnight.
+                "constraint_id": incident_id,
+                "type": "UNRESOLVED_INCIDENT",
+                "incident_id": incident_id,
+                "incident_status": incident_status,
+                "status": "INCIDENT_UNRESOLVED"
+            }] if incident_id else []),
         "confirmed_safe_inventory": [
             {"lot_id": row[0], "confirmed_cases": row[1]} for row in safe_lots
         ],
