@@ -166,7 +166,7 @@ def _build_hops_for_trigger(
         AGENT_RECALL_INTAKE_EXTRACTION: (
             lambda acc: recall_prompt(context.screened_notice_text),
             lambda parsed: validate_recall_extraction(
-                parsed, context.screened_notice_text, context.lot_id, context.source_event_id or ""
+                parsed, context.screened_notice_text, context.lot_id
             ),
             "SCHEMA_AND_SOURCE_ANCHORS_VALIDATED"
         ),
