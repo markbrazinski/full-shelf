@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-25  
 **Branch:** build/agent-contract-v2  
-**Final Commit:** 177e073 (WP6)  
+**Final Commit:** 70bca33 (Runtime test fixtures updated)  
 **Status:** READY_FOR_INDEPENDENT_AUDIT
 
 ## Executive Summary
@@ -131,7 +131,7 @@ All five P1 audit findings have been addressed and implemented across seven work
 
 ## Test Coverage
 
-### Focused Fleet Suite (87 passing)
+### Focused Fleet Suite (120 passing)
 - **test_fleet_trigger_specific.py:** 22 tests
   - Orchestration sequence per trigger
   - Partner callback mode-scoped trust
@@ -151,6 +151,21 @@ All five P1 audit findings have been addressed and implemented across seven work
   - Incident Lead authorization
   - Fact-based abstention (4 new tests)
   - Recall extraction anchoring
+
+- **test_fleet_runtime.py:** 29 tests (previously failing due to V1 schema in fixtures)
+  - Real ADK execution (not mocked)
+  - Five-agent sequence under scripted Gemini
+  - Evidence identifiers from real execution
+  - All specialist outputs consumed by proposal
+  - Custody tool invocation
+  - Canonical quantities unchanged
+  - Extracted lot validation
+  - Failed specialist retention of identifiers
+  - Model error handling
+
+- **test_partner_evidence.py:** 4 tests
+  - Partner custody proposal abstention semantics
+  - Evidence trail completeness
 
 ### Safe Unit Test Suite (all passing)
 - test_capacity.py
@@ -241,9 +256,18 @@ This implementation satisfies all AGENT_CONTRACT_V2 P1 audit findings. The fleet
 
 ---
 
+## Test Summary
+
+- **Total Focused Fleet Tests:** 120/120 passing (trigger-specific, catalog, validation, runtime, partner_evidence)
+- **Pre-Existing Failures:** 0 (all runtime fixtures updated for V2 schema)
+- **Safe Unit Test Suite:** All passing (14 distinct test modules covering capacity, identity, incident lifecycle, recall reconciliation, tenant isolation, truthful state, ledger commands, ledger executor, ledger identity, ledger auth, mutation executor)
+
+---
+
 **Prepared by:** Claude Haiku 4.5  
 **Session Date:** 2026-08-25  
 **Work Packages:** 7 (WP1-WP7, all complete)  
-**Test Status:** 87/87 focused suite passing; safe unit suite passing  
+**Test Status:** 120/120 focused suite passing; safe unit suite passing; runtime fixtures updated  
 **Git Branch:** build/agent-contract-v2  
+**Final Commit:** 70bca33  
 **Ready for Audit:** Yes
