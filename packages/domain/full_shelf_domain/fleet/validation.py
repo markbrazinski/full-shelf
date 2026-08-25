@@ -253,12 +253,13 @@ def proposal_hash(payload: Dict[str, Any]) -> str:
     ).hexdigest()
 
 
-def validate_recall_extraction(extracted, raw_notice: str, expected_lot_id: str):
+def validate_recall_extraction(extracted, raw_notice: str, expected_lot_id: str, expected_source_event_id: str):
     """Re-apply the accepted recall source-anchoring rules inside the fleet.
 
     Every extracted field must carry its own quote, which must be a literal
     substring of the screened notice. The lot identifier must have an explicit
     lot anchor and match the authenticated event. Lot must be present (not None).
+    Source event ID must match the accepted event exactly.
     """
     from full_shelf_domain.recall import _has_explicit_lot_anchor
 
@@ -269,15 +270,24 @@ def validate_recall_extraction(extracted, raw_notice: str, expected_lot_id: str)
         extracted.missing_required_fields.append("lot_id")
         raise FleetProposalError("INSUFFICIENT_SOURCE_ANCHORS")
 
-    # Validate each field's quote is literal substring
+    # Source event ID must match accepted event
+    if extracted.source_event_id != expected_source_event_id:
+        raise FleetProposalError("RECALL_SOURCE_EVENT_MISMATCH")
+
+    # Validate each field's quote is literal substring and value is present in notice
     for field_name in ["lot_id", "hazard"]:
         field = getattr(extracted, field_name)
-        if field and field.quote.casefold() not in normalized:
-            raise FleetProposalError("SOURCE_ANCHOR_VALIDATION_FAILED")
+        if field:
+            if field.quote.casefold() not in normalized:
+                raise FleetProposalError("SOURCE_ANCHOR_VALIDATION_FAILED")
+            if field.value.casefold() not in normalized:
+                raise FleetProposalError("SOURCE_ANCHOR_VALIDATION_FAILED")
 
     for field_name in ["notice_scope"]:
         for item in getattr(extracted, field_name, []):
             if item.quote.casefold() not in normalized:
+                raise FleetProposalError("SOURCE_ANCHOR_VALIDATION_FAILED")
+            if item.value.casefold() not in normalized:
                 raise FleetProposalError("SOURCE_ANCHOR_VALIDATION_FAILED")
 
     if extracted.notice_time and extracted.notice_time.quote.casefold() not in normalized:
