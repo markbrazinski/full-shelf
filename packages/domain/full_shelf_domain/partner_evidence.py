@@ -63,9 +63,20 @@ class QuotedTimeClaim(StrictModel):
 class PartnerCustodyProposal(StrictModel):
     """Task-specific Partner Operations output; always advisory.
 
-    When abstain=True, requested_mutation must be None (agent opts out of proposing domain action).
-    When abstain=False, any combination of claims and requested_mutation is schema-valid — the
-    deterministic validator re-derives whether abstention should have applied from claims.
+    Any missing required claim forces abstention: the proposal is normalized to
+    abstain=True with no requested_mutation, per AGENT_CONTRACT_V2 §4.5.
+
+    Normalization, not rejection, is deliberate. The vague-callback branch exists
+    to PERSIST an abstaining, DENIED proposal carrying one evidence mutation
+    (GOLDEN_DEMO_EVENT_CONTRACT §6.1). A schema that refused to construct the
+    object could not record evidence about it, which would delete the refusal
+    the demo is built on rather than enforce it. Deterministic policy still
+    re-derives the decision independently in verify_partner_custody_proposal.
+
+    CONFLICTING claims are not representable here: the quoted-claim types carry
+    only value and quote, so a conflict can only be computed against
+    authoritative context. That detection lives in the verifier, which compares
+    each claim to the authoritative record and emits ClaimResult.state.
     """
 
     incident_id: str = Field(min_length=1, max_length=64)
@@ -86,8 +97,15 @@ class PartnerCustodyProposal(StrictModel):
     confidence: float = Field(ge=0.0, le=1.0)
 
     @model_validator(mode="after")
-    def abstain_requires_no_mutation_request(self):
-        """If agent abstains, it cannot request a domain mutation."""
+    def missing_claims_force_recorded_abstention(self):
+        """Any missing required claim forces abstention with no mutation request."""
+        required_claims = (
+            self.lot, self.quantity, self.location,
+            self.disposition, self.confirmation_time,
+        )
+        if any(claim is None for claim in required_claims):
+            object.__setattr__(self, "abstain", True)
+            object.__setattr__(self, "requested_mutation", None)
         if self.abstain and self.requested_mutation is not None:
             raise ValueError("abstain=True forbids requested_mutation != None")
         return self

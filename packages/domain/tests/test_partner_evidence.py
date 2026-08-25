@@ -72,6 +72,39 @@ def test_partner_work_item_details_are_strict_and_complete():
             )
 
 
+def test_any_single_missing_claim_forces_recorded_abstention():
+    """§4.5: ANY missing required claim forces abstention -- not only all five.
+
+    The proposal must still CONSTRUCT, because the refusal has to be persisted
+    as evidence. Rejecting it at the schema layer would erase the refusal
+    instead of recording it.
+    """
+    complete = {
+        "lot": {"value": "LTC-4471", "quote": "LTC-4471"},
+        "quantity": {"value": 8, "quote": "8 cases"},
+        "location": {"value": "SITE-01", "quote": "Site 01"},
+        "disposition": {"value": "ISOLATED_IN_QUARANTINE",
+                        "quote": "ISOLATED_IN_QUARANTINE"},
+        "confirmation_time": {"value": "10:18", "quote": "confirmed at 10:18"},
+    }
+    for omitted in complete:
+        candidate = proposal(**{k: v for k, v in complete.items() if k != omitted})
+        assert candidate.abstain is True, omitted
+        assert candidate.requested_mutation is None, omitted
+
+    # All five present: the agent may propose a mutation.
+    assert proposal(**complete).requested_mutation == "CONFIRM_CUSTODY"
+
+
+def test_abstaining_proposal_yields_zero_domain_mutations():
+    """An abstaining proposal is denied by deterministic policy, not by schema."""
+    candidate = proposal()
+    assert candidate.abstain is True
+    result = verify("We pulled the remaining lettuce.", candidate)
+    assert result.decision == "DENIED"
+    assert "AGENT_ABSTAINED" in result.reasons
+
+
 def test_vague_response_is_denied_with_zero_qualifying_claims():
     result = verify(
         "We pulled the remaining lettuce. Should be all good.", proposal()
@@ -102,7 +135,17 @@ def test_complete_response_requires_literal_claim_anchors():
 
 @pytest.mark.asyncio
 async def test_real_adk_runner_persists_only_emitted_identifiers():
-    candidate = proposal().model_dump(mode="json")
+    # A complete proposal, so this test exercises identifier truthfulness rather
+    # than abstention: a claimless proposal is normalized to abstain=True with
+    # no requested_mutation, which is a different behavior with its own tests.
+    candidate = proposal(
+        lot={"value": "LTC-4471", "quote": "LTC-4471"},
+        quantity={"value": 8, "quote": "8 cases"},
+        location={"value": "SITE-01", "quote": "Site 01"},
+        disposition={"value": "ISOLATED_IN_QUARANTINE",
+                     "quote": "ISOLATED_IN_QUARANTINE"},
+        confirmation_time={"value": "10:18", "quote": "confirmed at 10:18"},
+    ).model_dump(mode="json")
     from google.adk.models.google_llm import Gemini
 
     async def fake_generate(self, llm_request, stream=False):
