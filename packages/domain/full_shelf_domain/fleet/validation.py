@@ -30,6 +30,8 @@ def validate_incident_lead_assessment(
     accepted_event_id: str,
     authorized_playbook_ids: Sequence[str],
     authorized_specialists: Sequence[str],
+    authoritative_commitment_ids: Optional[Sequence[str]] = None,
+    permitted_safety_actions: Optional[Sequence[str]] = None,
 ) -> IncidentLeadAssessment:
     """Require the incident lead's proposal to reference authorized resources only.
 
@@ -44,6 +46,19 @@ def validate_incident_lead_assessment(
     for specialist_id in assessment.required_specialists:
         if specialist_id not in authorized_specialists:
             raise FleetProposalError("INCIDENT_SPECIALIST_NOT_AUTHORIZED")
+
+    # Verify affected commitment IDs exist in authoritative plan (if provided)
+    if authoritative_commitment_ids is not None:
+        for commitment_id in assessment.affected_commitment_ids:
+            if commitment_id not in authoritative_commitment_ids:
+                raise FleetProposalError("INCIDENT_LEAD_AFFECTED_COMMITMENT_NOT_FOUND")
+
+    # Verify safety actions are permitted by playbook (if permitted set provided)
+    if permitted_safety_actions is not None:
+        for action in assessment.immediate_safety_actions:
+            if action not in permitted_safety_actions:
+                raise FleetProposalError("INCIDENT_LEAD_SAFETY_ACTION_NOT_PERMITTED")
+
     return assessment
 
 
@@ -83,6 +98,36 @@ def validate_custody_assessment(
     )
     if assessment.containment_assessment != expected_containment:
         raise FleetProposalError("CUSTODY_CONTAINMENT_MISMATCH")
+
+    # When positions are provided, verify they reconcile with totals (no double-count)
+    if assessment.positions:
+        positions_sum = sum(p.quantity for p in assessment.positions)
+        if positions_sum != assessment.total_cases_in_custody:
+            raise FleetProposalError("CUSTODY_POSITIONS_QUANTITY_MISMATCH")
+
+        # Verify no fabricated nodes in positions
+        valid_node_ids = {p["node_id"] for p in graph_result.get("all_positions", [])}
+        for position in assessment.positions:
+            if position.node_id not in valid_node_ids:
+                raise FleetProposalError("CUSTODY_POSITIONS_FABRICATED_NODE_ID")
+            for edge_id in position.supporting_edge_ids:
+                # Edge validation: edge_id should reference valid edges in graph
+                if not any(e.get("edge_id") == edge_id for e in graph_result.get("edges", [])):
+                    raise FleetProposalError("CUSTODY_POSITIONS_FABRICATED_EDGE_ID")
+
+    # When unresolved_obligations are provided, verify they match unconfirmed set
+    if assessment.unresolved_obligations:
+        valid_node_ids = {p["node_id"] for p in graph_result.get("all_positions", [])}
+        for obligation in assessment.unresolved_obligations:
+            if obligation.node_id not in valid_node_ids:
+                raise FleetProposalError("CUSTODY_OBLIGATIONS_FABRICATED_NODE_ID")
+
+        # Verify unresolved_obligations is EXACT match to unconfirmed_node_ids
+        obligation_ids = {o.node_id for o in assessment.unresolved_obligations}
+        unconfirmed_ids = set(assessment.unconfirmed_node_ids)
+        if obligation_ids != unconfirmed_ids:
+            raise FleetProposalError("CUSTODY_UNRESOLVED_OBLIGATIONS_INCOMPLETE")
+
     return assessment
 
 

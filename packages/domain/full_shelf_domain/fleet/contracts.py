@@ -141,6 +141,27 @@ class IncidentLeadAssessment(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
 
 
+class CustodyPosition(BaseModel):
+    """One physical position in the recalled lot's custody graph."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    node_id: str = Field(min_length=1, max_length=64)
+    quantity: int = Field(ge=0)
+    status: Literal["CONFIRMED", "UNCONFIRMED"]
+    supporting_edge_ids: List[str] = Field(default_factory=list)
+
+
+class UnresolvedObligation(BaseModel):
+    """Missing evidence from a position in the graph."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    node_id: str = Field(min_length=1, max_length=64)
+    quantity: int = Field(ge=0)
+    required_evidence: List[str] = Field(default_factory=list)
+
+
 class NetworkCustodyAssessment(BaseModel):
     """Advisory custody reading. Every number must match deterministic tool output."""
 
@@ -152,8 +173,21 @@ class NetworkCustodyAssessment(BaseModel):
     unconfirmed_cases: int = Field(ge=0, le=100000)
     unconfirmed_node_ids: List[str] = Field(max_length=32)
     max_path_depth: int = Field(ge=0, le=32)
+    affected_commitment_ids: List[str] = Field(default_factory=list)
+    positions: List[CustodyPosition] = Field(default_factory=list)
+    unresolved_obligations: List[UnresolvedObligation] = Field(default_factory=list)
     containment_assessment: Literal["FULLY_TRACED", "UNCONFIRMED_DOWNSTREAM"]
     narrative: str = Field(min_length=1, max_length=600)
+
+
+class KnownShortfall(BaseModel):
+    """Structured shortfall from Fulfillment agent."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    agency_id: str = Field(min_length=1, max_length=64)
+    quantity: int = Field(ge=0)
+    reason: str = Field(min_length=1, max_length=256)
 
 
 class RecoverySelection(BaseModel):
@@ -163,9 +197,11 @@ class RecoverySelection(BaseModel):
 
     selected_candidate_id: str = Field(min_length=1, max_length=64)
     operating_objective: Literal["DAILY_PLAN", "DISRUPTION_RECOVERY", "RECALL_RECOVERY", "NEXT_DAY_DRAFT"]
-    rationale: str = Field(min_length=1, max_length=600)
+    affected_commitment_ids: List[str] = Field(default_factory=list)
     cited_constraints: List[str] = Field(min_length=1, max_length=8)
     tradeoffs: str = Field(min_length=1, max_length=600)
+    known_shortfalls: List[KnownShortfall] = Field(default_factory=list)
+    rationale: str = Field(min_length=1, max_length=600)
     confidence: float = Field(ge=0.0, le=1.0)
 
 
