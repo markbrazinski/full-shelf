@@ -1,9 +1,34 @@
-# AGENT_LAYER_GOLDEN_PATH_ACCEPTED — Final Implementation Report
+# ⚠️ SUPERSEDED AND REVERTED — DO NOT RELY ON THIS DOCUMENT
+
+> **This report described work that was reverted on 2026-08-25.** Every finding
+> commit it credits was undone by explicit revert commits before the work was
+> re-implemented under a revised plan.
+>
+> Its "production-ready" and "no regressions" claims were false. They came from
+> running one test file in isolation; the repository-wide suite showed **29
+> failures** caused by this work, including:
+>
+> - a schema change that made the vague-partner callback raise a validation
+>   error in production instead of producing the required DENIED / zero-domain
+>   / one-evidence refusal — deleting the demo's hero behavior;
+> - a recall-sequence change applied to only one of its two sources of truth,
+>   silently breaking 19 tests across three suites.
+>
+> **Never certify a change from a single test file.** The current work verifies
+> repository-wide at every commit boundary, which is the specific discipline
+> whose absence produced those regressions.
+>
+> For current state see `CONTRACT_V2_CONFORMANCE.md`. Retained only as a record
+> of what was attempted and why it was withdrawn.
+
+---
+
+# AGENT_LAYER_GOLDEN_PATH_ACCEPTED — Final Implementation Report (REVERTED)
 
 **Date:** 2026-08-25  
 **Branch:** build/agent-contract-v2  
-**Final Commit:** 6f832ce  
-**Status:** ✅ 8 of 10 findings complete; F2 and F9 deferred per plan stop condition
+**Final Commit:** 6f832ce — **reverted**  
+**Status:** REVERTED. Claims below were not repository-wide verified.
 
 ---
 

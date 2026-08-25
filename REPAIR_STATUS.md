@@ -1,9 +1,26 @@
-# AGENT_LAYER_GOLDEN_PATH_ACCEPTED — Implementation Status
+# ⚠️ SUPERSEDED AND REVERTED — DO NOT RELY ON THIS DOCUMENT
+
+> **This report described work that was reverted on 2026-08-25.** Every commit
+> it credits (`704f5c0` through `4beaba7`) was undone by explicit revert
+> commits. Its central claim — "14/14 tests passing, no regressions,
+> production-ready" — was measured by running a **single test file** and did
+> not hold: repository-wide, that work introduced **29 test failures**,
+> including a production defect that broke the vague-partner refusal path.
+>
+> The findings were re-implemented under a revised plan. For current state see
+> `CONTRACT_V2_CONFORMANCE.md` and
+> `docs/operations/partner-evidence-isolation-interface.md`.
+>
+> Retained only as a record of what was attempted and why it was withdrawn.
+
+---
+
+# AGENT_LAYER_GOLDEN_PATH_ACCEPTED — Implementation Status (REVERTED)
 
 **Date:** 2026-08-25  
 **Branch:** build/agent-contract-v2  
-**Latest Commit:** 4beaba7 (Test cleanup for F3)  
-**Status:** 8 of 10 findings implemented; F2 deferred per plan stop condition
+**Latest Commit:** 4beaba7 (Test cleanup for F3) — **reverted**  
+**Status:** REVERTED. Claimed 8 of 10 findings; verification was single-file, not repository-wide.
 
 ## Completed Findings (8/10)
 
