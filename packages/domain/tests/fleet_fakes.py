@@ -59,28 +59,34 @@ INCIDENT_LEAD_OK = {
         "full-shelf.recall-intake-extraction.v2",
         "full-shelf.network-custody.v2",
         "full-shelf.fulfillment-planning-recovery.v2",
+        "full-shelf.partner-operations.v2",
     ],
     "immediate_safety_actions": ["pause_distribution", "notify_sites"],
     "rationale": "Food safety recall scope determined from notice.",
     "confidence": 0.95,
 }
 RECALL_OK = {
-    "lot_id": "LTC-4471", "product_name": "Romaine Lettuce",
-    "hazard": "E. coli O157:H7", "action_required": "PAUSE_DISTRIBUTION",
-    "source_anchor": "Supplier Safety Bulletin",
+    "source_event_id": "EVT-001",
+    "lot_id": {"value": "LTC-4471", "quote": "Lot LTC-4471"},
+    "hazard": {"value": "E. coli O157:H7", "quote": "E. coli O157:H7"},
+    "notice_scope": [{"value": "Romaine Lettuce", "quote": "Romaine Lettuce"}],
+    "notice_time": None,
+    "missing_required_fields": [],
 }
 CUSTODY_OK = {
     "lot_id": "LTC-4471", "total_cases_in_custody": 96, "confirmed_cases": 88,
     "unconfirmed_cases": 8, "unconfirmed_node_ids": ["SITE-01"], "max_path_depth": 3,
+    "affected_commitment_ids": [], "positions": [], "unresolved_obligations": [],
     "containment_assessment": "UNCONFIRMED_DOWNSTREAM",
     "narrative": "Eight cases at Site 01 remain unconfirmed.",
 }
 RECOVERY_OK = {
     "selected_candidate_id": "CAND-LOT-ASC",
     "operating_objective": "RECALL_RECOVERY",
-    "rationale": "Only feasible allocation of the available safe stock.",
+    "affected_commitment_ids": [], "known_shortfalls": [],
     "cited_constraints": ["40 safe cases available"],
     "tradeoffs": "A truthful shortfall remains for the third agency.",
+    "rationale": "Only feasible allocation of the available safe stock.",
     "confidence": 0.9,
 }
 PARTNER_OK = {

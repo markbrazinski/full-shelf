@@ -125,7 +125,7 @@ def test_recall_evidence_uses_its_own_session_not_the_coordinators():
 def test_all_four_specialist_outputs_are_consumed_by_the_proposal():
     with scripted_gemini():
         proposal = run_canonical_fleet()["proposal"]
-    assert proposal.extraction and proposal.extraction["lot_id"] == "LTC-4471"
+    assert proposal.extraction and proposal.extraction["lot_id"]["value"] == "LTC-4471"
     assert proposal.custody.total_cases_in_custody == 96
     assert proposal.recovery.selected_candidate_id == "CAND-LOT-ASC"
     assert proposal.partner.template_id == "partner.acknowledgment-request.v1"
@@ -343,9 +343,12 @@ def test_invented_candidate_is_refused_before_partner_operations():
 
 def test_extracted_lot_must_match_the_authenticated_event():
     with scripted_gemini(overrides={"RecallIntakeExtractionAgent": {
-        "lot_id": "LTC-9999", "product_name": "Romaine Lettuce",
-        "hazard": "E. coli O157:H7", "action_required": "PAUSE_DISTRIBUTION",
-        "source_anchor": "Supplier Safety Bulletin",
+        "source_event_id": "INC-2026-08-25-001",
+        "lot_id": {"value": "LTC-9999", "quote": "lot LTC-9999"},
+        "hazard": {"value": "E. coli O157:H7", "quote": "E. coli O157:H7"},
+        "notice_scope": [{"value": "Romaine Lettuce", "quote": "Romaine"}],
+        "notice_time": None,
+        "missing_required_fields": [],
     }}):
         proposal = run_canonical_fleet()["proposal"]
     assert proposal.reason_code in {
