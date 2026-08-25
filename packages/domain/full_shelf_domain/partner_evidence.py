@@ -87,11 +87,7 @@ class PartnerCustodyProposal(StrictModel):
 
     @model_validator(mode="after")
     def abstain_requires_no_mutation_request(self):
-        """Any missing required claim forces abstain=True with no mutation request."""
-        claim_fields = [self.lot, self.quantity, self.location, self.disposition, self.confirmation_time]
-        any_missing = any(c is None for c in claim_fields)
-        if any_missing and not self.abstain:
-            raise ValueError("any missing required claim forces abstain=True")
+        """If agent abstains, it cannot request a domain mutation."""
         if self.abstain and self.requested_mutation is not None:
             raise ValueError("abstain=True forbids requested_mutation != None")
         return self
