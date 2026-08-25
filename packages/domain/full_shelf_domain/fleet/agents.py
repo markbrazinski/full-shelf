@@ -247,7 +247,7 @@ canonical scenario. Return the configured structured response only.
 
 
 async def collect_specialist_output(
-    *, specialist, agent_id: str, prompt: str, ctx, started=None
+    *, specialist, agent_id: str, prompt: str, ctx, started=None, trigger_class=None
 ):
     """Run one specialist as a real ADK invocation and parse its structured output.
 
@@ -270,8 +270,14 @@ async def collect_specialist_output(
     """
     from google.adk.runners import Runner
     from google.genai import types
+    from .orchestration import TriggerClass
+    from .contracts import PartnerInboundInterpretation
 
-    output_model = AGENT_OUTPUT_MODELS[agent_id]()
+    # Select output model based on agent and trigger
+    if agent_id == AGENT_PARTNER_OPERATIONS and trigger_class == TriggerClass.PARTNER_CALLBACK:
+        output_model = PartnerInboundInterpretation
+    else:
+        output_model = AGENT_OUTPUT_MODELS[agent_id]()
     execution: Dict[str, Any] = {
         "agent_id": agent_id,
         "agent_name": specialist.name,
@@ -362,17 +368,40 @@ async def collect_specialist_output(
     return parsed, execution
 
 
-def incident_lead_prompt(source_event_id: str, source_class: str, affected_lot_id: str) -> str:
-    """Trusted incident context for Incident Lead to scope the response."""
-    return (
-        f"An operational exception has been accepted:\n"
-        f"Event ID: {source_event_id}\n"
-        f"Class: {source_class}\n"
-        f"Affected lot: {affected_lot_id}\n"
-        f"Classify the incident type, identify affected capabilities, "
-        f"select the authorized playbook, and list required specialists.\n"
-        f"Do not invent facts. Use only what is supplied."
-    )
+def incident_lead_prompt(
+    source_event_id: str, source_class: str, affected_lot_id: str,
+    extraction: Optional[Dict[str, Any]] = None
+) -> str:
+    """Trusted incident context for Incident Lead to scope the response.
+
+    If extraction is provided, includes validated structured scope from
+    Recall Intake & Extraction. If not provided, uses basic event context.
+    """
+    lines = [
+        f"An operational exception has been accepted:",
+        f"Event ID: {source_event_id}",
+        f"Class: {source_class}",
+        f"Affected lot: {affected_lot_id}",
+    ]
+
+    if extraction:
+        # Handle both dict and Pydantic model instances
+        extract_dict = extraction if isinstance(extraction, dict) else extraction.model_dump()
+        lines.extend([
+            f"Extracted from notice:",
+            f"  Product: {extract_dict.get('product_name', 'unknown')}",
+            f"  Hazard: {extract_dict.get('hazard', 'unknown')}",
+            f"  Action required: {extract_dict.get('action_required', 'unknown')}",
+            f"  Source anchor: {extract_dict.get('source_anchor', 'unknown')}",
+        ])
+
+    lines.extend([
+        "Classify the incident type, identify affected capabilities,",
+        "select the authorized playbook, and list required specialists.",
+        "Do not invent facts. Use only what is supplied.",
+    ])
+
+    return "\n".join(lines)
 
 
 def recall_prompt(screened_notice_text: str) -> str:
@@ -423,6 +452,30 @@ PARTNER_PARAMETER_SOURCES = {
     "cases": "unconfirmed_cases",
     "deadline": "deadline",
 }
+
+
+def partner_inbound_prompt(authenticated_response_text: str, partner_id: str, lot_id: str) -> str:
+    """Interpret authenticated partner response to determine status and commitments.
+
+    The response has been authenticated and Model-Armor-approved. Extract explicit
+    claims about lot status, quantity on hand, location, disposition, and
+    confirmation timestamp.
+
+    For each fact, report the literal source anchor from the response. If any of
+    the five required facts (lot_id, quantity, location, disposition, confirmation_time)
+    is missing or ambiguous, set abstain=True and provide no claims. Missing facts
+    do not warrant low confidence—they warrant abstention.
+    """
+    return (
+        f"Partner: {partner_id}\n"
+        f"Lot: {lot_id}\n"
+        f"Authenticated response:\n"
+        f"{authenticated_response_text}\n\n"
+        "Extract claims with explicit source anchors from the response above.\n"
+        "Required claims: lot_id, quantity, location, disposition, confirmation_time.\n"
+        "If any required fact is missing, set abstain=True with rationale.\n"
+        "Return PartnerInboundInterpretation."
+    )
 
 
 def partner_prompt(partner_state: Dict[str, Any]) -> str:

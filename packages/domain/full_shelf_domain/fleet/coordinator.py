@@ -40,6 +40,7 @@ from .agents import (
     collect_specialist_output,
     incident_lead_prompt,
     network_custody_prompt,
+    partner_inbound_prompt,
     partner_prompt,
     recall_prompt,
     recovery_prompt,
@@ -70,6 +71,7 @@ from .validation import (
     validate_custody_assessment,
     validate_incident_lead_assessment,
     validate_partner_communication,
+    validate_partner_inbound_interpretation,
     validate_recall_extraction,
     validate_recovery_selection,
 )
@@ -150,7 +152,8 @@ def _build_hops_for_trigger(
             lambda acc: incident_lead_prompt(
                 context.source_event_id or "",
                 context.source_class or "FOOD_SAFETY_RECALL",
-                context.lot_id
+                context.lot_id,
+                extraction=acc.get(AGENT_RECALL_INTAKE_EXTRACTION)
             ),
             lambda parsed: validate_incident_lead_assessment(
                 parsed, context.source_event_id or "",
@@ -181,14 +184,31 @@ def _build_hops_for_trigger(
             ), parsed)[1],
             "CANDIDATE_ID_RESOLVED_DETERMINISTICALLY"
         ),
-        AGENT_PARTNER_OPERATIONS: (
+    }
+
+    # Partner Operations has different behavior based on trigger
+    if trigger == TriggerClass.PARTNER_CALLBACK:
+        # Inbound interpretation mode: partner response is Model-Armor-approved
+        hop_configs[AGENT_PARTNER_OPERATIONS] = (
+            lambda acc: partner_inbound_prompt(
+                context.screened_notice_text,  # authenticated partner response text
+                context.partner_state.get("partner_id", ""),
+                context.lot_id
+            ),
+            lambda parsed: validate_partner_inbound_interpretation(
+                parsed, context.lot_id, context.screened_notice_text
+            ),
+            "PARTNER_INBOUND_INTERPRETATION_VALIDATED"
+        )
+    else:
+        # Outbound communication mode: select template for partner
+        hop_configs[AGENT_PARTNER_OPERATIONS] = (
             lambda acc: partner_prompt(partner_state_read(**context.partner_state)),
             lambda parsed: validate_partner_communication(
                 parsed, partner_state_read(**context.partner_state)
             ),
             "TEMPLATE_AND_PARAMETERS_VALIDATED"
-        ),
-    }
+        )
 
     # Build hops only for agents in the sequence
     hops = []
@@ -275,6 +295,7 @@ def build_incident_coordinator_agent(run_context: Optional[FleetRunContext] = No
                         collect_specialist_output(
                             specialist=specialist, agent_id=agent_id,
                             prompt=prompt, ctx=ctx, started=started,
+                            trigger_class=context.trigger_class,
                         ),
                         timeout=AGENT_TIMEOUT_SECONDS[agent_id],
                     )
@@ -567,7 +588,10 @@ def run_fleet(
         proposal_kwargs["recovery"] = accepted[AGENT_FULFILLMENT_PLANNING_RECOVERY]
 
     if AGENT_PARTNER_OPERATIONS in trigger_agents:
-        proposal_kwargs["partner"] = accepted[AGENT_PARTNER_OPERATIONS]
+        partner_result = accepted[AGENT_PARTNER_OPERATIONS]
+        # Only include partner in proposal if not abstaining
+        if not (isinstance(partner_result, dict) and partner_result.get("abstain")):
+            proposal_kwargs["partner"] = partner_result
 
     proposal = FleetProposal(**proposal_kwargs)
 
@@ -588,7 +612,10 @@ def run_fleet(
         if AGENT_NETWORK_CUSTODY in trigger_agents:
             hash_payload["custody"] = accepted[AGENT_NETWORK_CUSTODY].model_dump()
         if AGENT_PARTNER_OPERATIONS in trigger_agents:
-            hash_payload["template_id"] = accepted[AGENT_PARTNER_OPERATIONS].template_id
+            partner_result = accepted[AGENT_PARTNER_OPERATIONS]
+            # Only include partner in hash if not abstaining
+            if not (isinstance(partner_result, dict) and partner_result.get("abstain")):
+                hash_payload["template_id"] = partner_result.template_id
         if AGENT_RECALL_INTAKE_EXTRACTION in trigger_agents:
             hash_payload["extracted_lot_id"] = accepted[AGENT_RECALL_INTAKE_EXTRACTION].lot_id
         proposal.proposal_hash = proposal_hash(hash_payload)

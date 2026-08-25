@@ -209,7 +209,7 @@ def validate_recall_extraction(extracted, raw_notice: str, expected_lot_id: str)
 
 
 def validate_partner_inbound_interpretation(
-    interpretation, expected_lot_id: str
+    interpretation, expected_lot_id: str, source_text: str = ""
 ):
     """Validate Partner Operations inbound evidence interpretation.
 
@@ -217,6 +217,9 @@ def validate_partner_inbound_interpretation(
     lot_id, quantity, location, disposition, and confirmation_time.
     Missing critical facts trigger abstention (not low confidence).
     Each claim must be quoted verbatim from the authenticated response.
+
+    If source_text is provided, verify that every source anchor appears
+    literally in the authenticated response.
     """
     from .contracts import PartnerInboundInterpretation
 
@@ -239,5 +242,13 @@ def validate_partner_inbound_interpretation(
     lot_claim = next((c for c in interpretation.claims if c.claim_type == "lot_id"), None)
     if lot_claim and lot_claim.value != expected_lot_id:
         raise FleetProposalError("PARTNER_LOT_MISMATCH")
+
+    # Verify source anchors appear literally in the authenticated response
+    if source_text:
+        source_normalized = source_text.casefold()
+        for claim in interpretation.claims:
+            anchor = claim.source_anchor.casefold()
+            if anchor not in source_normalized:
+                raise FleetProposalError(f"PARTNER_ANCHOR_NOT_IN_SOURCE: {claim.claim_type}")
 
     return interpretation
