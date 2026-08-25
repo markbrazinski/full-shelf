@@ -363,6 +363,26 @@ def test_extracted_lot_must_match_the_authenticated_event():
     }
 
 
+def test_stale_candidate_revision_is_refused_through_the_real_run():
+    """§4.1: the current-revision precondition must still hold at selection.
+
+    Exercised through run_fleet rather than the validator directly, so the test
+    fails if expected_revision is ever left unwired at the call site -- the
+    exact way this check was previously inert in every production path.
+    """
+    candidates = canonical_candidates()
+    for candidate in candidates:
+        candidate["revision"] = "rev07"
+
+    with scripted_gemini():
+        proposal = run_canonical_fleet(
+            recovery_candidates=candidates, expected_revision="rev08",
+        )["proposal"]
+
+    assert proposal.status == "MANUAL_REVIEW_REQUIRED"
+    assert proposal.reason_code == "RECOVERY_CANDIDATE_REVISION_STALE"
+
+
 def test_unauthorized_specialist_is_never_invoked_at_all():
     """§4.2: Incident Lead gates dispatch, so refusal precedes execution.
 

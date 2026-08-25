@@ -94,7 +94,8 @@ class FleetRunContext:
 
     __slots__ = ("incident_id", "lot_id", "screened_notice_text", "graph_result",
                  "recovery_candidates", "partner_state", "source_event_id", "source_class",
-                 "authorized_playbooks", "authorized_specialists", "trigger_class", "callback_received_at")
+                 "authorized_playbooks", "authorized_specialists", "trigger_class",
+                 "callback_received_at", "expected_revision")
 
     def __init__(self, *, incident_id: str, lot_id: str,
                  screened_notice_text: str, graph_result: Dict[str, Any],
@@ -105,7 +106,8 @@ class FleetRunContext:
                  authorized_playbooks: Optional[List[str]] = None,
                  authorized_specialists: Optional[List[str]] = None,
                  trigger_class: Optional[Any] = None,
-                 callback_received_at: Optional[datetime] = None):
+                 callback_received_at: Optional[datetime] = None,
+                 expected_revision: Optional[str] = None):
         from .orchestration import TriggerClass
 
         self.incident_id = incident_id
@@ -125,6 +127,10 @@ class FleetRunContext:
         ]
         self.trigger_class = trigger_class or TriggerClass.RECALL
         self.callback_received_at = callback_received_at or datetime.now(timezone.utc)
+        # The plan revision the caller believes is current. Threaded to
+        # validate_recovery_selection so a candidate built against a superseded
+        # revision is refused rather than silently selected (§4.1).
+        self.expected_revision = expected_revision
 
 
 def _build_hops_for_trigger(
@@ -178,7 +184,7 @@ def _build_hops_for_trigger(
             lambda acc: recovery_prompt(recovery_candidates_read(context.recovery_candidates),
                           context.trigger_class),
             lambda parsed: (validate_recovery_selection(
-                parsed, context.recovery_candidates
+                parsed, context.recovery_candidates, context.expected_revision
             ), parsed)[1],
             "CANDIDATE_ID_RESOLVED_DETERMINISTICALLY"
         ),
@@ -504,6 +510,7 @@ def run_fleet(
     partner_state: Dict[str, Any],
     source_event_id: Optional[str] = None,
     trigger: Optional[str] = None,
+    expected_revision: Optional[str] = None,
     coordinator_runner=None,
 ) -> Dict[str, Any]:
     """Run one real Incident Coordinator ADK execution and return its proposal.
@@ -544,6 +551,7 @@ def run_fleet(
         recovery_candidates=recovery_candidates, partner_state=partner_state,
         source_event_id=source_event_id,
         trigger_class=trigger_class,
+        expected_revision=expected_revision,
     )
     runner = coordinator_runner or (
         lambda ctx: asyncio.run(

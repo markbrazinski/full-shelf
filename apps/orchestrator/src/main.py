@@ -934,6 +934,7 @@ def _generate_daily_morning_plan(
             }],
             source_event_id=None,
             trigger=TriggerClass.DAILY_PLANNING,
+            expected_revision=operating_plan.revision,
             partner_state={},
         )
         if fleet_result["proposal"].status != "PROPOSED":
@@ -2453,6 +2454,7 @@ def _derive_repair_proposal(
             }],
             source_event_id=source_event_id,
             trigger=TriggerClass.FLEET_FAILURE,
+            expected_revision=source_revision,
             partner_state={},
         )
         if fleet_result["proposal"].status != "PROPOSED":
@@ -2861,6 +2863,7 @@ def _generate_next_day_plan(
             }],
             source_event_id=stable_event_id,
             trigger=TriggerClass.NEXT_DAY_DRAFT,
+            expected_revision="rev01",
             partner_state={},
         )
         if fleet_result["proposal"].status != "PROPOSED":

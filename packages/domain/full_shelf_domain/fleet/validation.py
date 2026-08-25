@@ -156,13 +156,20 @@ def validate_custody_assessment(
 
 
 def validate_recovery_selection(
-    selection: RecoverySelection, candidates: Sequence[Dict[str, Any]]
+    selection: RecoverySelection,
+    candidates: Sequence[Dict[str, Any]],
+    expected_revision: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Resolve a selected candidate ID back to its deterministic contents.
 
     The agent supplies only an ID. The returned allocations and shortfalls come
     from the deterministic candidate set, never from model output, so the model
     cannot alter a quantity, destination, or lot even if it tries.
+
+    expected_revision is the plan revision the caller believes is current. When
+    supplied, a candidate built against a different revision is refused: §4.1
+    requires the current-revision precondition to still hold at selection time,
+    so a plan that moved underneath the candidate cannot be acted on.
     """
     # Fact-based checks first: empty candidate set is not a confidence issue
     if not candidates:
@@ -173,6 +180,9 @@ def validate_recovery_selection(
     chosen = by_id.get(selection.selected_candidate_id)
     if chosen is None:
         raise FleetProposalError("UNKNOWN_RECOVERY_CANDIDATE")
+
+    if expected_revision is not None and chosen.get("revision") != expected_revision:
+        raise FleetProposalError("RECOVERY_CANDIDATE_REVISION_STALE")
 
     # A real candidate must carry at least one category of deterministic
     # outcome. Requiring shortfalls specifically was wrong: a fleet-failure
