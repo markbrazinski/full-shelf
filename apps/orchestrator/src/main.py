@@ -2074,9 +2074,7 @@ def _execute_managed_recall_event(
             "source_publish_time": source_publish_time,
             "model_armor_correlation_id": screening["correlation_id"],
             "details": {
-                "product": extracted.get("product_name"),
-                "hazard": extracted.get("hazard"),
-                "action_required": extracted.get("action_required"),
+                "hazard": extracted.get("hazard", {}).get("value") if extracted.get("hazard") else None,
                 # Delta 3: the advisory fleet execution evidence was previously
                 # returned to Pub/Sub and discarded. Persisting it on the
                 # incident makes the five real ADK run/session identities

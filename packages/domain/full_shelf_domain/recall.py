@@ -10,6 +10,7 @@ from google.api_core.exceptions import AlreadyExists
 from full_shelf_observability import build_traceparent, generate_span_id, generate_trace_id
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from full_shelf_domain.partner_evidence import QuotedStringClaim
 
 PROJECT_ID = os.getenv("GCP_PROJECT_ID", "preflight-hackathon")
 MODEL_ARMOR_LOCATION = os.getenv("MODEL_ARMOR_LOCATION", "us-central1")
@@ -41,15 +42,20 @@ def is_eligible_gemini_model(model_id: str) -> bool:
 
 
 class RecallExtractionSchema(BaseModel):
-    """Strict advisory extraction returned by the load-bearing ADK agent."""
+    """Strict advisory extraction returned by the load-bearing ADK agent.
+
+    Each field carries its own quoted source anchor: the extracted value and
+    the exact substring from the notice that supports it.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    lot_id: str = Field(min_length=1, max_length=64)
-    product_name: str = Field(min_length=1, max_length=128)
-    hazard: str = Field(min_length=1, max_length=128)
-    action_required: str = Field(min_length=1, max_length=128)
-    source_anchor: str = Field(min_length=1, max_length=256)
+    source_event_id: str = Field(min_length=1, max_length=64)
+    lot_id: QuotedStringClaim
+    hazard: QuotedStringClaim
+    notice_scope: list[QuotedStringClaim] = Field(default_factory=list)
+    notice_time: QuotedStringClaim | None = None
+    missing_required_fields: list[str] = Field(default_factory=list)
 
 
 class AdkExtractionFailure(RuntimeError):
@@ -221,9 +227,11 @@ def extract_recall_entities_with_gemini_35(
         ),
         instruction="""
         Extract the requested fields only from the supplied recall notice.
-        Every value must be explicitly supported by text in that notice.
+        Every value must be accompanied by its exact supporting quote from the notice.
         Do not infer missing values, use remembered examples, or invent a
-        canonical scenario. Return the configured structured response only.
+        canonical scenario. Provide source_event_id, lot_id with quote, hazard with quote,
+        notice_scope as list of quoted items, optional notice_time with quote if present.
+        Return the configured structured response only.
         """
     )
 
@@ -279,11 +287,27 @@ def extract_recall_entities_with_gemini_35(
         raw_response, usage = asyncio.run(_run_adk_extraction())
         extracted = RecallExtractionSchema.model_validate_json(raw_response)
         normalized_notice = raw_notice.casefold()
-        for field_name in RecallExtractionSchema.model_fields:
-            value = getattr(extracted, field_name)
-            if value.casefold() not in normalized_notice:
+
+        # Lot must be present
+        if not extracted.lot_id:
+            raise AdkExtractionFailure("INSUFFICIENT_SOURCE_ANCHORS")
+
+        # Validate each field's quote is literal substring
+        for field_name in ["lot_id", "hazard"]:
+            field = getattr(extracted, field_name)
+            if field and field.quote.casefold() not in normalized_notice:
                 raise AdkExtractionFailure("SOURCE_ANCHOR_VALIDATION_FAILED")
-        if not _has_explicit_lot_anchor(raw_notice, extracted.lot_id):
+
+        for field_name in ["notice_scope"]:
+            for item in getattr(extracted, field_name, []):
+                if item.quote.casefold() not in normalized_notice:
+                    raise AdkExtractionFailure("SOURCE_ANCHOR_VALIDATION_FAILED")
+
+        if extracted.notice_time and extracted.notice_time.quote.casefold() not in normalized_notice:
+            raise AdkExtractionFailure("SOURCE_ANCHOR_VALIDATION_FAILED")
+
+        # Lot must have explicit anchor
+        if not _has_explicit_lot_anchor(raw_notice, extracted.lot_id.value):
             raise AdkExtractionFailure("LOT_ANCHOR_VALIDATION_FAILED")
 
         result = {

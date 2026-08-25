@@ -208,22 +208,41 @@ def proposal_hash(payload: Dict[str, Any]) -> str:
 def validate_recall_extraction(extracted, raw_notice: str, expected_lot_id: str):
     """Re-apply the accepted recall source-anchoring rules inside the fleet.
 
-    Every extracted value must appear verbatim in the screened notice, the lot
-    identifier must carry an explicit lot anchor, and it must match the lot the
-    authenticated event declared. This preserves the previously accepted
-    behavior of `extract_recall_entities_with_gemini_35`.
+    Every extracted field must carry its own quote, which must be a literal
+    substring of the screened notice. The lot identifier must have an explicit
+    lot anchor and match the authenticated event. Lot must be present (not None).
     """
     from full_shelf_domain.recall import _has_explicit_lot_anchor
 
     normalized = raw_notice.casefold()
-    for field_name in type(extracted).model_fields:
-        value = getattr(extracted, field_name)
-        if value.casefold() not in normalized:
+
+    # Lot must be present
+    if not extracted.lot_id:
+        extracted.missing_required_fields.append("lot_id")
+        raise FleetProposalError("INSUFFICIENT_SOURCE_ANCHORS")
+
+    # Validate each field's quote is literal substring
+    for field_name in ["lot_id", "hazard"]:
+        field = getattr(extracted, field_name)
+        if field and field.quote.casefold() not in normalized:
             raise FleetProposalError("SOURCE_ANCHOR_VALIDATION_FAILED")
-    if not _has_explicit_lot_anchor(raw_notice, extracted.lot_id):
+
+    for field_name in ["notice_scope"]:
+        for item in getattr(extracted, field_name, []):
+            if item.quote.casefold() not in normalized:
+                raise FleetProposalError("SOURCE_ANCHOR_VALIDATION_FAILED")
+
+    if extracted.notice_time and extracted.notice_time.quote.casefold() not in normalized:
+        raise FleetProposalError("SOURCE_ANCHOR_VALIDATION_FAILED")
+
+    # Lot must have explicit anchor in notice
+    if not _has_explicit_lot_anchor(raw_notice, extracted.lot_id.value):
         raise FleetProposalError("LOT_ANCHOR_VALIDATION_FAILED")
-    if extracted.lot_id != expected_lot_id:
+
+    # Lot must match authenticated event
+    if extracted.lot_id.value != expected_lot_id:
         raise FleetProposalError("EXTRACTED_LOT_DOES_NOT_MATCH_EVENT")
+
     return extracted
 
 
