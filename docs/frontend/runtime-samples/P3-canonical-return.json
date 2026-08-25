@@ -7,7 +7,7 @@
     "classification": "SYNTHETIC_TEST",
     "cursor": 25,
     "mode": "COMPLETE",
-    "session_id": "fs-replay-1ec9f81a-ee20-4cd2-a130-82a60b4b2f6e",
+    "session_id": "fs-replay-4135fdc3-a6e9-4543-9d68-6810fa0a84ff",
     "synthetic": true
   },
   "http_status": 200,
@@ -474,13 +474,152 @@
           }
         ]
       },
-      "repair_proposal": null,
+      "recovery_proposal": {
+        "allocations": [
+          {
+            "agency_id": "AGENCY-01",
+            "cases": 18,
+            "status": "PROPOSED"
+          },
+          {
+            "agency_id": "AGENCY-02",
+            "cases": 22,
+            "status": "PROPOSED"
+          }
+        ],
+        "basis": "DETERMINISTIC_DERIVATION",
+        "classification": "SYNTHETIC_TEST",
+        "commits_at_event": 20,
+        "incident_id": "INC-2231",
+        "mutation_applied": false,
+        "proposal_id": "fixture-PROP-recovery",
+        "safe_lot_id": "LTC-5090",
+        "shortfalls": [
+          {
+            "agency_id": "AGENCY-03",
+            "cases": 20,
+            "shortfall_id": "SF-A03",
+            "status": "PROPOSED"
+          }
+        ],
+        "status": "PROPOSED",
+        "total_proposed_cases": 40
+      },
+      "repair_proposal": {
+        "actions": [
+          {
+            "agency": "Agency 02",
+            "cases": 22,
+            "disposition": "TRUCK_2",
+            "from_vehicle": "TRUCK-01",
+            "lot_id": "LTC-4471",
+            "order_id": "O202",
+            "to_vehicle": "TRUCK-02"
+          },
+          {
+            "agency": "Agency 03",
+            "cases": 20,
+            "disposition": "PARTNER_PICKUP",
+            "from_vehicle": "TRUCK-01",
+            "lot_id": "LTC-4471",
+            "order_id": "O203",
+            "to_vehicle": null
+          }
+        ],
+        "approval_endpoint": "POST /api/v1/replay/sessions/{session_id}/approve",
+        "approval_payload_template": {
+          "actions": [
+            {
+              "cases": 22,
+              "disposition": "TRUCK_2",
+              "order_id": "O202"
+            },
+            {
+              "cases": 20,
+              "disposition": "PARTNER_PICKUP",
+              "order_id": "O203"
+            }
+          ],
+          "expected_revision": "rev07",
+          "idempotency_key": null,
+          "incident_id": "INC-2210",
+          "plan_diff_hash": "7fa0e4c18872ff8d2de643746c5a29fc1b53970ff6130ac7fe9950f657609e08",
+          "plan_id": "PLAN-2026-08-14",
+          "target_revision": "rev08"
+        },
+        "approval_receipt_id": "fixture-RCT-approval-7463e7a490fa",
+        "capacity_arithmetic": {
+          "added_cases": 22,
+          "both_orders_would_not_fit": "36 + 22 + 20 = 78 exceeds 60",
+          "capacity_cases": 60,
+          "existing_cases": 36,
+          "resulting_cases": 58,
+          "statement": "36 + 22 = 58/60",
+          "vehicle_id": "TRUCK-02"
+        },
+        "classification": "SYNTHETIC_TEST",
+        "expected_revision": "rev07",
+        "idempotency_key_note": "Client-generated. The only field not supplied here.",
+        "incident_id": "INC-2210",
+        "plan_diff_hash": "7fa0e4c18872ff8d2de643746c5a29fc1b53970ff6130ac7fe9950f657609e08",
+        "plan_id": "PLAN-2026-08-14",
+        "proposal_id": "fixture-PROP-rev08",
+        "status": "APPROVED",
+        "target_revision": "rev08"
+      },
       "vehicles": [
         {
-          "assigned_cases": 58,
-          "capacity": 60,
+          "alarm": {
+            "active": true,
+            "incident_id": "INC-2210",
+            "kind": "REFRIGERATION_FAILURE",
+            "raised_at_event": 6
+          },
+          "assigned_orders": [],
+          "capacity_cases": 60,
+          "display_name": "Refrigerated Truck 1",
+          "is_operational": false,
+          "manifest_cases": 0,
+          "refrigeration_capable": true,
+          "refrigeration_operational": false,
+          "remaining_cases": 60,
+          "revision": "rev08",
+          "status": "REFRIGERATION_FAILURE",
+          "telemetry": {
+            "basis": "SIMULATED_FLEET_TELEMATICS",
+            "disclosure": "Simulated fleet telematics. No live GPS position is available or claimed.",
+            "live_gps": false,
+            "position_available": false
+          },
+          "vehicle_id": "TRUCK-01"
+        },
+        {
+          "alarm": {
+            "active": false,
+            "incident_id": null,
+            "kind": null,
+            "raised_at_event": null
+          },
+          "assigned_orders": [
+            "O202",
+            "O204",
+            "O205"
+          ],
+          "capacity_cases": 60,
+          "display_name": "Refrigerated Truck 2",
           "is_operational": true,
-          "name": "Refrigerated Truck 2",
+          "manifest_cases": 58,
+          "refrigeration_capable": true,
+          "refrigeration_operational": true,
+          "remaining_cases": 2,
+          "revision": "rev08",
+          "status": "AVAILABLE",
+          "telemetry": {
+            "basis": "SIMULATED_FLEET_TELEMATICS",
+            "disclosure": "Simulated fleet telematics. No live GPS position is available or claimed.",
+            "live_gps": false,
+            "position_available": false
+          },
           "vehicle_id": "TRUCK-02"
         }
       ]
@@ -798,6 +937,124 @@
         {
           "state": "COMPLETED",
           "step": "FLEET_PROPOSAL_ACCEPTED"
+        }
+      ]
+    },
+    "reference_locations": {
+      "classification": "SYNTHETIC_TEST",
+      "disclosure": "Configured East Bay reference locations for deterministic demonstration. No live GPS or operational affiliation is claimed.",
+      "geocode_license": "\u00a9 OpenStreetMap contributors, ODbL",
+      "geocode_resolved_on": "2026-08-25",
+      "geocode_source": "OpenStreetMap Nominatim",
+      "geocode_source_url": "https://nominatim.openstreetmap.org/",
+      "live_gps": false,
+      "location_mode": "CONFIGURED_REFERENCE",
+      "locations": [
+        {
+          "agency_id": null,
+          "custody_node_id": "N-WH",
+          "display_name": "Alameda County Community Food Bank",
+          "latitude": 37.741645,
+          "live_gps": false,
+          "location_id": "FS-LOC-ACCFB",
+          "location_mode": "CONFIGURED_REFERENCE",
+          "longitude": -122.201189,
+          "match_quality": "ORGANIZATION_MATCH",
+          "order_ids": [],
+          "osm_place_id": 323047356,
+          "role": "HUB",
+          "source_url": "https://nominatim.openstreetmap.org/ui/details.html?place_id=323047356",
+          "street_address": "7900 Edgewater Drive, Oakland, CA"
+        },
+        {
+          "agency_id": "AGENCY-01",
+          "custody_node_id": "N-AG01",
+          "display_name": "Berkeley Food Network",
+          "latitude": 37.869016,
+          "live_gps": false,
+          "location_id": "FS-LOC-BFN",
+          "location_mode": "CONFIGURED_REFERENCE",
+          "longitude": -122.294151,
+          "match_quality": "ORGANIZATION_MATCH",
+          "order_ids": [
+            "O201"
+          ],
+          "osm_place_id": 323245378,
+          "role": "AGENCY",
+          "source_url": "https://nominatim.openstreetmap.org/ui/details.html?place_id=323245378",
+          "street_address": "1925 Ninth Street, Berkeley, CA"
+        },
+        {
+          "agency_id": "AGENCY-02",
+          "custody_node_id": "N-TR2",
+          "display_name": "Alameda Food Bank",
+          "latitude": 37.784686,
+          "live_gps": false,
+          "location_id": "FS-LOC-AFB",
+          "location_mode": "CONFIGURED_REFERENCE",
+          "longitude": -122.299163,
+          "match_quality": "ADDRESS_MATCH",
+          "order_ids": [
+            "O202"
+          ],
+          "osm_place_id": 384377492,
+          "role": "AGENCY",
+          "source_url": "https://nominatim.openstreetmap.org/ui/details.html?place_id=384377492",
+          "street_address": "677 West Ranger Avenue, Alameda, CA"
+        },
+        {
+          "agency_id": "AGENCY-03",
+          "custody_node_id": "N-STG",
+          "display_name": "San Leandro Community Food Pantry",
+          "latitude": 37.712594,
+          "live_gps": false,
+          "location_id": "FS-LOC-SLCFP",
+          "location_mode": "CONFIGURED_REFERENCE",
+          "longitude": -122.137318,
+          "match_quality": "ORGANIZATION_MATCH",
+          "order_ids": [
+            "O203"
+          ],
+          "osm_place_id": 326077608,
+          "role": "AGENCY",
+          "source_url": "https://nominatim.openstreetmap.org/ui/details.html?place_id=326077608",
+          "street_address": "14235 Bancroft Avenue, San Leandro, CA"
+        },
+        {
+          "agency_id": "AGENCY-04",
+          "custody_node_id": "N-ST01",
+          "display_name": "Peace Haven Freedom Store",
+          "latitude": 37.674445,
+          "live_gps": false,
+          "location_id": "FS-LOC-PHFS",
+          "location_mode": "CONFIGURED_REFERENCE",
+          "longitude": -122.0826,
+          "match_quality": "ADDRESS_MATCH",
+          "order_ids": [
+            "O204"
+          ],
+          "osm_place_id": 324159709,
+          "role": "AGENCY",
+          "source_url": "https://nominatim.openstreetmap.org/ui/details.html?place_id=324159709",
+          "street_address": "1063 A Street, Hayward, CA"
+        },
+        {
+          "agency_id": "AGENCY-05",
+          "custody_node_id": "N-RESC",
+          "display_name": "Tri-City Volunteers Food Bank",
+          "latitude": 37.55589,
+          "live_gps": false,
+          "location_id": "FS-LOC-TCV",
+          "location_mode": "CONFIGURED_REFERENCE",
+          "longitude": -122.007661,
+          "match_quality": "ORGANIZATION_MATCH",
+          "order_ids": [
+            "O205"
+          ],
+          "osm_place_id": 324088547,
+          "role": "AGENCY",
+          "source_url": "https://nominatim.openstreetmap.org/ui/details.html?place_id=324088547",
+          "street_address": "37350 Joseph Street, Fremont, CA"
         }
       ]
     },

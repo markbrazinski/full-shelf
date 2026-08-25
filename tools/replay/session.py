@@ -19,6 +19,7 @@ import uuid
 from datetime import datetime, timezone
 
 import events
+import locations
 
 FIXTURES = pathlib.Path(__file__).resolve().parent / "fixtures"
 
@@ -167,6 +168,224 @@ def filter_projection(body, cursor):
     return body
 
 
+# ---------------------------------------------------------------------------
+# Projection enrichment
+#
+# The committed fixtures were generated for the legacy beat selector and do not
+# expose a structured repair proposal, a Truck 1 record, an advisory recovery
+# proposal, or any geography. The runtime derives those surfaces here from
+# canonical scenario data that already exists in the fixtures, so the frontend
+# never has to scrape prose or recompute an invariant.
+#
+# Nothing here invents a quantity. Every number is the canonical scenario value
+# asserted in AGENTS.md and GOLDEN_DEMO_EVENT_CONTRACT.md section 2.
+# ---------------------------------------------------------------------------
+
+# Truck 1: refrigerated, capacity 60, carries O201/O202/O203 under rev07.
+# It is never repaired within the canonical day; after event 6 it stays
+# unavailable with its refrigeration alarm raised.
+TRUCK_1_ID = "TRUCK-01"
+TRUCK_2_ID = "TRUCK-02"
+VEHICLE_CAPACITY = 60
+# rev07 load on Truck 2 before the repair, per contract section 2.
+TRUCK_2_BASE_CASES = 36
+REPAIR_MOVED_CASES = 22          # O202
+PARTNER_PICKUP_CASES = 20        # O203
+
+
+def _orders_for(commitments, vehicle_id, revision):
+    return [c["order_id"] for c in commitments
+            if c.get("vehicle") == vehicle_id and c.get("revision") == revision]
+
+
+def _vehicle_projection(cursor, commitments):
+    """Both vehicles at every cursor, with honest alarm and capability state."""
+    rev = "rev08" if cursor >= events.REV08_SEQUENCE else "rev07"
+    truck1_failed = cursor >= 6
+
+    truck1_orders = _orders_for(commitments, TRUCK_1_ID, "rev07")
+    truck1_cases = sum(c["cases"] for c in commitments
+                       if c.get("vehicle") == TRUCK_1_ID and c.get("revision") == "rev07"
+                       and c.get("status") != "DELIVERED")
+
+    if rev == "rev08":
+        truck2_cases = TRUCK_2_BASE_CASES + REPAIR_MOVED_CASES
+        truck2_orders = _orders_for(commitments, TRUCK_2_ID, "rev08")
+    else:
+        truck2_cases = TRUCK_2_BASE_CASES
+        truck2_orders = _orders_for(commitments, TRUCK_2_ID, "rev07")
+
+    return [
+        {
+            "vehicle_id": TRUCK_1_ID,
+            "display_name": "Refrigerated Truck 1",
+            "refrigeration_capable": True,
+            # The failure removes refrigerated capability; it is never restored
+            # inside the canonical day, so this must not silently flip back.
+            "refrigeration_operational": not truck1_failed,
+            "is_operational": not truck1_failed,
+            "status": "REFRIGERATION_FAILURE" if truck1_failed else "AVAILABLE",
+            "alarm": {
+                "active": truck1_failed,
+                "kind": "REFRIGERATION_FAILURE" if truck1_failed else None,
+                "incident_id": events.FLEET_INC if truck1_failed else None,
+                "raised_at_event": 6 if truck1_failed else None,
+            },
+            "capacity_cases": VEHICLE_CAPACITY,
+            "manifest_cases": 0 if rev == "rev08" else truck1_cases,
+            "remaining_cases": (VEHICLE_CAPACITY if rev == "rev08"
+                                else VEHICLE_CAPACITY - truck1_cases),
+            "assigned_orders": [] if rev == "rev08" else truck1_orders,
+            "revision": rev,
+            "telemetry": {
+                "live_gps": False,
+                "position_available": False,
+                "basis": "SIMULATED_FLEET_TELEMATICS",
+                "disclosure": ("Simulated fleet telematics. No live GPS position "
+                               "is available or claimed."),
+            },
+        },
+        {
+            "vehicle_id": TRUCK_2_ID,
+            "display_name": "Refrigerated Truck 2",
+            "refrigeration_capable": True,
+            "refrigeration_operational": True,
+            "is_operational": True,
+            "status": "AVAILABLE",
+            "alarm": {"active": False, "kind": None, "incident_id": None,
+                      "raised_at_event": None},
+            "capacity_cases": VEHICLE_CAPACITY,
+            "manifest_cases": truck2_cases,
+            "remaining_cases": VEHICLE_CAPACITY - truck2_cases,
+            "assigned_orders": truck2_orders,
+            "revision": rev,
+            "telemetry": {
+                "live_gps": False,
+                "position_available": False,
+                "basis": "SIMULATED_FLEET_TELEMATICS",
+                "disclosure": ("Simulated fleet telematics. No live GPS position "
+                               "is available or claimed."),
+            },
+        },
+    ]
+
+
+def _repair_proposal(approval_receipt_id=None):
+    """The exact rev07 to rev08 diff, structured so the UI never parses prose."""
+    binding = {
+        "plan_id": events.PLAN_ID,
+        "incident_id": events.FLEET_INC,
+        "expected_revision": "rev07",
+        "target_revision": "rev08",
+        "actions": [
+            {"order_id": "O202", "cases": REPAIR_MOVED_CASES,
+             "disposition": "TRUCK_2"},
+            {"order_id": "O203", "cases": PARTNER_PICKUP_CASES,
+             "disposition": "PARTNER_PICKUP"},
+        ],
+    }
+    return {
+        "proposal_id": "fixture-PROP-rev08",
+        "plan_id": events.PLAN_ID,
+        "incident_id": events.FLEET_INC,
+        "expected_revision": "rev07",
+        "target_revision": "rev08",
+        "status": "PROPOSED" if approval_receipt_id is None else "APPROVED",
+        "actions": [
+            {"order_id": "O202", "agency": "Agency 02",
+             "cases": REPAIR_MOVED_CASES, "lot_id": "LTC-4471",
+             "from_vehicle": TRUCK_1_ID, "to_vehicle": TRUCK_2_ID,
+             "disposition": "TRUCK_2"},
+            {"order_id": "O203", "agency": "Agency 03",
+             "cases": PARTNER_PICKUP_CASES, "lot_id": "LTC-4471",
+             "from_vehicle": TRUCK_1_ID, "to_vehicle": None,
+             "disposition": "PARTNER_PICKUP"},
+        ],
+        # 36 + 22 = 58 of 60. Stated, not left for the client to compute.
+        "capacity_arithmetic": {
+            "vehicle_id": TRUCK_2_ID,
+            "existing_cases": TRUCK_2_BASE_CASES,
+            "added_cases": REPAIR_MOVED_CASES,
+            "resulting_cases": TRUCK_2_BASE_CASES + REPAIR_MOVED_CASES,
+            "capacity_cases": VEHICLE_CAPACITY,
+            "statement": "36 + 22 = 58/60",
+            "both_orders_would_not_fit": (
+                f"{TRUCK_2_BASE_CASES} + {REPAIR_MOVED_CASES} + "
+                f"{PARTNER_PICKUP_CASES} = 78 exceeds {VEHICLE_CAPACITY}"),
+        },
+        "plan_diff_hash": CANONICAL_PLAN_DIFF_HASH,
+        # Everything the approval endpoint requires except the client key.
+        "approval_payload_template": {
+            **copy.deepcopy(binding),
+            "plan_diff_hash": CANONICAL_PLAN_DIFF_HASH,
+            "idempotency_key": None,
+        },
+        "approval_endpoint": "POST /api/v1/replay/sessions/{session_id}/approve",
+        "idempotency_key_note": "Client-generated. The only field not supplied here.",
+        "approval_receipt_id": approval_receipt_id,
+        "classification": events.CLASSIFICATION,
+    }
+
+
+def _recovery_proposal():
+    """Advisory allocation selected at event 19, before any commitment."""
+    return {
+        "proposal_id": "fixture-PROP-recovery",
+        "incident_id": events.RECALL_INC,
+        "status": "PROPOSED",
+        "safe_lot_id": "LTC-5090",
+        "allocations": [
+            {"agency_id": "AGENCY-01", "cases": 18, "status": "PROPOSED"},
+            {"agency_id": "AGENCY-02", "cases": 22, "status": "PROPOSED"},
+        ],
+        "total_proposed_cases": 40,
+        "shortfalls": [
+            {"agency_id": "AGENCY-03", "shortfall_id": "SF-A03", "cases": 20,
+             "status": "PROPOSED"},
+        ],
+        "mutation_applied": False,
+        "commits_at_event": events.RECOVERY_SEQUENCE,
+        "basis": "DETERMINISTIC_DERIVATION",
+        "classification": events.CLASSIFICATION,
+    }
+
+
+def _custody_graph_at_reconciliation():
+    """The reconciled graph, sourced from the fixture that carries it."""
+    recovery = load_fixture("recovery")
+    return (recovery.get("execution_evidence_as_of") or {}).get("custody_graph")
+
+
+def enrich_projection(body, cursor, approval_receipt_id=None):
+    """Add the frontend surfaces the legacy fixtures never carried."""
+    current = body.get("current_day")
+    if not isinstance(current, dict):
+        return body
+
+    commitments = current.get("commitments") or []
+    current["vehicles"] = _vehicle_projection(cursor, commitments)
+
+    # Event 8 proposes the repair; event 9 attaches its receipt; event 10
+    # activates. The proposal stays visible after activation as provenance.
+    if cursor >= 8:
+        current["repair_proposal"] = _repair_proposal(approval_receipt_id)
+
+    # Custody is reconciled at event 18, not first observable at event 20.
+    if cursor >= events.CUSTODY_SEQUENCE:
+        evidence = body.setdefault("execution_evidence_as_of", {})
+        if isinstance(evidence, dict) and not evidence.get("custody_graph"):
+            graph = _custody_graph_at_reconciliation()
+            if graph:
+                evidence["custody_graph"] = graph
+
+    # The advisory proposal is separate from the committed allocation.
+    if cursor >= 19:
+        current["recovery_proposal"] = _recovery_proposal()
+
+    body["reference_locations"] = locations.reference_locations()
+    return body
+
+
 class ReplaySession:
     """One judge or presenter session. Independent of every other session."""
 
@@ -223,10 +442,13 @@ class ReplaySession:
                 body["authority"] = "ISOLATED"
                 body["proof_label"] = events.BRANCHES[self.branch]["label"]
                 body["classification"] = events.CLASSIFICATION
+                body["reference_locations"] = locations.reference_locations()
                 return retime_projection(body)
             cursor = self.cursor
-        return retime_projection(
-            filter_projection(load_fixture(self._fixture_for(cursor)), cursor))
+            receipt_id = (self.approval or {}).get("receipt_id")
+        return retime_projection(enrich_projection(
+            filter_projection(load_fixture(self._fixture_for(cursor)), cursor),
+            cursor, receipt_id))
 
     @staticmethod
     def _fixture_for(cursor):

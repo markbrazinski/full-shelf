@@ -4,37 +4,8 @@
   "carry_forward_obligations": [],
   "classification": "SYNTHETIC_TEST",
   "current_day": {
-    "active_plan_revision": "rev08",
-    "approvals": [
-      {
-        "approval_id": "fixture-APR-rev08",
-        "approver_domain": "example.com",
-        "approver_identity_class": "VERIFIED_HUMAN_OPERATOR",
-        "authority_scope": "east-bay-food-bank@2026-08-14",
-        "expires_at": "2026-08-14 20:00:00-07:00",
-        "kms_key_version": "projects/p/locations/l/keyRings/k/cryptoKeys/c/cryptoKeyVersions/1",
-        "plan_diff": [
-          {
-            "cases": 22,
-            "change_type": "REROUTE",
-            "order_id": "O202",
-            "target_vehicle": "TRUCK-02"
-          },
-          {
-            "cases": 20,
-            "change_type": "PICKUP",
-            "order_id": "O203",
-            "target_vehicle": null
-          }
-        ],
-        "plan_diff_hash": "fixture-diffhash-rev08",
-        "plan_id": "PLAN-2026-08-14",
-        "proposed_revision": "rev08",
-        "source_revision": "rev07",
-        "state": "VERIFIED",
-        "verified_at": "2026-08-14 08:24:00-07:00"
-      }
-    ],
+    "active_plan_revision": "rev07",
+    "approvals": [],
     "commitments": [
       {
         "agency": "Agency 01",
@@ -80,59 +51,12 @@
         "revision": "rev07",
         "status": "PLANNED",
         "vehicle": "TRUCK-02"
-      },
-      {
-        "agency": "Agency 02",
-        "cases": 22,
-        "lot_id": "LTC-4471",
-        "order_id": "O202",
-        "revision": "rev08",
-        "status": "PLANNED",
-        "vehicle": "TRUCK-02"
-      },
-      {
-        "agency": "Agency 03",
-        "cases": 20,
-        "lot_id": "LTC-4471",
-        "order_id": "O203",
-        "revision": "rev08",
-        "status": "PARTNER_PICKUP",
-        "vehicle": null
-      },
-      {
-        "agency": "Agency 04",
-        "cases": 15,
-        "lot_id": "LTC-5090",
-        "order_id": "O204",
-        "revision": "rev08",
-        "status": "PLANNED",
-        "vehicle": "TRUCK-02"
-      },
-      {
-        "agency": "Agency 05",
-        "cases": 21,
-        "lot_id": "LTC-5090",
-        "order_id": "O205",
-        "revision": "rev08",
-        "status": "PLANNED",
-        "vehicle": "TRUCK-02"
       }
     ],
     "dispatch": {
-      "partner_pickups": [
-        {
-          "agency": "Agency 03",
-          "assigned_vehicle_id": null,
-          "assignment_type": "PARTNER_PICKUP",
-          "cases": 20,
-          "lot_id": "LTC-4471",
-          "order_id": "O203",
-          "sequence": null,
-          "status": "PARTNER_PICKUP"
-        }
-      ],
+      "partner_pickups": [],
       "plan_id": "PLAN-2026-08-14",
-      "revision": "rev08",
+      "revision": "rev07",
       "sequence_basis": "COMMITTED_MANIFEST_ORDER",
       "vehicles": [
         {
@@ -145,21 +69,51 @@
           "stop_count": 3,
           "stops": [
             {
+              "agency": "Agency 01",
+              "assignment_type": "VEHICLE_ROUTED",
+              "cases": 18,
+              "lot_id": "LTC-4471",
+              "order_id": "O201",
+              "sequence": 1,
+              "status": "DELIVERED"
+            },
+            {
               "agency": "Agency 02",
               "assignment_type": "VEHICLE_ROUTED",
               "cases": 22,
               "lot_id": "LTC-4471",
               "order_id": "O202",
-              "sequence": 1,
+              "sequence": 2,
               "status": "PLANNED"
             },
+            {
+              "agency": "Agency 03",
+              "assignment_type": "VEHICLE_ROUTED",
+              "cases": 20,
+              "lot_id": "LTC-4471",
+              "order_id": "O203",
+              "sequence": 3,
+              "status": "PLANNED"
+            }
+          ],
+          "vehicle_id": "TRUCK-01"
+        },
+        {
+          "assigned_cases": null,
+          "at_capacity": null,
+          "capacity_cases": null,
+          "is_operational": null,
+          "name": null,
+          "remaining_cases": null,
+          "stop_count": 2,
+          "stops": [
             {
               "agency": "Agency 04",
               "assignment_type": "VEHICLE_ROUTED",
               "cases": 15,
               "lot_id": "LTC-5090",
               "order_id": "O204",
-              "sequence": 2,
+              "sequence": 1,
               "status": "PLANNED"
             },
             {
@@ -168,7 +122,7 @@
               "cases": 21,
               "lot_id": "LTC-5090",
               "order_id": "O205",
-              "sequence": 3,
+              "sequence": 2,
               "status": "PLANNED"
             }
           ],
@@ -183,19 +137,7 @@
         "incident_type": "VEHICLE_FAILURE",
         "model_armor_screening": null,
         "refusal": null,
-        "status": "RESOLVED",
-        "terminal_state": "NONE"
-      },
-      {
-        "affected_lot_id": "LTC-4471",
-        "incident_id": "INC-2231",
-        "incident_type": "FOOD_SAFETY_RECALL",
-        "model_armor_screening": {
-          "correlation_id": "0123456789abcdef0123456789abcdef",
-          "result": "PASS"
-        },
-        "refusal": null,
-        "status": "SCOPING",
+        "status": "ACTIVE",
         "terminal_state": "NONE"
       }
     ],
@@ -206,11 +148,6 @@
         "plan_id": "PLAN-2026-08-14",
         "revision": "rev07",
         "status": "SUPERSEDED"
-      },
-      {
-        "plan_id": "PLAN-2026-08-14",
-        "revision": "rev08",
-        "status": "ACTIVE"
       }
     ],
     "repair_proposal": {
@@ -283,15 +220,19 @@
           "kind": "REFRIGERATION_FAILURE",
           "raised_at_event": 6
         },
-        "assigned_orders": [],
+        "assigned_orders": [
+          "O201",
+          "O202",
+          "O203"
+        ],
         "capacity_cases": 60,
         "display_name": "Refrigerated Truck 1",
         "is_operational": false,
-        "manifest_cases": 0,
+        "manifest_cases": 42,
         "refrigeration_capable": true,
         "refrigeration_operational": false,
-        "remaining_cases": 60,
-        "revision": "rev08",
+        "remaining_cases": 18,
+        "revision": "rev07",
         "status": "REFRIGERATION_FAILURE",
         "telemetry": {
           "basis": "SIMULATED_FLEET_TELEMATICS",
@@ -309,18 +250,17 @@
           "raised_at_event": null
         },
         "assigned_orders": [
-          "O202",
           "O204",
           "O205"
         ],
         "capacity_cases": 60,
         "display_name": "Refrigerated Truck 2",
         "is_operational": true,
-        "manifest_cases": 58,
+        "manifest_cases": 36,
         "refrigeration_capable": true,
         "refrigeration_operational": true,
-        "remaining_cases": 2,
-        "revision": "rev08",
+        "remaining_cases": 24,
+        "revision": "rev07",
         "status": "AVAILABLE",
         "telemetry": {
           "basis": "SIMULATED_FLEET_TELEMATICS",
@@ -349,86 +289,23 @@
         "mutations_applied": 1,
         "receipt_id": "fixture-RCT-status:SCOPING",
         "status": "SUCCESS"
-      },
-      {
-        "action_id": "CMD-08DF43D6320B712F1311C5F3DBBE",
-        "action_type": "SAVE_PLAN_REVISION",
-        "committed_at": "2026-08-14T08:24:00-07:00",
-        "mutations_applied": 1,
-        "receipt_id": "fixture-RCT-plan:rev08",
-        "status": "SUCCESS"
-      },
-      {
-        "action_id": "CMD-703DB31A739465A604496B8B3EF8",
-        "action_type": "SET_INCIDENT_STATUS",
-        "committed_at": "2026-08-14T09:36:00-07:00",
-        "mutations_applied": 1,
-        "receipt_id": "fixture-RCT-status:SCOPING",
-        "status": "SUCCESS"
       }
     ],
-    "receipts_committed": 4
+    "receipts_committed": 2
   },
   "operating_day": "2026-08-14",
-  "partner_evidence_as_of": [],
+  "partner_evidence_as_of": null,
   "projection_boundary": {
-    "as_of": "2026-08-14T10:04:00-07:00",
+    "as_of": "2026-08-14T08:21:00-07:00",
     "mode": "EXPLICIT_AS_OF",
     "omitted_fields": [
       {
         "field": "current_day.vehicles",
         "reason": "PRE_BOUNDARY_STATE_NOT_RETAINED"
-      },
-      {
-        "field": "custody_graph",
-        "reason": "NOT_COMMITTED_AS_OF_BOUNDARY"
-      },
-      {
-        "field": "agent_activity_as_of",
-        "reason": "NOT_COMMITTED_AS_OF_BOUNDARY"
       }
     ]
   },
-  "recall_intake_as_of": {
-    "incident_id": "INC-2231",
-    "source": {
-      "channel": "REGULATORY_FEED",
-      "input_kind": "REPRESENTATIVE_REGULATORY_EVENT",
-      "monitoring_claimed": false,
-      "notice_format": "FDA_FORMAT",
-      "received_at": "2026-08-14T09:36:00-07:00"
-    },
-    "steps": [
-      {
-        "state": "COMPLETED",
-        "step": "REGULATORY_EVENT_RECEIVED"
-      },
-      {
-        "state": "COMPLETED",
-        "step": "NOTICE_SCREENED"
-      },
-      {
-        "state": "COMPLETED",
-        "step": "NOTICE_EXTRACTED"
-      },
-      {
-        "state": "COMPLETED",
-        "step": "INCIDENT_OPENED"
-      },
-      {
-        "state": "PENDING",
-        "step": "PLAN_INVALIDATED"
-      },
-      {
-        "state": "PENDING",
-        "step": "MOVEMENT_BARRIER_ACTIVE"
-      },
-      {
-        "state": "PENDING",
-        "step": "FLEET_PROPOSAL_ACCEPTED"
-      }
-    ]
-  },
+  "recall_intake_as_of": null,
   "reference_locations": {
     "classification": "SYNTHETIC_TEST",
     "disclosure": "Configured East Bay reference locations for deterministic demonstration. No live GPS or operational affiliation is claimed.",

@@ -199,7 +199,13 @@
         "terminal_state": "NONE"
       }
     ],
-    "plan_constraints": [],
+    "plan_constraints": [
+      {
+        "constraint_type": "LOT_EXCLUSION",
+        "description": "LTC-4471 excluded",
+        "plan_id": "PLAN-2026-08-14"
+      }
+    ],
     "plan_id": "PLAN-2026-08-14",
     "plan_revisions": [
       {
@@ -213,6 +219,37 @@
         "status": "ACTIVE"
       }
     ],
+    "recovery_proposal": {
+      "allocations": [
+        {
+          "agency_id": "AGENCY-01",
+          "cases": 18,
+          "status": "PROPOSED"
+        },
+        {
+          "agency_id": "AGENCY-02",
+          "cases": 22,
+          "status": "PROPOSED"
+        }
+      ],
+      "basis": "DETERMINISTIC_DERIVATION",
+      "classification": "SYNTHETIC_TEST",
+      "commits_at_event": 20,
+      "incident_id": "INC-2231",
+      "mutation_applied": false,
+      "proposal_id": "fixture-PROP-recovery",
+      "safe_lot_id": "LTC-5090",
+      "shortfalls": [
+        {
+          "agency_id": "AGENCY-03",
+          "cases": 20,
+          "shortfall_id": "SF-A03",
+          "status": "PROPOSED"
+        }
+      ],
+      "status": "PROPOSED",
+      "total_proposed_cases": 40
+    },
     "repair_proposal": {
       "actions": [
         {
@@ -333,6 +370,147 @@
     ]
   },
   "execution_evidence_as_of": {
+    "custody_graph": {
+      "classification": "SYNTHETIC_TEST",
+      "confirmed_cases": 88,
+      "current_positions": [
+        {
+          "acknowledgment_status": "CONFIRMED",
+          "name": "Warehouse",
+          "node_id": "N-WH",
+          "node_type": "WAREHOUSE",
+          "on_hand_cases": 24,
+          "path_depth": 0
+        },
+        {
+          "acknowledgment_status": "CONFIRMED",
+          "name": "Truck 2",
+          "node_id": "N-TR2",
+          "node_type": "VEHICLE",
+          "on_hand_cases": 22,
+          "path_depth": 1
+        },
+        {
+          "acknowledgment_status": "CONFIRMED",
+          "name": "Pickup Staging",
+          "node_id": "N-STG",
+          "node_type": "STAGING",
+          "on_hand_cases": 20,
+          "path_depth": 1
+        },
+        {
+          "acknowledgment_status": "CONFIRMED",
+          "name": "Agency 01",
+          "node_id": "N-AG01",
+          "node_type": "AGENCY",
+          "on_hand_cases": 10,
+          "path_depth": 1
+        },
+        {
+          "acknowledgment_status": "UNCONFIRMED",
+          "name": "Site 01",
+          "node_id": "N-ST01",
+          "node_type": "SUBSITE",
+          "on_hand_cases": 8,
+          "path_depth": 2
+        },
+        {
+          "acknowledgment_status": "CONFIRMED",
+          "name": "Direct Rescue",
+          "node_id": "N-RESC",
+          "node_type": "DIRECT_RESCUE",
+          "on_hand_cases": 12,
+          "path_depth": 1
+        }
+      ],
+      "edges": [
+        {
+          "case_count": 22,
+          "edge_id": "E-N-TR2",
+          "is_sub_distribution": false,
+          "lot_id": "LTC-4471",
+          "source_node_id": "N-WH",
+          "target_node_id": "N-TR2"
+        },
+        {
+          "case_count": 20,
+          "edge_id": "E-N-STG",
+          "is_sub_distribution": false,
+          "lot_id": "LTC-4471",
+          "source_node_id": "N-WH",
+          "target_node_id": "N-STG"
+        },
+        {
+          "case_count": 18,
+          "edge_id": "E-N-AG01",
+          "is_sub_distribution": false,
+          "lot_id": "LTC-4471",
+          "source_node_id": "N-WH",
+          "target_node_id": "N-AG01"
+        },
+        {
+          "case_count": 8,
+          "edge_id": "E-N-ST01",
+          "is_sub_distribution": true,
+          "lot_id": "LTC-4471",
+          "source_node_id": "N-AG01",
+          "target_node_id": "N-ST01"
+        },
+        {
+          "case_count": 12,
+          "edge_id": "E-N-RESC",
+          "is_sub_distribution": false,
+          "lot_id": "LTC-4471",
+          "source_node_id": "N-WH",
+          "target_node_id": "N-RESC"
+        }
+      ],
+      "intermediate_subtotals_readded": false,
+      "lot_id": "LTC-4471",
+      "max_path_depth": 2,
+      "node_count": 6,
+      "paths": [
+        {
+          "destination_node_id": "N-TR2",
+          "path_depth": 1,
+          "root_node_id": "N-WH"
+        },
+        {
+          "destination_node_id": "N-STG",
+          "path_depth": 1,
+          "root_node_id": "N-WH"
+        },
+        {
+          "destination_node_id": "N-AG01",
+          "path_depth": 1,
+          "root_node_id": "N-WH"
+        },
+        {
+          "destination_node_id": "N-ST01",
+          "path_depth": 2,
+          "root_node_id": "N-WH"
+        },
+        {
+          "destination_node_id": "N-RESC",
+          "path_depth": 1,
+          "root_node_id": "N-WH"
+        }
+      ],
+      "query_engine": "SPANNER_GRAPH_GQL",
+      "tenant_id": "east-bay-food-bank",
+      "unconfirmed_cases": 8,
+      "unconfirmed_positions": [
+        {
+          "acknowledgment_status": "UNCONFIRMED",
+          "name": "Site 01",
+          "node_id": "N-ST01",
+          "node_type": "SUBSITE",
+          "on_hand_cases": 8,
+          "path_depth": 2
+        }
+      ],
+      "unique_current_cases": 96
+    },
     "history": [
       {
         "action_id": "CMD-81337DC1990351BB97F3566E358C",
@@ -365,14 +543,22 @@
         "mutations_applied": 1,
         "receipt_id": "fixture-RCT-status:SCOPING",
         "status": "SUCCESS"
+      },
+      {
+        "action_id": "CMD-4D18163F14822366071B269DAB63",
+        "action_type": "ACTIVATE_MOVEMENT_BARRIER",
+        "committed_at": "2026-08-14T10:05:00-07:00",
+        "mutations_applied": 1,
+        "receipt_id": "fixture-RCT-movement-barrier",
+        "status": "SUCCESS"
       }
     ],
-    "receipts_committed": 4
+    "receipts_committed": 5
   },
   "operating_day": "2026-08-14",
   "partner_evidence_as_of": [],
   "projection_boundary": {
-    "as_of": "2026-08-14T10:04:00-07:00",
+    "as_of": "2026-08-14T10:05:00-07:00",
     "mode": "EXPLICIT_AS_OF",
     "omitted_fields": [
       {
@@ -381,7 +567,7 @@
       },
       {
         "field": "custody_graph",
-        "reason": "NOT_COMMITTED_AS_OF_BOUNDARY"
+        "reason": "PRE_BOUNDARY_STATE_NOT_RETAINED"
       },
       {
         "field": "agent_activity_as_of",
@@ -420,7 +606,7 @@
         "step": "PLAN_INVALIDATED"
       },
       {
-        "state": "PENDING",
+        "state": "COMPLETED",
         "step": "MOVEMENT_BARRIER_ACTIVE"
       },
       {

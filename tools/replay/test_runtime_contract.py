@@ -386,10 +386,23 @@ def projection_at(sequence):
 
 
 def test_no_rev08_before_event_ten():
+    """rev08 may be named as a proposed target, but must not be active state."""
     for sequence in (5, 6, 7, 8):
-        blob = json.dumps(projection_at(sequence))
-        assert "rev08" not in blob, sequence
-    assert "rev08" in json.dumps(projection_at(10))
+        body = projection_at(sequence)
+        current = body["current_day"]
+        assert current["active_plan_revision"] == "rev07", sequence
+        revisions = [r.get("revision") if isinstance(r, dict) else r
+                     for r in current["plan_revisions"]]
+        assert "rev08" not in revisions, sequence
+        assert all(c["revision"] != "rev08" for c in current["commitments"]), sequence
+        assert current["approvals"] == [], sequence
+        assert current["dispatch"]["revision"] == "rev07", sequence
+    # Before the proposal exists, rev08 is not mentioned at all.
+    for sequence in (5, 6, 7):
+        assert "rev08" not in json.dumps(projection_at(sequence)), sequence
+    activated = projection_at(10)["current_day"]
+    assert activated["active_plan_revision"] == "rev08"
+    assert any(c["revision"] == "rev08" for c in activated["commitments"])
 
 
 def test_no_recall_before_event_eleven():
@@ -1196,3 +1209,279 @@ def test_duplicate_and_altered_binding_survive_the_split(live):
     status, denied = call(live, "POST", base + "/approve",
                           valid_approval(target_revision="rev09"))
     assert status == 409 and denied["detail"] == "APPROVAL_BINDING_MISMATCH"
+
+
+# --- projection readiness 1: structured repair proposal ---------------------
+
+import locations as loc  # noqa: E402
+
+
+def test_repair_proposal_absent_before_event_eight():
+    for sequence in (5, 6, 7):
+        body = projection_at(sequence)
+        assert "repair_proposal" not in body["current_day"], sequence
+
+
+def test_repair_proposal_is_structured_at_event_eight():
+    p = projection_at(8)["current_day"]["repair_proposal"]
+    assert p["proposal_id"] == "fixture-PROP-rev08"
+    assert p["plan_id"] == "PLAN-2026-08-14"
+    assert p["incident_id"] == "INC-2210"
+    assert p["expected_revision"] == "rev07"
+    assert p["target_revision"] == "rev08"
+    assert p["status"] == "PROPOSED"
+    assert p["approval_receipt_id"] is None
+    by_order = {a["order_id"]: a for a in p["actions"]}
+    assert by_order["O202"]["cases"] == 22
+    assert by_order["O202"]["to_vehicle"] == "TRUCK-02"
+    assert by_order["O202"]["disposition"] == "TRUCK_2"
+    assert by_order["O203"]["cases"] == 20
+    assert by_order["O203"]["disposition"] == "PARTNER_PICKUP"
+    assert by_order["O203"]["to_vehicle"] is None
+
+
+def test_repair_proposal_states_truck_two_arithmetic():
+    a = projection_at(8)["current_day"]["repair_proposal"]["capacity_arithmetic"]
+    assert (a["existing_cases"], a["added_cases"], a["resulting_cases"]) == (36, 22, 58)
+    assert a["capacity_cases"] == 60
+    assert a["statement"] == "36 + 22 = 58/60"
+    assert "78" in a["both_orders_would_not_fit"]
+
+
+def test_approval_template_exactly_matches_the_runtime_gate():
+    """The template must approve as-is once the client adds its own key."""
+    template = projection_at(8)["current_day"]["repair_proposal"]["approval_payload_template"]
+    assert template["idempotency_key"] is None
+    assert template["plan_diff_hash"] == runtime.CANONICAL_PLAN_DIFF_HASH
+    submitted = {k: v for k, v in template.items() if k != "idempotency_key"}
+    assert {k: submitted[k] for k in runtime.BINDING_FIELDS} == runtime.CANONICAL_BINDING
+
+    s = at_gate()
+    result = s.approve({**template, "idempotency_key": "from-template"})
+    assert result["duplicate"] is False
+    assert [f["sequence"] for f in result["events"]] == [9]
+
+
+def test_repair_proposal_carries_the_receipt_after_approval():
+    s = at_gate()
+    receipt = s.approve(valid_approval())["receipt"]
+    p = s.projection()["current_day"]["repair_proposal"]
+    assert p["status"] == "APPROVED"
+    assert p["approval_receipt_id"] == receipt["receipt_id"]
+
+
+def test_event_eight_remains_pre_approval_rev07():
+    current = projection_at(8)["current_day"]
+    assert current["active_plan_revision"] == "rev07"
+    assert current["approvals"] == []
+    assert current["dispatch"]["revision"] == "rev07"
+
+
+# --- projection readiness 2: vehicle projection ------------------------------
+
+
+def vehicles_at(sequence):
+    return {v["vehicle_id"]: v for v in projection_at(sequence)["current_day"]["vehicles"]}
+
+
+def test_both_vehicles_exist_from_event_five():
+    for sequence in (5, 6, 8, 10, 22, 25):
+        v = vehicles_at(sequence)
+        assert set(v) == {"TRUCK-01", "TRUCK-02"}, sequence
+
+
+def test_vehicles_carry_the_required_fields():
+    v = vehicles_at(5)["TRUCK-01"]
+    for field in ("vehicle_id", "display_name", "refrigeration_capable",
+                  "refrigeration_operational", "is_operational", "status",
+                  "alarm", "capacity_cases", "manifest_cases",
+                  "remaining_cases", "assigned_orders", "telemetry"):
+        assert field in v, field
+    assert v["telemetry"]["live_gps"] is False
+    assert v["telemetry"]["basis"] == "SIMULATED_FLEET_TELEMATICS"
+    assert "No live GPS" in v["telemetry"]["disclosure"]
+
+
+def test_both_trucks_are_available_at_event_five():
+    v = vehicles_at(5)
+    for vid in ("TRUCK-01", "TRUCK-02"):
+        assert v[vid]["is_operational"] is True, vid
+        assert v[vid]["alarm"]["active"] is False, vid
+        assert v[vid]["status"] == "AVAILABLE", vid
+
+
+def test_truck_one_alarm_appears_exactly_at_event_six():
+    assert vehicles_at(5)["TRUCK-01"]["alarm"]["active"] is False
+    t1 = vehicles_at(6)["TRUCK-01"]
+    assert t1["alarm"]["active"] is True
+    assert t1["alarm"]["kind"] == "REFRIGERATION_FAILURE"
+    assert t1["alarm"]["incident_id"] == "INC-2210"
+    assert t1["alarm"]["raised_at_event"] == 6
+    assert t1["is_operational"] is False
+    assert t1["refrigeration_operational"] is False
+    assert t1["status"] == "REFRIGERATION_FAILURE"
+    # Truck 2 is unaffected.
+    assert vehicles_at(6)["TRUCK-02"]["is_operational"] is True
+
+
+def test_truck_one_is_never_silently_repaired():
+    for sequence in (6, 7, 8, 9, 10, 18, 22, 25):
+        t1 = vehicles_at(sequence)["TRUCK-01"]
+        assert t1["is_operational"] is False, sequence
+        assert t1["refrigeration_operational"] is False, sequence
+        assert t1["alarm"]["active"] is True, sequence
+
+
+def test_truck_two_shows_58_of_60_only_at_event_ten():
+    for sequence in (5, 6, 8):
+        t2 = vehicles_at(sequence)["TRUCK-02"]
+        assert t2["manifest_cases"] == 36, sequence
+        assert t2["revision"] == "rev07", sequence
+    t2 = vehicles_at(10)["TRUCK-02"]
+    assert t2["manifest_cases"] == 58
+    assert t2["capacity_cases"] == 60
+    assert t2["remaining_cases"] == 2
+    assert t2["revision"] == "rev08"
+    assert sorted(t2["assigned_orders"]) == ["O202", "O204", "O205"]
+
+
+# --- projection readiness 3: custody at event 18 ----------------------------
+
+
+def test_custody_graph_appears_exactly_at_event_eighteen():
+    for sequence in (13, 15, 17):
+        evidence = projection_at(sequence).get("execution_evidence_as_of") or {}
+        assert not evidence.get("custody_graph"), sequence
+    g = projection_at(18)["execution_evidence_as_of"]["custody_graph"]
+    assert (g["unique_current_cases"], g["confirmed_cases"],
+            g["unconfirmed_cases"]) == (96, 88, 8)
+
+
+def test_custody_graph_carries_nodes_and_connected_edges():
+    g = projection_at(18)["execution_evidence_as_of"]["custody_graph"]
+    nodes = {n["node_id"] for n in g["current_positions"]}
+    assert nodes == {"N-WH", "N-TR2", "N-STG", "N-AG01", "N-ST01", "N-RESC"}
+    assert sum(n["on_hand_cases"] for n in g["current_positions"]) == 96
+    assert g["edges"], "custody graph must expose edges"
+    for edge in g["edges"]:
+        assert edge["source_node_id"] in nodes
+        assert edge["target_node_id"] in nodes
+
+
+def test_the_eight_unconfirmed_are_site_01_at_event_eighteen():
+    g = projection_at(18)["execution_evidence_as_of"]["custody_graph"]
+    unconfirmed = [n for n in g["current_positions"]
+                   if n["acknowledgment_status"] == "UNCONFIRMED"]
+    assert len(unconfirmed) == 1
+    assert unconfirmed[0]["node_id"] == "N-ST01"
+    assert unconfirmed[0]["on_hand_cases"] == 8
+
+
+def test_recovery_allocations_are_not_exposed_before_event_twenty():
+    for sequence in (18, 19):
+        assert not projection_at(sequence)["current_day"].get("recovery"), sequence
+
+
+# --- projection readiness 4: advisory recovery proposal ---------------------
+
+
+def test_recovery_proposal_absent_before_event_nineteen():
+    for sequence in (17, 18):
+        assert "recovery_proposal" not in projection_at(sequence)["current_day"], sequence
+
+
+def test_recovery_proposal_is_structured_at_event_nineteen():
+    p = projection_at(19)["current_day"]["recovery_proposal"]
+    assert p["status"] == "PROPOSED"
+    assert p["mutation_applied"] is False
+    assert p["commits_at_event"] == 20
+    by_agency = {a["agency_id"]: a["cases"] for a in p["allocations"]}
+    assert by_agency == {"AGENCY-01": 18, "AGENCY-02": 22}
+    assert p["total_proposed_cases"] == 40
+    assert p["shortfalls"][0]["agency_id"] == "AGENCY-03"
+    assert p["shortfalls"][0]["cases"] == 20
+    assert p["shortfalls"][0]["shortfall_id"] == "SF-A03"
+
+
+def test_committed_recovery_appears_at_event_twenty():
+    committed = projection_at(20)["current_day"]["recovery"]
+    assert committed["explanation"]["cases_allocated"] == 40
+    assert committed["explanation"]["cases_short"] == 20
+    assert committed["shortfalls"][0]["shortfall_id"] == "SF-A03"
+    assert committed["shortfalls"][0]["status"] == "OPEN"
+    assert all(a["status"] == "COMMITTED" for a in committed["allocations"])
+
+
+# --- projection readiness 5: reference locations -----------------------------
+
+
+def test_six_reference_locations_are_exposed():
+    ref = projection_at(5)["reference_locations"]
+    assert len(ref["locations"]) == 6
+    assert ref["location_mode"] == "CONFIGURED_REFERENCE"
+    assert ref["live_gps"] is False
+    assert ref["disclosure"] == (
+        "Configured East Bay reference locations for deterministic "
+        "demonstration. No live GPS or operational affiliation is claimed.")
+
+
+def test_every_location_carries_the_required_contract_fields():
+    for entry in projection_at(5)["reference_locations"]["locations"]:
+        for field in ("location_id", "display_name", "street_address",
+                      "latitude", "longitude", "role", "source_url",
+                      "location_mode", "live_gps"):
+            assert field in entry, f"{entry.get('location_id')}:{field}"
+        assert entry["location_mode"] == "CONFIGURED_REFERENCE"
+        assert entry["live_gps"] is False
+        assert entry["role"] in {"HUB", "AGENCY"}
+        assert entry["source_url"].startswith("https://")
+
+
+def test_coordinates_are_valid_and_within_the_bay_area():
+    b = loc.BAY_AREA_BOUNDS
+    for entry in loc.REFERENCE_LOCATIONS:
+        lat, lon = entry["latitude"], entry["longitude"]
+        assert isinstance(lat, float) and isinstance(lon, float)
+        assert -90 <= lat <= 90 and -180 <= lon <= 180
+        assert b["min_lat"] <= lat <= b["max_lat"], entry["location_id"]
+        assert b["min_lon"] <= lon <= b["max_lon"], entry["location_id"]
+
+
+def test_locations_map_to_agency_and_custody_identifiers():
+    entries = {e["location_id"]: e for e in loc.REFERENCE_LOCATIONS}
+    hubs = [e for e in entries.values() if e["role"] == "HUB"]
+    assert len(hubs) == 1 and hubs[0]["custody_node_id"] == "N-WH"
+    nodes = {e["custody_node_id"] for e in entries.values()}
+    assert nodes == {"N-WH", "N-AG01", "N-TR2", "N-STG", "N-ST01", "N-RESC"}
+    agencies = {e["agency_id"] for e in entries.values() if e["agency_id"]}
+    assert agencies == {"AGENCY-01", "AGENCY-02", "AGENCY-03",
+                        "AGENCY-04", "AGENCY-05"}
+
+
+def test_locations_are_stable_across_reset_and_sessions():
+    store = runtime.SessionStore()
+    a, b = store.create(), store.create()
+    first = json.dumps(a.projection()["reference_locations"], sort_keys=True)
+    second = json.dumps(b.projection()["reference_locations"], sort_keys=True)
+    assert first == second
+    fresh = store.reset(a.session_id)
+    assert json.dumps(fresh.projection()["reference_locations"], sort_keys=True) == first
+    a2 = store.create()
+    a2.start()
+    while a2.autoplay_step() is not None:
+        pass
+    assert json.dumps(a2.projection()["reference_locations"], sort_keys=True) == first
+
+
+def test_runtime_performs_no_geocoding_call():
+    """Coordinates are build-time constants; replay reaches no network."""
+    source = (pathlib.Path(__file__).parent / "locations.py").read_text()
+    for banned in ("urllib", "requests", "httpx", "socket", "nominatim.openstreetmap.org/search",
+                   "googleapis", "geocode("):
+        assert banned not in source, banned
+
+
+def test_reference_locations_present_in_branch_projection_too():
+    s = at_terminal()
+    s.enter_branch("complete")
+    assert len(s.projection()["reference_locations"]["locations"]) == 6

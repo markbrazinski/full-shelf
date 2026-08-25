@@ -3,7 +3,7 @@
   "approved": false,
   "branch": null,
   "classification": "SYNTHETIC_TEST",
-  "created_at": "2026-08-25T21:55:54.137571+00:00",
+  "created_at": "2026-08-25T22:39:13.332041+00:00",
   "cursor": 6,
   "feed": [
     {
@@ -33,11 +33,11 @@
       "payload": {},
       "projection_delta": {},
       "receipt_refs": [],
-      "recorded_at": "2026-08-25T21:55:54.137571+00:00",
+      "recorded_at": "2026-08-25T22:39:13.332041+00:00",
       "scenario_id": "full-shelf-friday-2026-08-14",
       "schema_version": "full-shelf.demo-event.v2",
       "sequence": 1,
-      "session_id": "fs-replay-1ec9f81a-ee20-4cd2-a130-82a60b4b2f6e",
+      "session_id": "fs-replay-4135fdc3-a6e9-4543-9d68-6810fa0a84ff",
       "source_refs": [],
       "trigger_class": "AUTONOMOUS_SCHEDULED",
       "validation": {
@@ -72,11 +72,11 @@
       "payload": {},
       "projection_delta": {},
       "receipt_refs": [],
-      "recorded_at": "2026-08-25T21:55:54.137571+00:00",
+      "recorded_at": "2026-08-25T22:39:13.332041+00:00",
       "scenario_id": "full-shelf-friday-2026-08-14",
       "schema_version": "full-shelf.demo-event.v2",
       "sequence": 2,
-      "session_id": "fs-replay-1ec9f81a-ee20-4cd2-a130-82a60b4b2f6e",
+      "session_id": "fs-replay-4135fdc3-a6e9-4543-9d68-6810fa0a84ff",
       "source_refs": [],
       "trigger_class": "AUTONOMOUS_CHAINED",
       "validation": {
@@ -111,11 +111,11 @@
       "payload": {},
       "projection_delta": {},
       "receipt_refs": [],
-      "recorded_at": "2026-08-25T21:55:54.137571+00:00",
+      "recorded_at": "2026-08-25T22:39:13.332041+00:00",
       "scenario_id": "full-shelf-friday-2026-08-14",
       "schema_version": "full-shelf.demo-event.v2",
       "sequence": 3,
-      "session_id": "fs-replay-1ec9f81a-ee20-4cd2-a130-82a60b4b2f6e",
+      "session_id": "fs-replay-4135fdc3-a6e9-4543-9d68-6810fa0a84ff",
       "source_refs": [],
       "trigger_class": "HUMAN_GATE",
       "validation": {
@@ -152,11 +152,11 @@
       "receipt_refs": [
         "fixture-RCT-plan:rev07"
       ],
-      "recorded_at": "2026-08-25T21:55:54.137571+00:00",
+      "recorded_at": "2026-08-25T22:39:13.332041+00:00",
       "scenario_id": "full-shelf-friday-2026-08-14",
       "schema_version": "full-shelf.demo-event.v2",
       "sequence": 4,
-      "session_id": "fs-replay-1ec9f81a-ee20-4cd2-a130-82a60b4b2f6e",
+      "session_id": "fs-replay-4135fdc3-a6e9-4543-9d68-6810fa0a84ff",
       "source_refs": [],
       "trigger_class": "AUTONOMOUS_CHAINED",
       "validation": {
@@ -191,11 +191,11 @@
       "payload": {},
       "projection_delta": {},
       "receipt_refs": [],
-      "recorded_at": "2026-08-25T21:55:54.137571+00:00",
+      "recorded_at": "2026-08-25T22:39:13.332041+00:00",
       "scenario_id": "full-shelf-friday-2026-08-14",
       "schema_version": "full-shelf.demo-event.v2",
       "sequence": 5,
-      "session_id": "fs-replay-1ec9f81a-ee20-4cd2-a130-82a60b4b2f6e",
+      "session_id": "fs-replay-4135fdc3-a6e9-4543-9d68-6810fa0a84ff",
       "source_refs": [],
       "trigger_class": "AUTONOMOUS_SCHEDULED",
       "validation": {
@@ -232,11 +232,11 @@
       "receipt_refs": [
         "fixture-RCT-status:SCOPING"
       ],
-      "recorded_at": "2026-08-25T21:55:54.146255+00:00",
+      "recorded_at": "2026-08-25T22:39:13.337534+00:00",
       "scenario_id": "full-shelf-friday-2026-08-14",
       "schema_version": "full-shelf.demo-event.v2",
       "sequence": 6,
-      "session_id": "fs-replay-1ec9f81a-ee20-4cd2-a130-82a60b4b2f6e",
+      "session_id": "fs-replay-4135fdc3-a6e9-4543-9d68-6810fa0a84ff",
       "source_refs": [],
       "trigger_class": "EXTERNAL_EVENT",
       "validation": {
@@ -273,11 +273,11 @@
       "payload": {},
       "projection_delta": {},
       "receipt_refs": [],
-      "recorded_at": "2026-08-25T21:55:54.137571+00:00",
+      "recorded_at": "2026-08-25T22:39:13.332041+00:00",
       "scenario_id": "full-shelf-friday-2026-08-14",
       "schema_version": "full-shelf.demo-event.v2",
       "sequence": 1,
-      "session_id": "fs-replay-1ec9f81a-ee20-4cd2-a130-82a60b4b2f6e",
+      "session_id": "fs-replay-4135fdc3-a6e9-4543-9d68-6810fa0a84ff",
       "source_refs": [],
       "trigger_class": "AUTONOMOUS_SCHEDULED",
       "validation": {
@@ -312,11 +312,11 @@
       "payload": {},
       "projection_delta": {},
       "receipt_refs": [],
-      "recorded_at": "2026-08-25T21:55:54.137571+00:00",
+      "recorded_at": "2026-08-25T22:39:13.332041+00:00",
       "scenario_id": "full-shelf-friday-2026-08-14",
       "schema_version": "full-shelf.demo-event.v2",
       "sequence": 2,
-      "session_id": "fs-replay-1ec9f81a-ee20-4cd2-a130-82a60b4b2f6e",
+      "session_id": "fs-replay-4135fdc3-a6e9-4543-9d68-6810fa0a84ff",
       "source_refs": [],
       "trigger_class": "AUTONOMOUS_CHAINED",
       "validation": {
@@ -351,11 +351,11 @@
       "payload": {},
       "projection_delta": {},
       "receipt_refs": [],
-      "recorded_at": "2026-08-25T21:55:54.137571+00:00",
+      "recorded_at": "2026-08-25T22:39:13.332041+00:00",
       "scenario_id": "full-shelf-friday-2026-08-14",
       "schema_version": "full-shelf.demo-event.v2",
       "sequence": 3,
-      "session_id": "fs-replay-1ec9f81a-ee20-4cd2-a130-82a60b4b2f6e",
+      "session_id": "fs-replay-4135fdc3-a6e9-4543-9d68-6810fa0a84ff",
       "source_refs": [],
       "trigger_class": "HUMAN_GATE",
       "validation": {
@@ -392,11 +392,11 @@
       "receipt_refs": [
         "fixture-RCT-plan:rev07"
       ],
-      "recorded_at": "2026-08-25T21:55:54.137571+00:00",
+      "recorded_at": "2026-08-25T22:39:13.332041+00:00",
       "scenario_id": "full-shelf-friday-2026-08-14",
       "schema_version": "full-shelf.demo-event.v2",
       "sequence": 4,
-      "session_id": "fs-replay-1ec9f81a-ee20-4cd2-a130-82a60b4b2f6e",
+      "session_id": "fs-replay-4135fdc3-a6e9-4543-9d68-6810fa0a84ff",
       "source_refs": [],
       "trigger_class": "AUTONOMOUS_CHAINED",
       "validation": {
@@ -407,6 +407,6 @@
   ],
   "mode": "IDLE",
   "operating_timestamp": "2026-08-14T08:20:00-07:00",
-  "session_id": "fs-replay-1ec9f81a-ee20-4cd2-a130-82a60b4b2f6e",
+  "session_id": "fs-replay-4135fdc3-a6e9-4543-9d68-6810fa0a84ff",
   "synthetic": true
 }

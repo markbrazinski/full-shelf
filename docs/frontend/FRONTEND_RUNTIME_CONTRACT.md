@@ -1,8 +1,10 @@
 # Frontend Runtime Contract
 
-**Source runtime:** Golden Runtime Controller at SHA
+**Source runtime:** Golden Runtime Controller after the Frontend Projection
+Readiness repair. Base accepted runtime
 `1ff771e68513055697e2c6db13fa77c6b05e9572`
-(tag `golden-runtime-controller-accepted-20260825`)
+(tag `golden-runtime-controller-accepted-20260825`); samples regenerated from
+the repaired runtime.
 
 **Status:** Extraction and documentation. Every value below was observed from the
 running accepted runtime and is stored under
@@ -201,16 +203,75 @@ reveal points:
 
 | Field | First observable at |
 |---|---|
-| `current_day.plan_revisions` contains `rev08`, `active_plan_revision: rev08` | cursor 10 |
+| `current_day.vehicles` (both trucks) | cursor 5 |
+| `reference_locations` | cursor 5 |
+| `TRUCK-01.alarm.active: true` | cursor 6 |
+| `current_day.repair_proposal` | cursor 8 |
+| `repair_proposal.approval_receipt_id` | cursor 9 |
+| `active_plan_revision: rev08`, Truck 2 58/60 | cursor 10 |
 | `current_day.incidents` contains `INC-2231` | cursor 11 |
-| `execution_evidence_as_of.custody_graph` | **cursor 20** (see discrepancy D2) |
-| `current_day.recovery` | cursor 20 |
-| `carry_forward_obligations` non-empty | cursor 20 (3 entries), 4 entries at cursor 22 |
+| `execution_evidence_as_of.custody_graph` (96/88/8) | cursor 18 |
+| `current_day.recovery_proposal` (advisory) | cursor 19 |
+| `current_day.recovery` (committed) | cursor 20 |
 | incident status `PARTIALLY_CONTAINED` | cursor 22 |
 | `next_day_draft` | cursor 24 |
 
 All projection timestamps are canonical Pacific `-07:00` with scenario
 wall-clock preserved: `08:05-07:00`, `10:13-07:00`, `17:00-07:00`.
+
+### 7.1 `repair_proposal` — event 8
+
+```json
+{
+  "proposal_id": "fixture-PROP-rev08",
+  "plan_id": "PLAN-2026-08-14", "incident_id": "INC-2210",
+  "expected_revision": "rev07", "target_revision": "rev08",
+  "status": "PROPOSED",
+  "actions": [
+    {"order_id": "O202", "agency": "Agency 02", "cases": 22, "lot_id": "LTC-4471",
+     "from_vehicle": "TRUCK-01", "to_vehicle": "TRUCK-02", "disposition": "TRUCK_2"},
+    {"order_id": "O203", "agency": "Agency 03", "cases": 20, "lot_id": "LTC-4471",
+     "from_vehicle": "TRUCK-01", "to_vehicle": null, "disposition": "PARTNER_PICKUP"}
+  ],
+  "capacity_arithmetic": {
+    "vehicle_id": "TRUCK-02", "existing_cases": 36, "added_cases": 22,
+    "resulting_cases": 58, "capacity_cases": 60,
+    "statement": "36 + 22 = 58/60",
+    "both_orders_would_not_fit": "36 + 22 + 20 = 78 exceeds 60"
+  },
+  "plan_diff_hash": "<canonical sha256>",
+  "approval_payload_template": { …binding…, "idempotency_key": null },
+  "approval_endpoint": "POST /api/v1/replay/sessions/{session_id}/approve",
+  "approval_receipt_id": null
+}
+```
+
+`approval_payload_template` is submit-ready once the client supplies its own
+`idempotency_key`; a test approves using it verbatim. `status` becomes
+`APPROVED` and `approval_receipt_id` is populated at event 9.
+
+### 7.2 `vehicles` — from event 5
+
+Both trucks at every cursor. Each entry carries `vehicle_id`, `display_name`,
+`refrigeration_capable`, `refrigeration_operational`, `is_operational`,
+`status`, `alarm`, `capacity_cases`, `manifest_cases`, `remaining_cases`,
+`assigned_orders`, `revision`, and `telemetry`.
+
+| Cursor | TRUCK-01 | TRUCK-02 |
+|---|---|---|
+| 5 | AVAILABLE, no alarm, 42 cases | AVAILABLE, 36/60 |
+| 6+ | `REFRIGERATION_FAILURE`, alarm active, `is_operational: false` | AVAILABLE, 36/60 |
+| 10+ | still failed — never silently repaired | 58/60, `remaining_cases: 2`, orders O202/O204/O205 |
+
+`telemetry` is `{live_gps: false, position_available: false, basis:
+"SIMULATED_FLEET_TELEMATICS", disclosure: …}` on both trucks at every cursor.
+
+### 7.3 `recovery_proposal` — event 19, advisory only
+
+`{status: "PROPOSED", mutation_applied: false, commits_at_event: 20}` with
+allocations `AGENCY-01: 18`, `AGENCY-02: 22`, `total_proposed_cases: 40`, and
+shortfall `SF-A03` / `AGENCY-03` / 20. `current_day.recovery` (the committed
+allocation, `status: COMMITTED`) does not appear until cursor 20.
 
 ## 8. Canonical invariants — verified against live samples
 
@@ -231,112 +292,111 @@ Every one confirmed programmatically from the captured files:
 
 Saturday draft: `revision: rev01`, `status: DRAFT_WITH_CONSTRAINTS`.
 
-## 9. Discrepancies between contract and observed runtime
+## 9. Discrepancies — status after the readiness repair
 
-Reported exactly as found. **No resolution is chosen or invented here.**
+D1, D2, and D3 from the previous packet were the subject of the Frontend
+Projection Readiness repair and are **resolved**. D4 remains, unchanged and by
+design.
 
-### D1 — Repair proposal payload absent at event 8
+### D1 — Structured repair proposal at event 8 — **RESOLVED**
 
-- **Contract §9** requires: "the repair proposal and approval control are above
-  the fold at 1600×900", and §5 event 8 states "Exact rev07→rev08 diff stored as
-  `PROPOSED`; approval surface appears above the fold".
-- **Observed at cursor 8**
-  ([`08-event-proposal-projection.json`](runtime-samples/08-event-proposal-projection.json)):
-  `current_day.repair_proposal` is **absent**, `current_day.approvals` is `[]`,
-  `dispatch.revision` is still `rev07`, and `commitments` contains only `rev07`
-  rows.
-- **Consequence:** the only machine-readable description of the proposed diff at
-  event 8 is the prose in `activity_entry.detail` of the event-8 envelope
-  ("O202 (22 cases) to Truck 2; O203 (20 cases) to refrigerated partner
-  pickup"). A frontend cannot render a structured proposal, and cannot construct
-  the `plan_diff_hash` approval binding, from the projection at that cursor.
-- The `rev08` structure first appears at cursor 10 — *after* approval.
+`current_day.repair_proposal` now appears at cursor 8 with `proposal_id`,
+`plan_id`, `incident_id`, `expected_revision: rev07`, `target_revision: rev08`,
+both actions (O202 22 → `TRUCK_2`, O203 20 → `PARTNER_PICKUP`), the Truck 2
+arithmetic, the canonical `plan_diff_hash`, and a complete
+`approval_payload_template` missing only the client-generated
+`idempotency_key`. A test approves using the template verbatim, proving it
+matches the runtime gate exactly. The frontend never parses prose.
 
-### D2 — Custody graph appears at event 20, not event 18
+Event 8 remains pre-approval rev07 (`active_plan_revision: rev07`,
+`approvals: []`, `dispatch.revision: rev07`). Event 9 attaches
+`approval_receipt_id` and flips the proposal to `APPROVED`. Event 10 activates
+rev08.
 
-- **Contract §5** event 18 `FS-E018-CUSTODY-RECONCILED` (10:10) states:
-  "Establishes 96 unique, 88 confirmed, and eight unconfirmed at Site 01. Graph
-  assessment stored… connected graph and exact gap appear."
-- **Observed:** `execution_evidence_as_of.custody_graph` is `null` at cursor 18
-  and first carries `96/88/8` at cursor 20.
-- **Mechanism:** `session.py` `_fixture_for()` maps cursor 18 to the fixture of
-  the most recent fixture-backed event, which is event 15 → `custody.json`; that
-  fixture has `custody_graph: null`. The graph lives in `recovery.json`, bound to
-  event 20 in `events.py`.
-- **Consequence:** a UI that unlocks the custody surface on event 18 renders an
-  empty graph for two events.
+### D2 — Custody graph at event 18 — **RESOLVED**
 
-### D3 — `current_day.vehicles` is `null` until event 22
+`execution_evidence_as_of.custody_graph` now appears at cursor 18, carrying
+96 / 88 / 8 with all six nodes and connected edges. Recovery allocations remain
+withheld until cursor 20.
 
-- **Observed:** `current_day.vehicles` is `null` at cursors 5, 6, 8, and 10, and
-  is populated (`TRUCK-02`, 58/60) only from cursor 22.
-- **Contract §9** requires the refrigeration alarm to appear "on Truck 1" at
-  event 6, and rev08's route/manifest transformation to occur once after event
-  10.
-- **Consequence:** there is no vehicle record to attach a Truck 1 alarm to at
-  event 6, and no `vehicles` entry showing 58/60 at event 10. `dispatch.vehicles`
-  is present throughout but its `assigned_cases`, `capacity_cases`, `name`, and
-  `is_operational` fields are `null` at cursor 10; only `stops`, `stop_count`,
-  and `vehicle_id` are populated. **Truck 1 (`TRUCK-01`) never appears in
-  `current_day.vehicles` or `dispatch.vehicles` at any observed cursor.**
+### D3 — Both vehicles from event 5 — **RESOLVED**
 
-### D4 — Contract §9 forbids what the commission asked for
+`current_day.vehicles` now carries `TRUCK-01` and `TRUCK-02` at every cursor
+from 5, each with display name, refrigeration capability and operational state,
+capacity, manifest cases, remaining cases, assigned orders, alarm state, and a
+simulated-telemetry disclosure. Truck 1 raises its refrigeration alarm exactly
+at event 6 and is never silently repaired thereafter. Truck 2 shows 36/60 before
+the repair and 58/60 from event 10.
 
-- **Contract §9** forbids showing "invented `RUNNING`, `WAITING`, duration, tool
-  calls, or ordering". The runtime honors this: no `RUNNING`, `WAITING`,
-  `duration`, or `started_at` appears in any envelope.
-- This was recorded as an accepted implementation delta at the runtime's
-  acceptance tag. Restated here because it constrains Fleet Activity: agent
-  evidence appears **only** at its committed boundary, atomically.
+### D4 — Contract §9 forbids invented agent lifecycle — **UNCHANGED, by design**
+
+Contract §9 forbids showing "invented `RUNNING`, `WAITING`, duration, tool
+calls, or ordering". The runtime honors this: no such field appears in any
+envelope. Fleet Activity therefore shows agent evidence only at its committed
+boundary, atomically. This was an accepted implementation delta at the runtime's
+acceptance tag and is restated here because it constrains the UI.
 
 ---
 
 ## 10. Map inputs
 
-### Available today
+### Configured reference locations — **now available**
 
-| Input | Values observed |
-|---|---|
-| Custody node IDs | `N-WH` Warehouse, `N-TR2` Truck 2, `N-STG` Pickup Staging, `N-AG01` Agency 01, `N-ST01` Site 01, `N-RESC` Direct Rescue |
-| Node types | `WAREHOUSE`, `VEHICLE`, `STAGING`, `AGENCY`, `SUBSITE`, `DIRECT_RESCUE` |
-| Node case counts | 24, 22, 20, 10, 8, 12 (sum 96) |
-| Node acknowledgment | `CONFIRMED` / `UNCONFIRMED` per node |
-| Graph edges | `E-N-TR2`, `E-N-STG`, `E-N-AG01`, … with `source_node_id`, `target_node_id`, `case_count`, `lot_id`, `is_sub_distribution` |
-| Agency labels | `Agency 01`–`Agency 05`; recovery uses `AGENCY-01`, `AGENCY-02`, `AGENCY-03` |
-| Vehicle ID | `TRUCK-02` (`Refrigerated Truck 2`) |
-| Stop sequence | `dispatch.vehicles[].stops[].sequence` 1, 2, 3 with `assignment_type: VEHICLE_ROUTED` |
-| Partner pickup | `O203` / `Agency 03` / 20 cases, `assignment_type: PARTNER_PICKUP`, `sequence: null` |
-| Sequence basis | `COMMITTED_MANIFEST_ORDER` |
+`reference_locations` appears on every projection, canonical and branch. It is
+immutable, identical across sessions and resets, and resolved once at build
+time. **The replay runtime performs no geocoding and calls no Google service.**
 
-### Missing — explicitly identified
+Envelope fields: `location_mode: CONFIGURED_REFERENCE`, `live_gps: false`,
+`geocode_source`, `geocode_source_url`, `geocode_license`,
+`geocode_resolved_on`, and the disclosure:
 
-The runtime exposes **no geographic data of any kind**. A grep for
-`latitude`, `longitude`, `lat`, `lng`, `coordinates`, and `geo` across all
-runtime fixtures returns no positional field. Specifically absent:
+> Configured East Bay reference locations for deterministic demonstration. No
+> live GPS or operational affiliation is claimed.
 
-1. **Latitude/longitude for every node.** None of `N-WH`, `N-TR2`, `N-STG`,
-   `N-AG01`, `N-ST01`, `N-RESC` carries a coordinate.
-2. **Street addresses.** No address, city, postal code, or place ID for any
-   warehouse, agency, staging point, sub-site, or rescue recipient.
-3. **Real East Bay location identity.** Names are generic (`Agency 01`,
-   `Site 01`, `Warehouse`). **No actual East Bay place names, addresses, or
-   coordinates exist in the accepted runtime.** They cannot be extracted, and
-   this packet does not invent them.
-4. **Vehicle position.** No current or historical GPS for `TRUCK-01` or
-   `TRUCK-02`. ADR-010 records that refrigeration failure is never inferred from
-   position, so no position stream exists.
-5. **Route geometry.** `stops[].sequence` gives ordering only — no polyline,
-   path, distance, or ETA.
-6. **Truck 1 record.** `TRUCK-01` appears in `commitments[].vehicle` but never as
-   a vehicle object, so it has no capacity, operational flag, or map identity.
-7. **Depot/origin geometry.** `recovery.allocations[].source_facility` is `null`
-   with `source_facility_basis: "CONFIGURED_TENANT_REFERENCE"` — the reference
-   itself is not exposed.
+| Runtime ID | Display name | Address | Lat, Lon | Role | Node | Agency / Orders |
+|---|---|---|---|---|---|---|
+| `FS-LOC-ACCFB` | Alameda County Community Food Bank | 7900 Edgewater Drive, Oakland | 37.741645, -122.201189 | HUB | `N-WH` | — |
+| `FS-LOC-BFN` | Berkeley Food Network | 1925 Ninth Street, Berkeley | 37.869016, -122.294151 | AGENCY | `N-AG01` | `AGENCY-01` / O201 |
+| `FS-LOC-AFB` | Alameda Food Bank | 677 West Ranger Avenue, Alameda | 37.784686, -122.299163 | AGENCY | `N-TR2` | `AGENCY-02` / O202 |
+| `FS-LOC-SLCFP` | San Leandro Community Food Pantry | 14235 Bancroft Avenue, San Leandro | 37.712594, -122.137318 | AGENCY | `N-STG` | `AGENCY-03` / O203 |
+| `FS-LOC-PHFS` | Peace Haven Freedom Store | 1063 A Street, Hayward | 37.674445, -122.082600 | AGENCY | `N-ST01` | `AGENCY-04` / O204 |
+| `FS-LOC-TCV` | Tri-City Volunteers Food Bank | 37350 Joseph Street, Fremont | 37.555890, -122.007661 | AGENCY | `N-RESC` | `AGENCY-05` / O205 |
 
-**Any map rendered from this runtime must therefore be schematic** — a custody
-graph laid out from `path_depth` and edges, not a geographic map. Producing a
-real Google Maps view requires a geocoding input that does not exist at this SHA
-and must be supplied as a separate accepted contract.
+**Coordinate provenance.** Resolved 2026-08-25 against OpenStreetMap Nominatim
+(© OpenStreetMap contributors, ODbL). Each entry stores its `source_url` and
+`osm_place_id` so any reviewer can re-check the value. Each also stores
+`match_quality`, recorded honestly rather than rounded up:
+
+| Location | `match_quality` | Meaning |
+|---|---|---|
+| `FS-LOC-ACCFB`, `FS-LOC-BFN`, `FS-LOC-SLCFP`, `FS-LOC-TCV` | `ORGANIZATION_MATCH` | the geocoder result names the organization itself |
+| `FS-LOC-AFB`, `FS-LOC-PHFS` | `ADDRESS_MATCH` | the result resolved the street address, not a named organization record |
+
+All six are inside the Bay Area envelope (lat 37.4–38.1, lon -122.6…-121.9),
+asserted by test.
+
+The named organizations are real East Bay food-security providers used as
+plausible geography. **No operational affiliation, endorsement, or data-sharing
+relationship is claimed or implied**, and no case, order, or incident in this
+scenario describes anything those organizations actually did.
+
+### Still missing
+
+1. **Route geometry.** `stops[].sequence` gives ordering only — no polyline,
+   path, distance, or ETA. A map can place markers and draw straight lines
+   between them; it cannot draw a driven route.
+2. **Live vehicle position.** No GPS for either truck at any cursor.
+   `telemetry.position_available` is `false` and `live_gps` is `false`
+   throughout. ADR-010 records that refrigeration failure is never inferred from
+   position, so no position stream exists by design.
+3. **Sub-site geography distinct from its parent.** `N-ST01` (Site 01) is
+   mapped to `FS-LOC-PHFS`, but the scenario places Site 01 downstream of
+   Agency 01; the configured coordinate is a stand-in, not a derived
+   parent/child geography.
+4. **Depot origin for recovery stock.**
+   `recovery.allocations[].source_facility` remains `null` with
+   `source_facility_basis: "CONFIGURED_TENANT_REFERENCE"`; the reference itself
+   is not exposed.
 
 ---
 

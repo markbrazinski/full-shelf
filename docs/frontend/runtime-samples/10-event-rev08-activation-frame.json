@@ -29,11 +29,11 @@
     "receipt_refs": [
       "fixture-RCT-plan:rev08"
     ],
-    "recorded_at": "2026-08-25T21:55:54.160198+00:00",
+    "recorded_at": "2026-08-25T22:39:13.347666+00:00",
     "scenario_id": "full-shelf-friday-2026-08-14",
     "schema_version": "full-shelf.demo-event.v2",
     "sequence": 10,
-    "session_id": "fs-replay-1ec9f81a-ee20-4cd2-a130-82a60b4b2f6e",
+    "session_id": "fs-replay-4135fdc3-a6e9-4543-9d68-6810fa0a84ff",
     "source_refs": [],
     "trigger_class": "AUTONOMOUS_CHAINED",
     "validation": {

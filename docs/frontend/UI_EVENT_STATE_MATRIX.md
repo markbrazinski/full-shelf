@@ -1,15 +1,16 @@
 # UI Event State Matrix
 
-**Source runtime:** Golden Runtime Controller at SHA
-`1ff771e68513055697e2c6db13fa77c6b05e9572`.
-Every cell is observed from the running accepted runtime — see
+**Source runtime:** Golden Runtime Controller after the Frontend Projection
+Readiness repair (base accepted runtime
+`1ff771e68513055697e2c6db13fa77c6b05e9572`).
+Every cell is observed from the running runtime — see
 [runtime-samples/](runtime-samples/). Companion document:
 [FRONTEND_RUNTIME_CONTRACT.md](FRONTEND_RUNTIME_CONTRACT.md).
 
-Columns follow contract §9's required experience behavior. Where the contract
-and the observed runtime disagree, the cell states the observation and points at
-the discrepancy ID (D1–D4) recorded in the runtime contract. No resolution is
-chosen here.
+Columns follow contract §9's required experience behavior. D1, D2, and D3 from
+the previous packet are **resolved** by the readiness repair; D4 (no invented
+agent `RUNNING`) stands by design. See
+[FRONTEND_RUNTIME_CONTRACT.md §9](FRONTEND_RUNTIME_CONTRACT.md#9-discrepancies--status-after-the-readiness-repair).
 
 **Reading the columns**
 
@@ -48,12 +49,12 @@ committed. The only interactive gate in the replayed window is event 9.
 
 | Seq | Operating time | Page alert | Activity entry | Map / manifest state | Available action | Incident stage | Authority | Saturday |
 |---:|---|---|---|---|---|---|---|---|
-| 5 | 08:05-07:00 | none | Friday opened | rev07 active; 5 commitments; `dispatch` rev07; **`vehicles: null` (D3)**; no custody graph | `start` / `advance` | none | CANONICAL | unavailable |
-| 6 | 08:20-07:00 | **CRITICAL, action required** | Truck 1 refrigeration failure | rev07 unchanged; `INC-2210` ACTIVE; **no Truck 1 vehicle record to alarm on (D3)** | `advance` | `INC-2210` opens | CANONICAL | unavailable |
+| 5 | 08:05-07:00 | none | Friday opened | rev07 active; 5 commitments; **both trucks present and AVAILABLE** (TRUCK-01 42 cases, TRUCK-02 36/60); `reference_locations` present; no custody graph | `start` / `advance` | none | CANONICAL | unavailable |
+| 6 | 08:20-07:00 | **CRITICAL, action required** | Truck 1 refrigeration failure | rev07 unchanged; `INC-2210` ACTIVE; **TRUCK-01 `alarm.active: true`, `status: REFRIGERATION_FAILURE`, `is_operational: false`**; TRUCK-02 unaffected | `advance` | `INC-2210` opens | CANONICAL | unavailable |
 | 7 | 08:20-07:00 | attention | Incident scoped | unchanged; affects O202, O203 | `advance` | `INC-2210` scoped | CANONICAL | unavailable |
-| 8 | 08:21-07:00 | **attention, action required** | Repair proposed | rev07 still authoritative; **`repair_proposal` absent, `approvals: []` (D1)**; diff only as prose in `activity_entry.detail` | **`approve` only** — `advance` returns `409 HUMAN_APPROVAL_REQUIRED` | `INC-2210` awaiting approval | CANONICAL | unavailable |
-| 9 | 08:24-07:00 | success | Repair approved | unchanged at this cursor; receipt `fixture-RCT-approval-…` on `receipt_refs` | `advance` (autoplay resumes) | `INC-2210` approved | CANONICAL | unavailable |
-| 10 | 08:24-07:00 | success | rev08 active | **rev08 active**; `commitments` gains rev08 rows; O202→TRUCK-02 22; O203 PARTNER_PICKUP 20; `dispatch.revision: rev08`, 3 stops summing 58; `approvals` populated; **`vehicles` still `null` (D3)** | `advance` | `INC-2210` resolved | CANONICAL | unavailable |
+| 8 | 08:21-07:00 | **attention, action required** | Repair proposed | rev07 still authoritative, `approvals: []`; **structured `repair_proposal`**: O202 22→TRUCK-02, O203 20→PARTNER_PICKUP, `36 + 22 = 58/60`, `plan_diff_hash`, submit-ready `approval_payload_template` | **`approve` only** — `advance` returns `409 HUMAN_APPROVAL_REQUIRED` | `INC-2210` awaiting approval | CANONICAL | unavailable |
+| 9 | 08:24-07:00 | success | Repair approved | still rev07 active; **`repair_proposal.status: APPROVED`** with `approval_receipt_id` populated; receipt on `receipt_refs` | `advance` (autoplay resumes) | `INC-2210` approved | CANONICAL | unavailable |
+| 10 | 08:24-07:00 | success | rev08 active | **rev08 active**; O202→TRUCK-02 22; O203 PARTNER_PICKUP 20; `dispatch.revision: rev08`; **TRUCK-02 58/60, `remaining_cases: 2`**; **TRUCK-01 still failed — never silently repaired**; `approvals` populated | `advance` | `INC-2210` resolved | CANONICAL | unavailable |
 | 11 | 09:36-07:00 | **CRITICAL, action required** | Recall notice received | `INC-2231` appears, status SCOPING; `recall_intake_as_of` populated | `advance` | `INC-2231` opens | CANONICAL | unavailable |
 | 12 | 09:36-07:00 | none | Safety screening passed | unchanged; Model Armor shown as its own boundary, not an agent | `advance` | `INC-2231` scoping | CANONICAL | unavailable |
 | 13 | 10:04-07:00 | attention | Recall scope extracted | lot LTC-4471, E. coli O157:H7 | `advance` | `INC-2231` scoping | CANONICAL | unavailable |
@@ -61,11 +62,11 @@ committed. The only interactive gate in the replayed window is event 9.
 | 15 | 10:05-07:00 | **CRITICAL** | Movement barrier active | barrier on LTC-4471; Site 01 acknowledgment WorkItem opens | `advance` | barrier active | CANONICAL | unavailable |
 | 16 | 10:06-07:00 | attention | Containment in progress | `INC-2231` → CONTAINMENT_IN_PROGRESS | `advance` | containment | CANONICAL | unavailable |
 | 17 | 10:07-07:00 | **CRITICAL** | rev08 invalidated | plan no longer safe for the recalled lot; no rev09 | `advance` | containment | CANONICAL | unavailable |
-| 18 | 10:10-07:00 | attention | Custody reconciled | **`custody_graph` still `null` (D2)** — headline claims 96/88/8 but no graph payload | `advance` | custody | CANONICAL | unavailable |
-| 19 | 10:10-07:00 | attention | Safe recovery proposed | advisory only; no recovery payload yet | `advance` | recovery | CANONICAL | unavailable |
-| 20 | 10:10-07:00 | success | Safe recovery committed | **`custody_graph` 96/88/8 first appears (D2)**; `recovery` allocations 18+22=40, `SF-A03` 20 OPEN; `carry_forward_obligations` 3 entries | `advance` | recovery committed | CANONICAL | unavailable |
+| 18 | 10:10-07:00 | attention | Custody reconciled | **`custody_graph` present: 96 total / 88 confirmed / 8 unconfirmed**, six nodes and connected edges; 8 unconfirmed at `N-ST01`; no recovery allocations yet | `advance` | custody | CANONICAL | unavailable |
+| 19 | 10:10-07:00 | attention | Safe recovery proposed | **`recovery_proposal` advisory**: AGENCY-01 18, AGENCY-02 22, total 40, `SF-A03` 20; `mutation_applied: false`, `commits_at_event: 20`; committed `recovery` still absent | `advance` | recovery | CANONICAL | unavailable |
+| 20 | 10:10-07:00 | success | Safe recovery committed | **committed `recovery`** appears: allocations 18+22=40 `COMMITTED`, `SF-A03` 20 OPEN; `carry_forward_obligations` 3 entries | `advance` | recovery committed | CANONICAL | unavailable |
 | 21 | 10:12-07:00 | **REFUSAL** | Closure refused | 8 unconfirmed; zero prohibited domain mutations | `advance` | closure refused | CANONICAL | unavailable |
-| 22 | 10:13-07:00 | attention | Partially contained | `INC-2231` → **PARTIALLY_CONTAINED**; custody 88/96; `vehicles` populated TRUCK-02 58/60; `carry_forward_obligations` 4 entries | `advance`, **`branch` now permitted** | terminal canonical | CANONICAL | unavailable |
+| 22 | 10:13-07:00 | attention | Partially contained | `INC-2231` → **PARTIALLY_CONTAINED**; custody 88/96; TRUCK-02 58/60, TRUCK-01 still failed; `carry_forward_obligations` 4 entries | `advance`, **`branch` now permitted** | terminal canonical | CANONICAL | unavailable |
 | 23 | 16:30-07:00 | none | Friday outcome published | read-only: 88/96, 40 recovered, 20 short, Site 01 open | `advance` | terminal | CANONICAL | unavailable |
 | 24 | 17:00-07:00 | attention | Saturday draft proposed | **`next_day_draft` appears**: rev01, `DRAFT_WITH_CONSTRAINTS`; no activation control | `advance` | terminal | CANONICAL | **available** |
 | 25 | 17:00-07:00 | attention | Obligations carried forward | four obligations bound (below) | none — `409 REPLAY_COMPLETE` | terminal | CANONICAL | **available** |
@@ -146,14 +147,31 @@ projection compares byte-identical before and after both branches.
 
 ## Map surface
 
-The runtime carries **no coordinates, addresses, route geometry, or vehicle
-positions** at any cursor. Node identity is symbolic: `N-WH`, `N-TR2`, `N-STG`,
-`N-AG01`, `N-ST01`, `N-RESC`, with `node_type`, `on_hand_cases`, `path_depth`,
-and typed edges.
+`reference_locations` is present on **every** projection from event 5, canonical
+and branch alike, and is byte-identical across sessions and resets.
 
-Consequently the map surface at every event above is a **schematic custody
-graph**, drawn from `path_depth` and edge relationships — not a geographic map.
-No real East Bay place names, addresses, or coordinates exist in the accepted
-runtime, so none are stated here. See
+| Runtime ID | Display name | Lat, Lon | Role | Custody node | Agency / Orders |
+|---|---|---|---|---|---|
+| `FS-LOC-ACCFB` | Alameda County Community Food Bank | 37.741645, -122.201189 | HUB | `N-WH` | — |
+| `FS-LOC-BFN` | Berkeley Food Network | 37.869016, -122.294151 | AGENCY | `N-AG01` | `AGENCY-01` / O201 |
+| `FS-LOC-AFB` | Alameda Food Bank | 37.784686, -122.299163 | AGENCY | `N-TR2` | `AGENCY-02` / O202 |
+| `FS-LOC-SLCFP` | San Leandro Community Food Pantry | 37.712594, -122.137318 | AGENCY | `N-STG` | `AGENCY-03` / O203 |
+| `FS-LOC-PHFS` | Peace Haven Freedom Store | 37.674445, -122.082600 | AGENCY | `N-ST01` | `AGENCY-04` / O204 |
+| `FS-LOC-TCV` | Tri-City Volunteers Food Bank | 37.555890, -122.007661 | AGENCY | `N-RESC` | `AGENCY-05` / O205 |
+
+Every entry carries `location_mode: CONFIGURED_REFERENCE` and `live_gps: false`,
+and the payload carries the disclosure:
+
+> Configured East Bay reference locations for deterministic demonstration. No
+> live GPS or operational affiliation is claimed.
+
+The UI must surface that disclosure wherever the map appears. The named
+organizations are real East Bay providers used as plausible geography; no
+operational affiliation is claimed, and nothing in this scenario describes
+anything they actually did.
+
+**A map can place markers and connect them; it cannot draw a driven route or
+show a moving truck.** No route geometry and no live vehicle position exist at
+any cursor — `telemetry.position_available` is `false` throughout. See
 [FRONTEND_RUNTIME_CONTRACT.md §10](FRONTEND_RUNTIME_CONTRACT.md#10-map-inputs)
-for the itemized list of missing map inputs.
+for the remaining gaps.

@@ -26,8 +26,8 @@
       "incident_id": "INC-2210",
       "plan_diff_hash": "7fa0e4c18872ff8d2de643746c5a29fc1b53970ff6130ac7fe9950f657609e08",
       "plan_id": "PLAN-2026-08-14",
-      "receipt_id": "fixture-RCT-approval-567445b35677",
-      "recorded_at": "2026-08-25T21:55:54.158859+00:00",
+      "receipt_id": "fixture-RCT-approval-7463e7a490fa",
+      "recorded_at": "2026-08-25T22:39:13.345757+00:00",
       "synthetic": true,
       "target_revision": "rev08"
     },
@@ -38,7 +38,7 @@
       "classification": "SYNTHETIC_TEST",
       "cursor": 9,
       "mode": "PLAYING",
-      "session_id": "fs-replay-1ec9f81a-ee20-4cd2-a130-82a60b4b2f6e",
+      "session_id": "fs-replay-4135fdc3-a6e9-4543-9d68-6810fa0a84ff",
       "synthetic": true
     }
   }
