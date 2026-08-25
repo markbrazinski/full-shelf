@@ -13,6 +13,7 @@ belonging to a later event crosses the boundary early.
 import copy
 import json
 import pathlib
+import re
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -20,6 +21,9 @@ from datetime import datetime, timezone
 import events
 
 FIXTURES = pathlib.Path(__file__).resolve().parent / "fixtures"
+
+# Canonical scenario zone offset on the operating day, 2026-08-14.
+PACIFIC_SUFFIX = "-07:00"
 
 # Session lifecycle.
 IDLE = "IDLE"
@@ -72,6 +76,36 @@ def load_fixture(key):
 
 def _now():
     return datetime.now(timezone.utc).isoformat()
+
+
+_UTC_STAMP = re.compile(
+    r"^(\d{4}-\d{2}-\d{2})([T ])(\d{2}:\d{2}:\d{2}(?:\.\d+)?)(Z|\+00:00)$")
+
+
+def _retime(value):
+    """Relabel a fixture's UTC stamp as the same canonical Pacific wall clock.
+
+    The committed fixtures serialize scenario wall-clock time with a UTC suffix,
+    so 08:05 is stamped 08:05+00:00. The runtime states the canonical zone
+    truthfully without shifting the clock: 08:05+00:00 becomes 08:05-07:00, not
+    01:05-07:00. Legacy fixtures and the legacy selector are untouched.
+    """
+    match = _UTC_STAMP.match(value)
+    if not match:
+        return value
+    date, separator, clock, _ = match.groups()
+    return f"{date}{separator}{clock}{PACIFIC_SUFFIX}"
+
+
+def retime_projection(node):
+    """Restamp every UTC timestamp in a runtime projection as Pacific."""
+    if isinstance(node, dict):
+        return {key: retime_projection(value) for key, value in node.items()}
+    if isinstance(node, list):
+        return [retime_projection(item) for item in node]
+    if isinstance(node, str):
+        return _retime(node)
+    return node
 
 
 def _strip_recall_incident(body):
@@ -189,9 +223,10 @@ class ReplaySession:
                 body["authority"] = "ISOLATED"
                 body["proof_label"] = events.BRANCHES[self.branch]["label"]
                 body["classification"] = events.CLASSIFICATION
-                return body
+                return retime_projection(body)
             cursor = self.cursor
-        return filter_projection(load_fixture(self._fixture_for(cursor)), cursor)
+        return retime_projection(
+            filter_projection(load_fixture(self._fixture_for(cursor)), cursor))
 
     @staticmethod
     def _fixture_for(cursor):
@@ -314,8 +349,9 @@ class ReplaySession:
 
         submitted = {field: request.get(field) for field in BINDING_FIELDS}
         matches = submitted == CANONICAL_BINDING
-        submitted_hash = request.get("plan_diff_hash")
-        if submitted_hash is not None and submitted_hash != CANONICAL_PLAN_DIFF_HASH:
+        # The plan-diff hash is part of the binding, not an optional extra: a
+        # missing hash is as unbound as a wrong one, so both are refused.
+        if request.get("plan_diff_hash") != CANONICAL_PLAN_DIFF_HASH:
             matches = False
 
         with self.cond:
@@ -351,15 +387,18 @@ class ReplaySession:
             }
             self.approval = receipt
 
+            # Approval commits event 9 and nothing else. Activation is a
+            # separate subsequent commit: autoplay reaches it after the
+            # configured interval, and a presenter reaches it with /advance.
             gate = self._commit_locked(events.HUMAN_GATE_SEQUENCE)
             gate["receipt_refs"] = [receipt["receipt_id"]]
-            # Approval automatically resumes progression to activation.
-            activation = self._commit_locked(events.ACTIVATION_SEQUENCE)
+            self._emitted[-1]["receipt_refs"] = [receipt["receipt_id"]]
             if self.mode == PAUSED_HUMAN_GATE:
+                # Wake the autoplay thread that parked at the gate.
                 self.mode = PLAYING
             self.cond.notify_all()
             return {"receipt": copy.deepcopy(receipt), "duplicate": False,
-                    "events": [gate, activation], "state": self.state_locked()}
+                    "events": [gate], "state": self.state_locked()}
 
     # -- isolated proof branches --------------------------------------------
 
@@ -467,14 +506,25 @@ def parse_last_event_id(raw):
     return value
 
 
-def stream(session, *, last_event_id=None, max_frames=None, timeout=None):
+# Cadence of the SSE comment heartbeat while a caught-up stream waits. It is a
+# deliberate keepalive, not a poll: the wait still returns early on any commit.
+KEEPALIVE_SECONDS = 15.0
+
+
+def stream(session, *, last_event_id=None, max_frames=None, idle_timeout=None,
+           keepalive=KEEPALIVE_SECONDS):
     """Yield committed canonical events, resuming strictly after the cursor.
 
-    Blocks on the session condition rather than polling, so a waiting stream
-    costs nothing until an event actually commits.
+    A caught-up stream stays open indefinitely. It blocks on the session
+    condition rather than polling, so it wakes only for a committed event,
+    session closure, or the deliberate keepalive.
+
+    `max_frames` and `idle_timeout` are bounded seams for tests, so a test can
+    never hang. Neither is used by the server's default stream.
     """
     after = parse_last_event_id(last_event_id) or 0
     sent = 0
+    idle_waited = 0.0
     while True:
         with session.cond:
             pending = [f for f in session._emitted if f["sequence"] > after]
@@ -483,18 +533,32 @@ def stream(session, *, last_event_id=None, max_frames=None, timeout=None):
                     return
                 if max_frames is not None and sent >= max_frames:
                     return
-                if not session.cond.wait(timeout=timeout if timeout is not None else 0.25):
-                    if timeout is not None:
+                wait_for = keepalive
+                if idle_timeout is not None:
+                    wait_for = min(keepalive, max(idle_timeout - idle_waited, 0))
+                woke = session.cond.wait(timeout=wait_for)
+                if not woke:
+                    idle_waited += wait_for
+                    # Bounded seam: only a test-supplied idle_timeout ends the
+                    # stream. The default path waits forever.
+                    if idle_timeout is not None and idle_waited >= idle_timeout:
                         return
-                    if max_frames is None:
+                    if session.closed:
                         return
+                    yield f": keep-alive {_now()}\n\n"
                     continue
+                idle_waited = 0.0
+                if session.closed:
+                    return
                 pending = [f for f in session._emitted if f["sequence"] > after]
+                if not pending:
+                    continue
             batch = [copy.deepcopy(f) for f in pending]
         for frame in batch:
             yield sse_frame(frame)
             after = frame["sequence"]
             sent += 1
+            idle_waited = 0.0
             if max_frames is not None and sent >= max_frames:
                 return
 

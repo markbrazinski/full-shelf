@@ -231,6 +231,7 @@ def drive_to_end():
     while s.autoplay_step() is not None:
         pass
     s.approve(valid_approval())
+    s.mode = runtime.PLAYING
     while s.autoplay_step() is not None:
         pass
     return s
@@ -268,17 +269,22 @@ def test_exact_approval_commits_rev08_exactly_once():
     s = at_gate()
     result = s.approve(valid_approval())
     assert result["duplicate"] is False
-    assert [f["sequence"] for f in result["events"]] == [9, 10]
+    # Approval commits event 9 only. Activation is a separate later commit.
+    assert [f["sequence"] for f in result["events"]] == [9]
+    assert s.cursor == 9
+    assert 10 not in [f["sequence"] for f in s.feed()]
+    s.advance()
     sequences = [f["sequence"] for f in s.feed()]
     assert sequences.count(9) == 1 and sequences.count(10) == 1
     assert s.cursor == 10
 
 
-def test_approval_automatically_resumes_progression_to_event_ten():
+def test_approval_wakes_autoplay_without_committing_activation_itself():
     s = at_gate()
     s.approve(valid_approval())
-    assert s.cursor == events.ACTIVATION_SEQUENCE
+    assert s.cursor == events.HUMAN_GATE_SEQUENCE
     assert s.mode == runtime.PLAYING
+    assert s.autoplay_step()["sequence"] == events.ACTIVATION_SEQUENCE
 
 
 def test_identical_duplicate_approval_is_idempotent():
@@ -327,6 +333,7 @@ def test_event_ten_cannot_occur_before_event_nine():
         s.advance()
     assert 10 not in [f["sequence"] for f in s.feed()]
     s.approve(valid_approval())
+    s.advance()
     sequences = [f["sequence"] for f in s.feed()]
     assert sequences.index(9) < sequences.index(10)
 
@@ -374,6 +381,7 @@ def projection_at(sequence):
     while s.cursor < sequence:
         if s.autoplay_step() is None:
             s.approve(valid_approval())
+            s.mode = runtime.PLAYING
     return s.projection()
 
 
@@ -431,6 +439,7 @@ def at_terminal():
     while s.cursor < 22:
         if s.autoplay_step() is None:
             s.approve(valid_approval())
+            s.mode = runtime.PLAYING
     return s
 
 
@@ -540,6 +549,7 @@ def test_reset_returns_exactly_to_event_five():
     while s.autoplay_step() is not None:
         pass
     s.approve(valid_approval())
+    s.mode = runtime.PLAYING
     fresh = store.reset(s.session_id)
     assert fresh.cursor == 5
     assert fresh.mode == runtime.IDLE
@@ -575,6 +585,7 @@ def test_two_sessions_advance_independently():
     while a.autoplay_step() is not None:
         pass
     a.approve(valid_approval())
+    a.advance()
     assert a.cursor == 10
     assert b.cursor == 5
     assert b.approval is None
@@ -600,6 +611,7 @@ def test_a_branch_in_one_session_does_not_touch_another():
         while s.cursor < 22:
             if s.autoplay_step() is None:
                 s.approve(valid_approval())
+                s.mode = runtime.PLAYING
     before = b.projection()
     a.enter_branch("complete")
     assert b.branch is None
@@ -638,7 +650,7 @@ def test_sse_resume_returns_strictly_later_events_in_order():
 
 def test_sse_resume_from_the_end_yields_nothing_then_waits():
     s = at_gate()
-    assert collect(runtime.stream(s, last_event_id="8", timeout=0.05)) == []
+    assert collect(runtime.stream(s, last_event_id="8", idle_timeout=0.05)) == []
 
 
 def test_sse_rejects_a_malformed_last_event_id():
@@ -661,6 +673,8 @@ def test_sse_stays_open_and_delivers_a_later_commit():
     t = _t.Thread(target=reader, daemon=True)
     t.start()
     s.approve(valid_approval())
+    s.mode = runtime.PLAYING
+    s.autoplay_step()
     t.join(timeout=5)
     assert [int(i) for i, _ in seen] == [9, 10]
 
@@ -797,7 +811,10 @@ def test_http_session_lifecycle_pauses_at_the_gate_and_resumes(live):
 
     status, approved = call(live, "POST", base + "/approve", valid_approval())
     assert status == 200
-    assert [f["sequence"] for f in approved["events"]] == [9, 10]
+    assert [f["sequence"] for f in approved["events"]] == [9]
+    assert call(live, "GET", base)[1]["cursor"] == 9
+    # Presenter mode: activation needs the next explicit advance.
+    assert call(live, "POST", base + "/advance")[1]["sequence"] == 10
 
     status, dup = call(live, "POST", base + "/approve", valid_approval())
     assert status == 200 and dup["duplicate"] is True
@@ -908,3 +925,274 @@ def test_http_pause_stops_autoplay(live):
     settled = call(live, "GET", base)[1]["cursor"]
     time.sleep(0.4)
     assert call(live, "GET", base)[1]["cursor"] == settled
+
+
+# --- P1 repair 1: the plan-diff hash is part of the binding ------------------
+
+
+def test_approval_without_a_plan_diff_hash_is_refused():
+    s = at_gate()
+    body = valid_approval()
+    del body["plan_diff_hash"]
+    before_feed, before_cursor = s.feed(), s.cursor
+    with pytest.raises(runtime.ReplayError) as exc:
+        s.approve(body)
+    assert exc.value.status == 409
+    assert exc.value.code == "APPROVAL_BINDING_MISMATCH"
+    assert s.approval is None
+    assert s.cursor == before_cursor
+    assert s.feed() == before_feed
+
+
+@pytest.mark.parametrize("bad", [None, "", "0" * 64, "not-a-hash",
+                                 runtime.CANONICAL_PLAN_DIFF_HASH.upper()])
+def test_approval_with_an_altered_plan_diff_hash_is_refused(bad):
+    s = at_gate()
+    before_feed, before_cursor = s.feed(), s.cursor
+    with pytest.raises(runtime.ReplayError) as exc:
+        s.approve(valid_approval(plan_diff_hash=bad))
+    assert exc.value.status == 409
+    assert s.approval is None
+    assert s.cursor == before_cursor
+    assert s.feed() == before_feed
+
+
+def test_hash_denial_creates_no_receipt_and_a_later_valid_approval_still_works():
+    s = at_gate()
+    body = valid_approval()
+    del body["plan_diff_hash"]
+    with pytest.raises(runtime.ReplayError):
+        s.approve(body)
+    result = s.approve(valid_approval())
+    assert result["duplicate"] is False
+    assert [f["sequence"] for f in result["events"]] == [9]
+
+
+def test_http_approval_without_hash_is_409(live):
+    _, created = call(live, "POST", "/api/v1/replay/sessions")
+    base = f"/api/v1/replay/sessions/{created['session_id']}"
+    for _ in range(3):
+        call(live, "POST", base + "/advance")
+    body = valid_approval()
+    del body["plan_diff_hash"]
+    status, payload = call(live, "POST", base + "/approve", body)
+    assert status == 409
+    assert payload["detail"] == "APPROVAL_BINDING_MISMATCH"
+    assert call(live, "GET", base)[1]["cursor"] == 8
+
+
+# --- P1 repair 2: the stream stays open --------------------------------------
+
+
+def test_caught_up_stream_stays_open_and_receives_the_next_event():
+    """Last-Event-ID at the current cursor must not end the stream."""
+    import threading as _t
+    s = at_gate()
+    seen, opened = [], _t.Event()
+
+    def reader():
+        for block in runtime.stream(s, last_event_id=str(s.cursor),
+                                    max_frames=1, keepalive=0.05):
+            if block.startswith(": keep-alive"):
+                opened.set()
+                continue
+            seen.append(parse_blocks([block])[0])
+
+    t = _t.Thread(target=reader, daemon=True)
+    t.start()
+    assert opened.wait(timeout=5), "stream closed instead of waiting"
+    s.approve(valid_approval())
+    t.join(timeout=5)
+    assert not t.is_alive()
+    assert [int(i) for i, _ in seen] == [9]
+
+
+def test_caught_up_stream_emits_keepalive_rather_than_closing():
+    s = at_gate()
+    blocks = []
+    for block in runtime.stream(s, last_event_id=str(s.cursor),
+                                idle_timeout=0.3, keepalive=0.05):
+        blocks.append(block)
+    assert blocks, "expected keepalives while waiting"
+    assert all(b.startswith(": keep-alive") for b in blocks)
+
+
+def test_idle_timeout_is_a_bounded_test_seam_only():
+    s = at_gate()
+    assert collect(runtime.stream(s, last_event_id=str(s.cursor),
+                                  idle_timeout=0.05, keepalive=10)) == []
+
+
+def test_stream_ends_when_the_session_closes():
+    import threading as _t
+    s = at_gate()
+    done = _t.Event()
+
+    def reader():
+        collect(runtime.stream(s, last_event_id=str(s.cursor), keepalive=0.05))
+        done.set()
+
+    _t.Thread(target=reader, daemon=True).start()
+    time.sleep(0.2)
+    s.close()
+    assert done.wait(timeout=5), "closing the session must end the stream"
+
+
+def test_server_stream_uses_no_bounded_seam():
+    """The transport must not pass max_frames or idle_timeout."""
+    source = (pathlib.Path(__file__).parent / "runtime_server.py").read_text()
+    assert "max_frames" not in source
+    assert "idle_timeout" not in source
+
+
+# --- P1 repair 3: runtime projection timestamps are Pacific -----------------
+
+
+def stamps(node, found=None):
+    found = [] if found is None else found
+    if isinstance(node, dict):
+        for value in node.values():
+            stamps(value, found)
+    elif isinstance(node, list):
+        for item in node:
+            stamps(item, found)
+    elif isinstance(node, str) and runtime._UTC_STAMP.match(node):
+        found.append(node)
+    return found
+
+
+@pytest.mark.parametrize("sequence,label", [
+    (5, "healthy"), (10, "approval"), (11, "recall"),
+    (20, "recovery"), (22, "refusal"), (24, "saturday"),
+])
+def test_runtime_projection_carries_no_utc_timestamps(sequence, label):
+    body = projection_at(sequence)
+    assert stamps(body) == [], f"{label} still emits UTC stamps"
+    assert "-07:00" in json.dumps(body)
+
+
+def test_runtime_projection_preserves_scenario_wall_clock():
+    """08:05Z must become 08:05-07:00, never 01:05-07:00."""
+    boundary = projection_at(5)["projection_boundary"]["as_of"]
+    assert boundary == "2026-08-14T08:05:00-07:00"
+    assert projection_at(22)["projection_boundary"]["as_of"] == \
+        "2026-08-14T10:13:00-07:00"
+    assert projection_at(24)["projection_boundary"]["as_of"] == \
+        "2026-08-14T17:00:00-07:00"
+
+
+def test_runtime_retimes_every_timestamp_shape():
+    assert runtime._retime("2026-08-14T08:05:00+00:00") == "2026-08-14T08:05:00-07:00"
+    assert runtime._retime("2026-08-14 20:00:00+00:00") == "2026-08-14 20:00:00-07:00"
+    assert runtime._retime("2026-08-14T09:36:00Z") == "2026-08-14T09:36:00-07:00"
+    # Non-timestamps and already-Pacific values are untouched.
+    assert runtime._retime("LTC-4471") == "LTC-4471"
+    assert runtime._retime("2026-08-14T08:05:00-07:00") == "2026-08-14T08:05:00-07:00"
+
+
+def test_branch_projection_is_also_retimed():
+    s = at_terminal()
+    s.enter_branch("complete")
+    assert stamps(s.projection()) == []
+
+
+def test_legacy_selector_timestamps_are_untouched():
+    """The legacy fixture selector must keep emitting UTC."""
+    import server as legacy
+    body = legacy._select("2026-08-14T10:13:00+00:00", False)
+    assert body["projection_boundary"]["as_of"] == "2026-08-14T10:13:00+00:00"
+    assert stamps(body), "legacy selector must still carry UTC stamps"
+
+
+def test_committed_fixtures_on_disk_are_unmodified():
+    for entry in INDEX["beats"]:
+        raw = (FIXTURES / entry["fixture"]).read_text()
+        assert "-07:00" not in raw, f"{entry['fixture']} was rewritten"
+
+
+# --- P1 repair 4: approval and activation are separate commits --------------
+
+
+def test_approval_commits_event_nine_only():
+    s = at_gate()
+    result = s.approve(valid_approval())
+    assert [f["sequence"] for f in result["events"]] == [9]
+    assert s.cursor == 9
+    assert result["state"]["cursor"] == 9
+
+
+def test_presenter_mode_requires_advance_for_activation():
+    s = at_gate()
+    s.approve(valid_approval())
+    assert s.cursor == 9
+    frame = s.advance()
+    assert frame["sequence"] == 10
+    assert s.cursor == 10
+
+
+def test_event_nine_carries_the_approval_receipt_reference():
+    s = at_gate()
+    receipt = s.approve(valid_approval())["receipt"]
+    gate = [f for f in s.feed() if f["sequence"] == 9][0]
+    assert gate["receipt_refs"] == [receipt["receipt_id"]]
+
+
+def test_sse_delivers_nine_and_ten_as_separate_frames():
+    import threading as _t
+    s = at_gate()
+    seen = []
+
+    def reader():
+        for block in runtime.stream(s, last_event_id="8", max_frames=2,
+                                    keepalive=0.05):
+            if not block.startswith(": keep-alive"):
+                seen.append(parse_blocks([block])[0])
+
+    t = _t.Thread(target=reader, daemon=True)
+    t.start()
+    s.approve(valid_approval())
+    time.sleep(0.15)
+    s.mode = runtime.PLAYING
+    s.autoplay_step()
+    t.join(timeout=5)
+    assert [int(i) for i, _ in seen] == [9, 10]
+    assert len({d["event_id"] for _, d in seen}) == 2
+
+
+def test_http_autoplay_resumes_activation_after_the_configured_interval(live):
+    _, created = call(live, "POST", "/api/v1/replay/sessions")
+    base = f"/api/v1/replay/sessions/{created['session_id']}"
+    call(live, "POST", base + "/start", {"interval_ms": 30})
+
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        state = call(live, "GET", base)[1]
+        if state["mode"] == "PAUSED_HUMAN_GATE":
+            break
+        time.sleep(0.05)
+    assert state["cursor"] == 8
+
+    approved = call(live, "POST", base + "/approve", valid_approval())[1]
+    assert [f["sequence"] for f in approved["events"]] == [9]
+
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        state = call(live, "GET", base)[1]
+        if state["cursor"] >= 10:
+            break
+        time.sleep(0.05)
+    assert state["cursor"] >= 10, "autoplay did not resume after approval"
+
+
+def test_duplicate_and_altered_binding_survive_the_split(live):
+    _, created = call(live, "POST", "/api/v1/replay/sessions")
+    base = f"/api/v1/replay/sessions/{created['session_id']}"
+    for _ in range(3):
+        call(live, "POST", base + "/advance")
+    first = call(live, "POST", base + "/approve", valid_approval())[1]
+    dup = call(live, "POST", base + "/approve", valid_approval())[1]
+    assert dup["duplicate"] is True
+    assert dup["receipt"]["receipt_id"] == first["receipt"]["receipt_id"]
+    status, denied = call(live, "POST", base + "/approve",
+                          valid_approval(target_revision="rev09"))
+    assert status == 409 and denied["detail"] == "APPROVAL_BINDING_MISMATCH"
