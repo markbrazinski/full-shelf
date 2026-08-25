@@ -122,8 +122,12 @@ ACCEPTED = {
                          "lot_id": "SAFE-1", "cases": 4}],
         "shortfalls": [{"shortfall_id": "S", "agency_id": "AG-2", "cases": 5}],
     },
-    "extraction_evidence": {"lot_id": "LOT-B1", "product_name": "P",
-                            "hazard": "H", "action_required": "A"},
+    # V2 extraction carries per-field {value, quote} source anchors; the V1
+    # flat-string fields (product_name, action_required) no longer exist.
+    "extraction_evidence": {
+        "lot_id": {"value": "LOT-B1", "quote": "Lot LOT-B1"},
+        "hazard": {"value": "H", "quote": "H"},
+    },
 }
 
 

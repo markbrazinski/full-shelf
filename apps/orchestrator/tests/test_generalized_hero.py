@@ -57,10 +57,16 @@ ALTERED_REPLIES = {
         "rationale": "Food safety recall scope determined from notice.",
         "confidence": 0.95,
     },
+    # V2 per-field source anchors: every value must be contained by its own
+    # quote, and every quote must be a literal substring of ALTERED_NOTICE.
     "RecallIntakeExtractionAgent": {
-        "lot_id": "LOT-ALTERED-9001", "product_name": "Baby spinach",
-        "hazard": "Listeria monocytogenes",
-        "action_required": "PAUSE_DISTRIBUTION", "source_anchor": "Recall Lot",
+        "source_event_id": "pubsub-altered",
+        "lot_id": {"value": "LOT-ALTERED-9001", "quote": "Lot LOT-ALTERED-9001"},
+        "hazard": {"value": "Listeria monocytogenes",
+                   "quote": "Listeria monocytogenes"},
+        "notice_scope": [{"value": "Baby spinach", "quote": "Baby spinach"}],
+        "notice_time": None,
+        "missing_required_fields": [],
     },
     "NetworkAndCustodyAgent": {
         "lot_id": "LOT-ALTERED-9001", "total_cases_in_custody": 51,
@@ -71,6 +77,10 @@ ALTERED_REPLIES = {
     },
     "FulfillmentPlanningRecoveryAgent": {
         "selected_candidate_id": "CAND-LOT-ASC",
+        # operating_objective is required in V2: the agent must name which
+        # objective it selected under, so a recall recovery cannot be mistaken
+        # for ordinary daily planning.
+        "operating_objective": "RECALL_RECOVERY",
         "rationale": "Only feasible allocation of the available safe stock.",
         "cited_constraints": ["21 safe cases available"],
         "tradeoffs": "Two agencies retain truthful shortfalls.",
@@ -103,9 +113,12 @@ def test_same_managed_hero_uses_altered_ids_quantities_and_calculated_outcome():
         }
 
     extraction = {
-        "status": "EXTRACTION_VALIDATED", "lot_id": "LOT-ALTERED-9001",
-        "product_name": "Baby spinach", "hazard": "Listeria monocytogenes",
-        "action_required": "PAUSE_DISTRIBUTION", "downstream_allowed": True,
+        "status": "EXTRACTION_VALIDATED",
+        "lot_id": {"value": "LOT-ALTERED-9001", "quote": "Lot LOT-ALTERED-9001"},
+        "hazard": {"value": "Listeria monocytogenes",
+                   "quote": "Listeria monocytogenes"},
+        "notice_scope": [{"value": "Baby spinach", "quote": "Baby spinach"}],
+        "downstream_allowed": True,
         "adk_session_id": "session-alt", "adk_run_id": "run-alt",
         "adk_event_id": "event-alt", "correlation_id": "trace-alt",
     }
@@ -178,7 +191,7 @@ def test_same_managed_hero_uses_altered_ids_quantities_and_calculated_outcome():
     # Each specialist reports its own distinct ADK session, never the
     # coordinator's, and no entry claims ADK parentage.
     sessions = {e["specialist_session_id"] for e in fleet["delegation_trace"]}
-    assert len(sessions) == 5  # 5 agents: Incident Lead + 4 others
+    assert len(sessions) == 4  # §6 recall path: Extraction, Lead, Custody, Fulfillment
     assert fleet["coordinator_session_id"] not in sessions
     synthetic_field = "_".join(["parent", "agent", "id"])
     assert all(synthetic_field not in e for e in fleet["delegation_trace"])
@@ -188,6 +201,5 @@ def test_same_managed_hero_uses_altered_ids_quantities_and_calculated_outcome():
         "full-shelf.incident-lead.v1",
         "full-shelf.network-custody.v2",
         "full-shelf.fulfillment-planning-recovery.v2",
-        "full-shelf.partner-operations.v2",
     ]
     assert fleet["selected_candidate_id"] in fleet["candidate_ids_offered"]

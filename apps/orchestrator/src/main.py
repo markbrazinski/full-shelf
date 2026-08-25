@@ -2184,7 +2184,12 @@ def _execute_managed_recall_event(
             "delegation_trace": fleet["proposal"]["delegation_trace"],
             "selected_candidate_id": fleet["recovery_candidate"]["candidate_id"],
             "candidate_ids_offered": [c["candidate_id"] for c in candidates],
-            "partner_template_id": fleet["proposal"]["partner"]["template_id"],
+            # Partner Operations does not run on the recall path (§6), so this
+            # evidence field is absent rather than empty. Outbound follow-up is
+            # dispatched separately and records its own template evidence.
+            "partner_template_id": (
+                (fleet["proposal"].get("partner") or {}).get("template_id")
+            ),
             "deterministic_reconciliation": "RECONCILED_WITH_ACCEPTED_POLICY",
         },
         "unconfirmed_position": unconfirmed_position,
