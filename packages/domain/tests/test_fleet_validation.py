@@ -53,7 +53,16 @@ CANONICAL_GRAPH = {
         {"root_node_id": "WH-01", "destination_node_id": "AG-01", "path_depth": 2},
         {"root_node_id": "WH-01", "destination_node_id": "SITE-01", "path_depth": 3},
     ],
+    "lot_commitment_ids": ["O201", "O202", "O203"],
 }
+
+# The node universe a position may cite, derived from this graph's own current
+# positions so the two cannot drift apart.
+CANONICAL_GRAPH["all_positions"] = [
+    {"node_id": position["node_id"]}
+    for position in CANONICAL_GRAPH["current_positions"]
+]
+CANONICAL_GRAPH["edges"] = []
 
 
 def custody_assessment(**overrides):
@@ -62,6 +71,20 @@ def custody_assessment(**overrides):
         "unconfirmed_cases": 8, "unconfirmed_node_ids": ["SITE-01"],
         "max_path_depth": 3, "containment_assessment": "UNCONFIRMED_DOWNSTREAM",
         "narrative": "Site 01 has not confirmed custody of eight cases.",
+        "affected_commitment_ids": ["O202", "O203"],
+        # Position-level evidence mirroring this graph's own current positions,
+        # summing to the canonical 96 with no double-counted subtotal.
+        "positions": [
+            {"node_id": position["node_id"],
+             "quantity": position["on_hand_cases"],
+             "status": position["acknowledgment_status"],
+             "supporting_edge_ids": []}
+            for position in CANONICAL_GRAPH["current_positions"]
+        ],
+        "unresolved_obligations": [
+            {"node_id": "SITE-01", "quantity": 8,
+             "required_evidence": ["partner_acknowledgment"]},
+        ],
     }
     payload.update(overrides)
     return NetworkCustodyAssessment(**payload)
@@ -80,6 +103,52 @@ def test_custody_projection_never_leaks_query_shape():
 
 def test_custody_assessment_matching_deterministic_graph_is_accepted():
     assert validate_custody_assessment(custody_assessment(), CANONICAL_GRAPH)
+
+
+def test_custody_positions_are_required_not_optional():
+    """An assessment with no position evidence cannot support §4.4."""
+    with pytest.raises(FleetProposalError, match="CUSTODY_POSITIONS_REQUIRED"):
+        validate_custody_assessment(
+            custody_assessment(positions=[]), CANONICAL_GRAPH
+        )
+
+
+def test_custody_affected_commitments_are_required():
+    with pytest.raises(
+        FleetProposalError, match="CUSTODY_AFFECTED_COMMITMENTS_REQUIRED"
+    ):
+        validate_custody_assessment(
+            custody_assessment(affected_commitment_ids=[]), CANONICAL_GRAPH
+        )
+
+
+def test_custody_affected_commitment_must_reference_the_recalled_lot():
+    with pytest.raises(
+        FleetProposalError, match="CUSTODY_AFFECTED_COMMITMENT_NOT_ON_LOT"
+    ):
+        validate_custody_assessment(
+            custody_assessment(affected_commitment_ids=["O999"]), CANONICAL_GRAPH
+        )
+
+
+def test_unconfirmed_nodes_without_obligations_are_rejected():
+    with pytest.raises(
+        FleetProposalError, match="CUSTODY_UNRESOLVED_OBLIGATIONS_REQUIRED"
+    ):
+        validate_custody_assessment(
+            custody_assessment(unresolved_obligations=[]), CANONICAL_GRAPH
+        )
+
+
+def test_missing_graph_universe_is_a_precondition_not_a_fabrication_finding():
+    """A graph projection lacking the node universe is a missing input.
+
+    Defaulting it to an empty set would condemn every honest position as
+    fabricated, reporting a missing precondition as an integrity violation.
+    """
+    narrowed = {k: v for k, v in CANONICAL_GRAPH.items() if k != "all_positions"}
+    with pytest.raises(FleetProposalError, match="CUSTODY_GRAPH_UNIVERSE_MISSING"):
+        validate_custody_assessment(custody_assessment(), narrowed)
 
 
 @pytest.mark.parametrize("overrides,reason", [

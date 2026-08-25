@@ -99,34 +99,58 @@ def validate_custody_assessment(
     if assessment.containment_assessment != expected_containment:
         raise FleetProposalError("CUSTODY_CONTAINMENT_MISMATCH")
 
-    # When positions are provided, verify they reconcile with totals (no double-count)
-    if assessment.positions:
-        positions_sum = sum(p.quantity for p in assessment.positions)
-        if positions_sum != assessment.total_cases_in_custody:
-            raise FleetProposalError("CUSTODY_POSITIONS_QUANTITY_MISMATCH")
+    # Positions are required, not optional: an assessment with no position-level
+    # evidence cannot support §4.4's reconciliation claim, and skipping the check
+    # on an empty list silently accepted exactly the assessments it should
+    # reject.
+    if not assessment.positions:
+        raise FleetProposalError("CUSTODY_POSITIONS_REQUIRED")
 
-        # Verify no fabricated nodes in positions
-        valid_node_ids = {p["node_id"] for p in graph_result.get("all_positions", [])}
-        for position in assessment.positions:
-            if position.node_id not in valid_node_ids:
-                raise FleetProposalError("CUSTODY_POSITIONS_FABRICATED_NODE_ID")
-            for edge_id in position.supporting_edge_ids:
-                # Edge validation: edge_id should reference valid edges in graph
-                if not any(e.get("edge_id") == edge_id for e in graph_result.get("edges", [])):
-                    raise FleetProposalError("CUSTODY_POSITIONS_FABRICATED_EDGE_ID")
+    positions_sum = sum(p.quantity for p in assessment.positions)
+    if positions_sum != assessment.total_cases_in_custody:
+        raise FleetProposalError("CUSTODY_POSITIONS_QUANTITY_MISMATCH")
 
-    # When unresolved_obligations are provided, verify they match unconfirmed set
-    if assessment.unresolved_obligations:
-        valid_node_ids = {p["node_id"] for p in graph_result.get("all_positions", [])}
-        for obligation in assessment.unresolved_obligations:
-            if obligation.node_id not in valid_node_ids:
-                raise FleetProposalError("CUSTODY_OBLIGATIONS_FABRICATED_NODE_ID")
+    # The node/edge universe is an explicit precondition. Defaulting it to an
+    # empty set would condemn every position as fabricated whenever the graph
+    # projection simply did not carry these keys -- a missing input misreported
+    # as a fabrication finding.
+    if "all_positions" not in graph_result:
+        raise FleetProposalError("CUSTODY_GRAPH_UNIVERSE_MISSING")
+    valid_node_ids = {p["node_id"] for p in graph_result["all_positions"]}
+    valid_edge_ids = {
+        edge.get("edge_id") for edge in graph_result.get("edges", [])
+    }
 
-        # Verify unresolved_obligations is EXACT match to unconfirmed_node_ids
-        obligation_ids = {o.node_id for o in assessment.unresolved_obligations}
-        unconfirmed_ids = set(assessment.unconfirmed_node_ids)
-        if obligation_ids != unconfirmed_ids:
-            raise FleetProposalError("CUSTODY_UNRESOLVED_OBLIGATIONS_INCOMPLETE")
+    for position in assessment.positions:
+        if position.node_id not in valid_node_ids:
+            raise FleetProposalError("CUSTODY_POSITIONS_FABRICATED_NODE_ID")
+        for edge_id in position.supporting_edge_ids:
+            if edge_id not in valid_edge_ids:
+                raise FleetProposalError("CUSTODY_POSITIONS_FABRICATED_EDGE_ID")
+
+    # Affected commitments are required and must reference the recalled lot, so
+    # the assessment cannot claim exposure it has not tied to this incident.
+    if not assessment.affected_commitment_ids:
+        raise FleetProposalError("CUSTODY_AFFECTED_COMMITMENTS_REQUIRED")
+    lot_commitment_ids = graph_result.get("lot_commitment_ids")
+    if lot_commitment_ids is not None:
+        for commitment_id in assessment.affected_commitment_ids:
+            if commitment_id not in set(lot_commitment_ids):
+                raise FleetProposalError("CUSTODY_AFFECTED_COMMITMENT_NOT_ON_LOT")
+
+    # An unconfirmed node without a stated obligation is an unrecorded gap.
+    if assessment.unconfirmed_node_ids and not assessment.unresolved_obligations:
+        raise FleetProposalError("CUSTODY_UNRESOLVED_OBLIGATIONS_REQUIRED")
+
+    for obligation in assessment.unresolved_obligations:
+        if obligation.node_id not in valid_node_ids:
+            raise FleetProposalError("CUSTODY_OBLIGATIONS_FABRICATED_NODE_ID")
+
+    # Obligations must match the unconfirmed set exactly, in both directions.
+    obligation_ids = {o.node_id for o in assessment.unresolved_obligations}
+    unconfirmed_ids = set(assessment.unconfirmed_node_ids)
+    if obligation_ids != unconfirmed_ids:
+        raise FleetProposalError("CUSTODY_UNRESOLVED_OBLIGATIONS_INCOMPLETE")
 
     return assessment
 

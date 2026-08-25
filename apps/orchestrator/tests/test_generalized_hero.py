@@ -72,6 +72,21 @@ ALTERED_REPLIES = {
         "lot_id": "LOT-ALTERED-9001", "total_cases_in_custody": 51,
         "confirmed_cases": 46, "unconfirmed_cases": 5,
         "unconfirmed_node_ids": ["SITE-ALTERED-77"], "max_path_depth": 4,
+        "affected_commitment_ids": ["ORDER-X", "ORDER-Y"],
+        # Altered positions summing to the altered total (46 + 5 = 51),
+        # proving reconciliation is computed, not remembered from 96/88/8.
+        "positions": [
+            {"node_id": "WH-ALTERED", "quantity": 30, "status": "CONFIRMED",
+             "supporting_edge_ids": []},
+            {"node_id": "AGENCY-77", "quantity": 16, "status": "CONFIRMED",
+             "supporting_edge_ids": []},
+            {"node_id": "SITE-ALTERED-77", "quantity": 5, "status": "UNCONFIRMED",
+             "supporting_edge_ids": []},
+        ],
+        "unresolved_obligations": [
+            {"node_id": "SITE-ALTERED-77", "quantity": 5,
+             "required_evidence": ["partner_acknowledgment"]},
+        ],
         "containment_assessment": "UNCONFIRMED_DOWNSTREAM",
         "narrative": "Five cases at Site 77 remain unconfirmed.",
     },
@@ -125,6 +140,12 @@ def test_same_managed_hero_uses_altered_ids_quantities_and_calculated_outcome():
     graph = {
         "lot_id": "LOT-ALTERED-9001", "max_path_depth": 4,
         "unique_current_cases": 51, "confirmed_cases": 46, "unconfirmed_cases": 5,
+        "all_positions": [
+            {"node_id": "WH-ALTERED"}, {"node_id": "AGENCY-77"},
+            {"node_id": "SITE-ALTERED-77"},
+        ],
+        "edges": [],
+        "lot_commitment_ids": ["ORDER-X", "ORDER-Y", "ORDER-Z"],
         "unconfirmed_positions": [{
             "node_id": "SITE-ALTERED-77", "node_type": "DOWNSTREAM_SITE",
             "name": "Site 77", "on_hand_cases": 5,

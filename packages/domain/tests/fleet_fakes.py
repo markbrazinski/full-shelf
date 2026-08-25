@@ -18,10 +18,26 @@ from google.adk.models.llm_response import LlmResponse
 from google.genai import types
 
 
+# The canonical six current positions summing to 96 unique physical cases:
+# 24 + 22 + 20 + 10 + 8 + 12. O201's 18 cases are an intermediate historical
+# subtotal and are never re-added; Site 01's 8 are downstream of Agency 01 and
+# are counted once, at Site 01.
+CANONICAL_POSITIONS = [
+    {"node_id": "WH-01", "quantity": 24, "status": "CONFIRMED"},
+    {"node_id": "TRUCK-2", "quantity": 22, "status": "CONFIRMED"},
+    {"node_id": "PARTNER-PICKUP", "quantity": 20, "status": "CONFIRMED"},
+    {"node_id": "AG-01", "quantity": 10, "status": "CONFIRMED"},
+    {"node_id": "SITE-01", "quantity": 8, "status": "UNCONFIRMED"},
+    {"node_id": "RESCUE-01", "quantity": 12, "status": "CONFIRMED"},
+]
+
 CANONICAL_GRAPH = {
     "lot_id": "LTC-4471", "query_engine": "SPANNER_GRAPH_GQL", "max_path_depth": 3,
     "unique_current_cases": 96, "confirmed_cases": 88, "unconfirmed_cases": 8,
     "node_count": 6, "intermediate_subtotals_readded": False,
+    "all_positions": CANONICAL_POSITIONS,
+    "edges": [{"edge_id": "E-WH01-AG01"}, {"edge_id": "E-AG01-SITE01"}],
+    "lot_commitment_ids": ["O201", "O202", "O203"],
     "current_positions": [
         {"node_id": "WH-01", "node_type": "WAREHOUSE", "name": "Main Warehouse",
          "on_hand_cases": 24, "acknowledgment_status": "CONFIRMED", "path_depth": 0},
@@ -76,7 +92,13 @@ RECALL_OK = {
 CUSTODY_OK = {
     "lot_id": "LTC-4471", "total_cases_in_custody": 96, "confirmed_cases": 88,
     "unconfirmed_cases": 8, "unconfirmed_node_ids": ["SITE-01"], "max_path_depth": 3,
-    "affected_commitment_ids": [], "positions": [], "unresolved_obligations": [],
+    "affected_commitment_ids": ["O202", "O203"],
+    "positions": [dict(position, supporting_edge_ids=[])
+                  for position in CANONICAL_POSITIONS],
+    "unresolved_obligations": [
+        {"node_id": "SITE-01", "quantity": 8,
+         "required_evidence": ["partner_acknowledgment"]},
+    ],
     "containment_assessment": "UNCONFIRMED_DOWNSTREAM",
     "narrative": "Eight cases at Site 01 remain unconfirmed.",
 }
