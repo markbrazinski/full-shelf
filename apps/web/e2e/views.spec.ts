@@ -291,6 +291,18 @@ test("11 · datasource failure shows the error surface and Reconnect retries", a
   await shot(page, "v6-12-reconnected");
 });
 
+test("11a · malformed projection fails closed without stale operational data", async ({ page }) => {
+  await page.route("**/projections/demo-beats**", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ projection_boundary: { mode: "MALFORMED_TEST" } }),
+  }));
+  await page.goto("/");
+  await expect(page.getByTestId("connection-error")).toBeVisible();
+  await expect(page.locator("body")).not.toContainText("O201");
+  await shot(page, "v6-18-malformed-projection");
+});
+
 // ------------------------------------------------------------------ map
 
 test("12 · map fallback renders without a Maps key", async ({ page }) => {
@@ -417,6 +429,28 @@ test("15 · the design fixture never reaches the runtime path", async ({ page })
   });
   await open(page);
   expect(sources.filter((u) => /FixtureDataSource/i.test(u))).toHaveLength(0);
+});
+
+test("15a · fixed as_of and deterministic telemetry repeat after refresh", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const firstResponse = page.waitForResponse((r) => r.url().includes("/projections/demo-beats"));
+  await open(page);
+  const first = await firstResponse;
+  const firstUrl = first.url();
+  const firstBody = await first.text();
+  await advance(page);
+  const firstTelemetry = await page.getByTestId("telemetry-strip").innerText();
+  const firstDrawing = await page.getByTestId("dispatch-svg-schematic").innerHTML();
+
+  const secondResponse = page.waitForResponse((r) => r.url().includes("/projections/demo-beats"));
+  await page.reload();
+  await settle(page);
+  const second = await secondResponse;
+  expect(second.url()).toBe(firstUrl);
+  expect(await second.text()).toBe(firstBody);
+  await advance(page);
+  expect(await page.getByTestId("telemetry-strip").innerText()).toBe(firstTelemetry);
+  expect(await page.getByTestId("dispatch-svg-schematic").innerHTML()).toBe(firstDrawing);
 });
 
 // ------------------------------------------------- event -> proposal -> approval

@@ -16,6 +16,9 @@ export default defineConfig({
   use: {
     baseURL: `http://127.0.0.1:${webPort}`,
     viewport: { width: 1600, height: 900 },
+    // Acceptance frames must stop at the exact replay boundary so repeated
+    // captures are byte-stable rather than sampling an in-flight tween.
+    reducedMotion: "reduce",
     screenshot: "off",
   },
   webServer: {
