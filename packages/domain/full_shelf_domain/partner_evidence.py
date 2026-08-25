@@ -125,6 +125,10 @@ def verify_partner_custody_proposal(
     reasons: list[str] = []
     claims: dict[str, ClaimResult] = {}
 
+    # Proposal must request a mutation to reach APPLIED decision
+    if proposal.requested_mutation != "CONFIRM_CUSTODY":
+        reasons.append("NO_MUTATION_REQUESTED")
+
     expected_targets = {
         "incident_id": incident_id,
         "partner_id": details.partner_id,
