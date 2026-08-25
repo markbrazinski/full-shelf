@@ -24,9 +24,8 @@ import type { BeatId, FullShelfProjection } from "./types/fullShelf";
 
 import { TestModeBanner } from "./components/TestModeBanner";
 import { AgentActivityRail } from "./components/AgentActivityRail";
-import { CommitmentsBoard } from "./components/CommitmentsBoard";
 import { RevisionReview } from "./components/RevisionReview";
-import { DispatchSchematic } from "./components/DispatchSchematic";
+import { TodayMapWorkspace } from "./components/TodayMapWorkspace";
 import { RecallWorkspace } from "./components/RecallWorkspace";
 import { CustodyGraph } from "./components/CustodyGraph";
 import { GovernedRecovery } from "./components/GovernedRecovery";
@@ -177,7 +176,14 @@ export default function App() {
 
   return (
     <div style={css("height:100vh;display:flex;flex-direction:column;background:#eef0ea;overflow:hidden")}>
-      <TestModeBanner dataMode={p?.dataMode ?? "SYNTHETIC_TEST"} />
+      <TestModeBanner
+        dataMode={p?.dataMode ?? "SYNTHETIC_TEST"}
+        controls={view === "today" && day === "fri" ? [
+          { id: "moment-healthy", label: "08:05", active: friday === FRIDAY_HEALTHY, onClick: () => setFriday(FRIDAY_HEALTHY) },
+          { id: "moment-proposed", label: "08:21", active: friday === FRIDAY_PROPOSED, onClick: () => setFriday(FRIDAY_PROPOSED) },
+          { id: "moment-updated", label: "08:24", active: friday === FRIDAY_DISRUPTED, onClick: () => setFriday(FRIDAY_DISRUPTED) },
+        ] : []}
+      />
 
       {/* ---------------------------- HEADER ---------------------------- */}
       <header
@@ -346,34 +352,6 @@ export default function App() {
                         Saturday · Draft
                       </button>
                     </div>
-                    {day === "fri" ? (
-                      <div style={css("display:flex;background:#e2e6df;border-radius:9px;padding:3px")}>
-                        {(
-                          [
-                            [FRIDAY_HEALTHY, "08:05 · healthy", "moment-healthy"],
-                            [FRIDAY_PROPOSED, "08:21 · fault reported", "moment-proposed"],
-                            [FRIDAY_DISRUPTED, "08:24 · updated plan", "moment-updated"],
-                          ] as [BeatId, string, string][]
-                        ).map(([id, label, tid]) => {
-                          const on = friday === id;
-                          return (
-                            <button
-                              key={id}
-                              type="button"
-                              onClick={() => setFriday(id)}
-                              aria-pressed={on}
-                              data-testid={tid}
-                              style={css(
-                                `background:${on ? "#16323b" : "transparent"};color:${on ? "#eef4f4" : "#5c6b71"};` +
-                                  "border:none;border-radius:7px;padding:6px 11px;font-size:11px;font-weight:600;cursor:pointer",
-                              )}
-                            >
-                              {label}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    ) : null}
                   </div>
 
                   {day === "sat" ? (
@@ -400,7 +378,16 @@ export default function App() {
                       />
                     )
                   ) : (
-                    <div style={css("margin-top:12px;display:flex;flex-direction:column;gap:14px")}>
+                    <div style={css("margin-top:10px;display:flex;flex-direction:column;gap:14px")}>
+                      {p.dispatch ? (
+                        <TodayMapWorkspace
+                          currentDay={p.currentDay}
+                          dispatch={p.dispatch}
+                          mapsApiKey={MAPS_API_KEY}
+                          plannedStops={plannedStopsFrom(p.dispatch)}
+                          mapLabel={MAP_LABEL}
+                        />
+                      ) : null}
                       {p.agentActivity ? (
                         <AgentActivityRail view={p.agentActivity} onOpenEvidence={() => setExecOpen(true)} />
                       ) : null}
@@ -413,23 +400,6 @@ export default function App() {
                             source: "SIMULATED FLEET TELEMATICS",
                           }}
                           onApprove={approveRepair}
-                        />
-                      ) : null}
-                      {p.currentDay.commitments ? (
-                        <CommitmentsBoard
-                          cd={p.currentDay}
-                          onHistory={() => setView("history")}
-                          onOpenEvidence={() => setExecOpen(true)}
-                        />
-                      ) : null}
-                      {p.dispatch ? (
-                        <DispatchSchematic
-                          dispatch={p.dispatch}
-                          onToday={() => setView("today")}
-                          onGo={() => setView("today")}
-                          mapsApiKey={MAPS_API_KEY}
-                          plannedStops={plannedStopsFrom(p.dispatch)}
-                          mapLabel={MAP_LABEL}
                         />
                       ) : null}
                     </div>

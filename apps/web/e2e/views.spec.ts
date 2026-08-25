@@ -42,6 +42,18 @@ test("01 · Friday healthy shows rev07 commitments and a quiet sidecar", async (
   // No incident has been reported at 08:05, so no badge exists.
   await expect(page.getByTestId("incident-badge")).toHaveCount(0);
   await expect(page.getByTestId("sidecar-quiet")).toBeVisible();
+  const map = page.getByTestId("today-map");
+  const manifests = page.getByTestId("truck-manifests");
+  await expect(map).toBeVisible();
+  await expect(manifests).toBeVisible();
+  const mapBox = await map.boundingBox();
+  const manifestBox = await manifests.boundingBox();
+  expect(mapBox!.y + mapBox!.height).toBeLessThanOrEqual(900);
+  expect(manifestBox!.y + manifestBox!.height).toBeLessThanOrEqual(900);
+  await expect(manifests).toContainText("COMMITTED MANIFEST ORDER");
+  await expect(page.locator("main")).not.toContainText("OPEN OBLIGATIONS");
+  await expect(page.locator("main")).not.toContainText("CONTEXTUAL DISPATCH VIEW");
+  await expect(page.locator("main").getByTestId("moment-healthy")).toHaveCount(0);
   await shot(page, "v6-01-friday-healthy");
 });
 
