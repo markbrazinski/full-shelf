@@ -150,11 +150,8 @@ def validate_recovery_selection(
     if chosen is None:
         raise FleetProposalError("UNKNOWN_RECOVERY_CANDIDATE")
 
-    # Verify candidate has required allocations/partner_pickups/shortfalls
-    allocations = chosen.get("allocations", [])
-    partner_pickups = chosen.get("partner_pickups", [])
-    shortfalls = chosen.get("shortfalls", [])
-    if not allocations and not partner_pickups and not shortfalls:
+    # Verify candidate has required allocations and shortfalls
+    if not chosen["allocations"] or not chosen["shortfalls"]:
         raise FleetProposalError("PARTIAL_RECOVERY_POLICY_INPUTS_REQUIRED")
 
     # Confidence floor is secondary: enforced after facts are verified

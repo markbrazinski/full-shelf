@@ -2420,9 +2420,6 @@ def _derive_repair_proposal(
                 "content_hash": hashlib.sha256(
                     f"{reroute[0]},{pickup[0]}".encode("utf-8")
                 ).hexdigest(),
-                "allocations": [{"order_id": reroute[0], "cases": reroute[1]}],
-                "partner_pickups": [{"order_id": pickup[0], "cases": pickup[1]}],
-                "shortfalls": [],
             }],
             source_event_id=source_event_id,
             trigger=TriggerClass.FLEET_FAILURE,
@@ -2814,16 +2811,6 @@ def _generate_next_day_plan(
                 "content_hash": hashlib.sha256(
                     json.dumps(candidate, sort_keys=True, separators=(",", ":")).encode()
                 ).hexdigest(),
-                "allocations": [
-                    {"order_id": stop["order_id"], "cases": stop["cases"]}
-                    for v in candidate.get("candidate_vehicles", [])
-                    for stop in v.get("stops", [])
-                ],
-                "partner_pickups": [],
-                "shortfalls": [
-                    {"order_id": item.get("shortfall_id"), "cases": item.get("cases"), "reason": item.get("reason")}
-                    for item in candidate.get("unassigned_demand", [])
-                ],
             }],
             source_event_id=stable_event_id,
             trigger=TriggerClass.NEXT_DAY_DRAFT,
