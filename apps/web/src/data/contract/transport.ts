@@ -202,16 +202,37 @@ export interface RawRepairProposal {
 
 export interface RawVehicle {
   vehicle_id: string;
-  name: string | null;
+  name?: string | null;
+  /** The runtime spells the label `display_name`. */
+  display_name?: string;
   capacity_cases: number | null;
-  assigned_cases: number | null;
+  assigned_cases?: number | null;
+  /** The runtime's own spelling of the committed load. */
+  manifest_cases?: number | null;
   remaining_cases: number | null;
-  at_capacity: boolean | null;
+  at_capacity?: boolean | null;
   is_operational: boolean | null;
+  status?: string;
+  refrigeration_capable?: boolean;
+  refrigeration_operational?: boolean;
+  assigned_orders?: string[];
+  revision?: string | null;
   alarm?: {
     active: boolean;
     kind: string | null;
-    raised_at_event: string | null;
+    incident_id?: string | null;
+    /** The event at which the fault was raised. */
+    raised_at_event?: number | null;
+  };
+  /**
+   * Always live_gps:false / position_available:false. No GPS exists for
+   * either truck at any cursor, by design (ADR-010).
+   */
+  telemetry?: {
+    live_gps: boolean;
+    position_available: boolean;
+    basis: string;
+    disclosure: string;
   };
 }
 
@@ -225,14 +246,21 @@ export interface RawRecoveryProposal {
 
 export interface RawReferenceLocation {
   location_id: string;
-  name: string;
+  /** The runtime spells the label `display_name`. */
+  display_name?: string;
+  name?: string;
+  street_address?: string;
   latitude: number;
   longitude: number;
   role: string;
+  /** Binds the location to its custody-graph node. */
+  custody_node_id?: string | null;
   agency_id?: string | null;
   order_ids?: string[];
   location_mode: string;
   live_gps: boolean;
+  /** Recorded honestly: ORGANIZATION_MATCH or ADDRESS_MATCH. */
+  match_quality?: string;
 }
 
 export interface RawReferenceLocations {

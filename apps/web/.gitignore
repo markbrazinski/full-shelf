@@ -8,3 +8,7 @@ tsconfig.tsbuildinfo
 test-results
 playwright-report
 .playwright
+
+# Browser Maps key is supplied at runtime and never committed.
+.env
+.env.local

@@ -1,26 +1,27 @@
 // =====================================================================
 // Full Shelf — Google planned-dispatch map
 // ---------------------------------------------------------------------
-// A PLANNED-ROUTE visualization, never evidence of a live truck.
+// A CONFIGURED-REFERENCE visualization, never evidence of a live truck.
 //
-// The backend supplies what is planned: stop order, order IDs, cases,
-// assignment, revision, capacity. Coordinates come from the documented
-// DEMO_TENANT_LOCATION_REFERENCE directory — location configuration, not
-// telemetry. Nothing here renders a position, bearing, heading, speed,
-// or "last reported" time, and no marker moves.
+// Coordinates come from the runtime's own `reference_locations` — six
+// configured East Bay sites resolved once at build time, carried on every
+// projection, and identical across sessions and resets. The runtime
+// performs no geocoding and calls no Google service; this component reads
+// what the projection supplies and invents nothing.
 //
-// Vehicle markers, when supplied, are SIMULATED_TELEMETRY drawn ON TOP
-// of that planned drawing and labelled as such. They are contextual: a
-// marker never establishes plan, incident or recovery truth, and only an
-// explicit health event may show a vehicle as faulted.
+// Nothing here renders a position, bearing, heading, speed, moving truck,
+// driven route, or "last reported" time. No route geometry exists at any
+// cursor (`telemetry.position_available` is false throughout), so stops
+// are placed as markers and connected to the hub by straight configured
+// lines that read as assignment, never as travel.
 //
 // If the Maps key is absent or the API fails to load, the caller renders
-// the existing SVG dispatch schematic instead of a blank panel.
+// the SVG schematic instead of a blank panel.
 // =====================================================================
 
 import { useEffect, useRef, useState } from "react";
 import { css } from "../styles/css";
-import { DEMO_TENANT_LOCATIONS, locationFor, type ReferenceLocation } from "../data/contract/locations";
+import type { MapLocation } from "../types/fullShelf";
 
 export interface PlannedStop {
   orderId: string;
@@ -33,6 +34,10 @@ export interface PlannedStop {
 
 export interface PlannedDispatchMapProps {
   stops: PlannedStop[];
+  /** The runtime's six configured reference locations. */
+  locations: MapLocation[];
+  /** The runtime's own disclosure text, rendered verbatim. */
+  disclosure?: string;
   label: string;
   apiKey: string;
   onFailure: () => void;
@@ -49,9 +54,19 @@ type MapsNamespace = typeof globalThis & { google?: any };
 
 let loaderPromise: Promise<void> | null = null;
 
+/**
+ * Load the Maps JavaScript API and resolve only once it is genuinely
+ * usable.
+ *
+ * With `loading=async` the bootstrap loader fires `script.onload` BEFORE
+ * `google.maps` is populated, so checking the namespace there always
+ * throws. The supported path is `google.maps.importLibrary`, which the
+ * bootstrap defines synchronously and which resolves when the library is
+ * actually ready.
+ */
 function loadMapsApi(apiKey: string): Promise<void> {
   const g = globalThis as MapsNamespace;
-  if (g.google?.maps) return Promise.resolve();
+  if (g.google?.maps?.Map) return Promise.resolve();
   if (loaderPromise) return loaderPromise;
 
   loaderPromise = new Promise<void>((resolve, reject) => {
@@ -59,20 +74,28 @@ function loadMapsApi(apiKey: string): Promise<void> {
     // Google loads the script, then calls gm_authFailure. Without this
     // hook an invalid key leaves an empty grey box instead of falling
     // back to the schematic.
-    (globalThis as any).gm_authFailure = () => reject(new Error("Google Maps rejected the API key"));
+    (globalThis as any).gm_authFailure = () =>
+      reject(new Error("Google Maps rejected the API key"));
 
     const script = document.createElement("script");
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&v=weekly&loading=async&auth_referrer_policy=origin`;
+    script.src =
+      `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}` +
+      "&v=weekly&loading=async&libraries=maps,marker&callback=__fsMapsReady";
     script.async = true;
-    script.onload = () => {
-      // onload fires before auth is validated; confirm the API is usable.
+
+    // The bootstrap invokes this once `google.maps` is populated.
+    (globalThis as any).__fsMapsReady = () => {
       const ns = (globalThis as MapsNamespace).google?.maps;
       if (ns && typeof ns.Map === "function") resolve();
       else reject(new Error("Google Maps loaded without a usable API"));
     };
+
     script.onerror = () => reject(new Error("Google Maps failed to load"));
     document.head.appendChild(script);
-    // A wedged network must fall back rather than hang the panel.
+
+    // A wedged network must fall back rather than hang the panel. A
+    // settled promise ignores this, so a slow-but-successful load is
+    // never turned into a failure.
     setTimeout(() => reject(new Error("Google Maps load timed out")), 8_000);
   }).catch((e) => {
     loaderPromise = null;
@@ -81,26 +104,55 @@ function loadMapsApi(apiKey: string): Promise<void> {
   return loaderPromise;
 }
 
-export function PlannedDispatchMap({ stops, label, apiKey, onFailure }: PlannedDispatchMapProps) {
+/**
+ * Resolve a stop to one of the runtime's configured locations.
+ *
+ * The projection binds each location to its agency and orders, so the
+ * match is on projected identity — never on a coordinate guessed from a
+ * display string. A stop with no configured location draws nothing.
+ */
+function locationForStop(stop: PlannedStop, locations: MapLocation[]): MapLocation | undefined {
+  const byOrder = locations.find((l) => l.orderIds?.includes(stop.orderId));
+  if (byOrder) return byOrder;
+  if (!stop.agency) return undefined;
+  // "Agency 02" → AGENCY-02, the runtime's own agency_id spelling.
+  const agencyId = stop.agency.trim().toUpperCase().replace(/\s+/g, "-");
+  return locations.find((l) => l.agencyId === agencyId);
+}
+
+export function PlannedDispatchMap({
+  stops,
+  locations,
+  disclosure,
+  label,
+  apiKey,
+  onFailure,
+}: PlannedDispatchMapProps) {
   const ref = useRef<HTMLDivElement | null>(null);
   const painted = useRef(false);
   const [failed, setFailed] = useState(false);
-  // The live map instance and its vehicle markers, kept across renders so
-  // telemetry updates MOVE markers rather than rebuilding the map.
-  const mapRef = useRef<any>(null);
+
+  // The projection is re-read after every committed event, so `stops` and
+  // `locations` arrive as fresh array identities roughly once a second.
+  // Keying the effect on those references tore the map down and rebuilt
+  // it mid-load on every frame, so it never survived long enough to paint.
+  // Key on the CONTENT that actually changes the drawing instead.
+  const stopsKey = stops.map((s) => `${s.orderId}:${s.kind}:${s.sequence}`).join("|");
+  const locationsKey = locations.map((l) => l.id).join("|");
 
   useEffect(() => {
     let cancelled = false;
+    const hub = locations.find((l) => l.role === "HUB") ?? locations[0];
+    if (!hub) return; // nothing configured → draw nothing, invent nothing
 
     loadMapsApi(apiKey)
       .then(() => {
         if (cancelled || !ref.current) return;
         const maps = (globalThis as MapsNamespace).google?.maps;
         if (!maps) throw new Error("Google Maps namespace unavailable");
-        const hub = locationFor("HUB")!;
 
         const map = new maps.Map(ref.current, {
-          center: { lat: hub.lat, lng: hub.lng },
+          center: { lat: hub.lat, lng: hub.lon },
           zoom: 11,
           disableDefaultUI: true,
           zoomControl: true,
@@ -109,37 +161,45 @@ export function PlannedDispatchMap({ stops, label, apiKey, onFailure }: PlannedD
 
         const bounds = new maps.LatLngBounds();
 
-        // Hub marker.
-        new maps.Marker({
-          map,
-          position: { lat: hub.lat, lng: hub.lng },
-          title: hub.label,
-          label: { text: "H", color: "#ffffff", fontSize: "12px", fontWeight: "700" },
-          icon: {
-            path: maps.SymbolPath.CIRCLE,
-            scale: 13,
-            fillColor: "#16323b",
-            fillOpacity: 1,
-            strokeColor: "#ffffff",
-            strokeWeight: 2,
-          },
-        });
-        bounds.extend({ lat: hub.lat, lng: hub.lng });
+        // Every configured reference location is drawn, whether or not a
+        // stop currently references it: the six sites are the tenant's
+        // configured geography, not a function of today's manifest.
+        for (const loc of locations) {
+          const isHub = loc.role === "HUB";
+          new maps.Marker({
+            map,
+            position: { lat: loc.lat, lng: loc.lon },
+            title: `${loc.name}${loc.address ? ` · ${loc.address}` : ""} · configured reference location`,
+            label: isHub
+              ? { text: "H", color: "#ffffff", fontSize: "12px", fontWeight: "700" }
+              : undefined,
+            icon: {
+              path: maps.SymbolPath.CIRCLE,
+              scale: isHub ? 13 : 8,
+              fillColor: isHub ? "#16323b" : "#7d8d92",
+              fillOpacity: 1,
+              strokeColor: "#ffffff",
+              strokeWeight: 2,
+            },
+          });
+          bounds.extend({ lat: loc.lat, lng: loc.lon });
+        }
 
-        // One numbered marker per planned stop, plus a hub→facility path.
+        // One numbered marker per planned stop, over its configured site,
+        // plus a hub→site line. The line is a configured connection, not a
+        // driven route: no route geometry exists at any cursor.
         const drawn = new Set<string>();
         for (const stop of stops) {
-          const loc: ReferenceLocation | undefined =
-            locationFor(stop.kind === "PARTNER" ? "STAGING" : stop.agency) ?? locationFor(stop.agency);
-          if (!loc) continue; // no configured location → draw nothing, invent nothing
+          const loc = locationForStop(stop, locations);
+          if (!loc) continue;
 
           const style = STYLE[stop.kind];
-          const pos = { lat: loc.lat, lng: loc.lng };
+          const pos = { lat: loc.lat, lng: loc.lon };
 
           new maps.Marker({
             map,
             position: pos,
-            title: `${stop.orderId} · ${stop.agency ?? loc.label}${stop.cases != null ? ` · ${stop.cases} cases` : ""}`,
+            title: `${stop.orderId} · ${loc.name}${stop.cases != null ? ` · ${stop.cases} cases` : ""}`,
             label: { text: String(stop.sequence), color: "#ffffff", fontSize: "11px", fontWeight: "700" },
             icon: {
               path: maps.SymbolPath.CIRCLE,
@@ -151,15 +211,15 @@ export function PlannedDispatchMap({ stops, label, apiKey, onFailure }: PlannedD
             },
           });
 
-          const key = `${stop.kind}:${loc.key}`;
+          const key = `${stop.kind}:${loc.id}`;
           if (!drawn.has(key)) {
             drawn.add(key);
-            // Planned, not travelled. The superseded original plan is a
-            // muted solid line; live plans are dashed to read as intent.
+            // Configured connection, not travelled. The superseded original
+            // plan is a muted solid line; live plans are dashed as intent.
             const dashed = stop.kind !== "ORIGINAL";
             new maps.Polyline({
               map,
-              path: [{ lat: hub.lat, lng: hub.lng }, pos],
+              path: [{ lat: hub.lat, lng: hub.lon }, pos],
               strokeColor: style.stroke,
               strokeOpacity: dashed ? 0 : 0.45,
               strokeWeight: dashed ? 4 : 3,
@@ -176,8 +236,6 @@ export function PlannedDispatchMap({ stops, label, apiKey, onFailure }: PlannedD
           }
           bounds.extend(pos);
         }
-
-        mapRef.current = map;
 
         if (!bounds.isEmpty()) map.fitBounds(bounds, 56);
 
@@ -197,6 +255,7 @@ export function PlannedDispatchMap({ stops, label, apiKey, onFailure }: PlannedD
       })
       .catch(() => {
         if (cancelled) return;
+        // A degraded Maps runtime costs us the map, never the page.
         setFailed(true);
         onFailure();
       });
@@ -204,15 +263,8 @@ export function PlannedDispatchMap({ stops, label, apiKey, onFailure }: PlannedD
     return () => {
       cancelled = true;
     };
-  }, [apiKey, stops, onFailure]);
-
-  // Telemetry ticks move existing markers. The map, its planned routes
-  // and its facility markers are untouched.
-  //
-  // This effect runs OUTSIDE the loader promise, so a throw here would
-  // escape to React and blank the whole panel — the exact failure the
-  // schematic fallback exists to prevent. A degraded Maps runtime must
-  // cost us the map, never the page.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [apiKey, stopsKey, locationsKey]);
 
   if (failed) return null;
 
@@ -234,8 +286,13 @@ export function PlannedDispatchMap({ stops, label, apiKey, onFailure }: PlannedD
           ◆ {label}
         </span>
       </div>
-      <div className="mono" style={css("font-size:10px;color:#93a1a6;margin-top:5px;letter-spacing:.02em")}>
-        Facility coordinates are DEMO_TENANT_LOCATION_REFERENCE configuration for {DEMO_TENANT_LOCATIONS.length} sites.
+      <div
+        className="mono"
+        data-testid="map-location-disclosure"
+        style={css("font-size:10px;color:#93a1a6;margin-top:5px;letter-spacing:.02em;line-height:1.5")}
+      >
+        {locations.length} configured reference locations · no live GPS
+        {disclosure ? ` — ${disclosure}` : ""}
       </div>
     </div>
   );

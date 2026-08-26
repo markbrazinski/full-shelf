@@ -29,6 +29,12 @@ export default defineConfig({
     env: {
       VITE_DATA_SOURCE: "deterministic_replay",
       VITE_ORCHESTRATOR_URL: replayUrl,
+      // The browser Maps key is supplied by the environment and is never
+      // committed. Absent is a legitimate state: the UI falls back to the
+      // truthful deterministic schematic and the suite asserts that path.
+      ...(process.env.VITE_GOOGLE_MAPS_API_KEY
+        ? { VITE_GOOGLE_MAPS_API_KEY: process.env.VITE_GOOGLE_MAPS_API_KEY }
+        : {}),
     },
   },
 });

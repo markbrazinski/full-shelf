@@ -1,19 +1,31 @@
 import { useCallback, useMemo, useState } from "react";
 import { css } from "../styles/css";
-import type { CurrentDayView, DispatchStop, DispatchView } from "../types/fullShelf";
+import type { CurrentDayView, DispatchStop, DispatchView, MapLocation } from "../types/fullShelf";
 import { PlannedDispatchMap, type PlannedStop } from "./PlannedDispatchMap";
+import { schematicPoints } from "./schematicPoints";
 
 interface Props {
   currentDay: CurrentDayView;
   dispatch: DispatchView;
   mapsApiKey?: string;
   plannedStops: PlannedStop[];
+  /** The runtime's six configured reference locations. */
+  locations: MapLocation[];
+  /** The runtime's own disclosure, rendered verbatim. */
+  locationDisclosure?: string;
 }
 
-const STOP_POINT: Record<string, [number, number]> = {
-  "Agency 01": [22, 20], "Agency 02": [72, 18], "Agency 03": [80, 72],
-  "Agency 04": [48, 78], "Agency 05": [17, 70], STAGING: [58, 48],
-};
+/** Match a stop to a configured location on projected identity only. */
+function locationForStop(
+  stop: { orderId: string; agency: string | null },
+  locations: MapLocation[],
+): MapLocation | undefined {
+  const byOrder = locations.find((l) => l.orderIds?.includes(stop.orderId));
+  if (byOrder) return byOrder;
+  if (!stop.agency) return undefined;
+  const agencyId = stop.agency.trim().toUpperCase().replace(/\s+/g, "-");
+  return locations.find((l) => l.agencyId === agencyId);
+}
 
 const TONE = {
   delivered: { accent: "#3f7d5a", bg: "#e8f2ec", fg: "#2f6748" },
@@ -24,10 +36,10 @@ const TONE = {
   recall: { accent: "#a23b2b", bg: "#f5e8e4", fg: "#8a2f22" },
 } as const;
 
-export function TodayMapWorkspace({ currentDay, dispatch, mapsApiKey, plannedStops }: Props) {
+export function TodayMapWorkspace({ currentDay, dispatch, mapsApiKey, plannedStops, locations, locationDisclosure }: Props) {
   const [mapFailed, setMapFailed] = useState(false);
   const onMapFailure = useCallback(() => setMapFailed(true), []);
-  const showGoogleMap = !!mapsApiKey && plannedStops.length > 0 && !mapFailed;
+  const showGoogleMap = !!mapsApiKey && locations.length > 0 && !mapFailed;
   const googleMapLabel = "GOOGLE MAPS · CONFIGURED REFERENCE LOCATIONS · NOT LIVE GPS";
   const fallbackLabel = "DETERMINISTIC SCHEMATIC · CONFIGURED REFERENCE LOCATIONS · NOT LIVE GPS";
   const manifests = useMemo(() => {
@@ -77,9 +89,21 @@ export function TodayMapWorkspace({ currentDay, dispatch, mapsApiKey, plannedSto
           </div>
           <div style={css("padding:10px;background:#f5f6f2") }>
             {showGoogleMap ? (
-              <PlannedDispatchMap stops={plannedStops} label={googleMapLabel} apiKey={mapsApiKey!} onFailure={onMapFailure} />
+              <PlannedDispatchMap
+                stops={plannedStops}
+                locations={locations}
+                disclosure={locationDisclosure}
+                label={googleMapLabel}
+                apiKey={mapsApiKey!}
+                onFailure={onMapFailure}
+              />
             ) : (
-              <RouteSchematic stops={Object.values(dispatch.stops)} provenance={fallbackLabel} />
+              <RouteSchematic
+                stops={Object.values(dispatch.stops)}
+                locations={locations}
+                disclosure={locationDisclosure}
+                provenance={fallbackLabel}
+              />
             )}
           </div>
         </div>
@@ -125,16 +149,56 @@ function Manifest({ vehicleId, label, stops }: { vehicleId: string; label: strin
   </div>;
 }
 
-function RouteSchematic({ stops, provenance }: { stops: DispatchStop[]; provenance: string }) {
+function RouteSchematic({
+  stops,
+  locations,
+  disclosure,
+  provenance,
+}: {
+  stops: DispatchStop[];
+  locations: MapLocation[];
+  disclosure?: string;
+  provenance: string;
+}) {
+  const points = schematicPoints(locations);
+  const hub = locations.find((l) => l.role === "HUB");
+  const hubPoint = (hub && points.get(hub.id)) ?? [50, 50];
+
+  // A stop with no configured location is dropped rather than placed at
+  // an invented coordinate.
+  const placed = stops
+    .map((stop) => {
+      const loc = locationForStop(stop, locations);
+      const point = loc && points.get(loc.id);
+      return point ? { stop, loc: loc!, point } : null;
+    })
+    .filter((x): x is { stop: DispatchStop; loc: MapLocation; point: [number, number] } => x !== null);
+
   return <div>
     <div data-testid="dispatch-svg-schematic" style={css("position:relative;height:430px;border:1px solid #d6ded9;border-radius:8px;overflow:hidden;background:#e9ede8") }>
       <svg viewBox="0 0 100 100" preserveAspectRatio="none" style={css("position:absolute;inset:0;width:100%;height:100%") }>
-        <rect width="100" height="100" fill="#e9ede8" /><g stroke="#dce3dd" strokeWidth="1.8"><path d="M0 18 H100 M0 50 H100 M0 82 H100" /><path d="M13 0 V100 M39 0 V100 M68 0 V100 M90 0 V100" /><path d="M0 32 L100 65 M0 72 L88 0" /></g>
-        {stops.map((stop) => { const point = STOP_POINT[stop.agency ?? "STAGING"] ?? STOP_POINT.STAGING; const tone = TONE[stop.tone]; return <line key={stop.orderId} x1="43" y1="48" x2={point[0]} y2={point[1]} stroke={tone.accent} strokeWidth=".65" strokeDasharray={stop.tone === "delivered" ? undefined : "1.6 1.3"} opacity=".78" />; })}
+        <rect width="100" height="100" fill="#e9ede8" /><g stroke="#dce3dd" strokeWidth="1.8"><path d="M0 18 H100 M0 50 H100 M0 82 H100" /><path d="M13 0 V100 M39 0 V100 M68 0 V100 M90 0 V100" /></g>
+        {placed.map(({ stop, point }) => {
+          const tone = TONE[stop.tone];
+          return <line key={stop.orderId} x1={hubPoint[0]} y1={hubPoint[1]} x2={point[0]} y2={point[1]} stroke={tone.accent} strokeWidth=".65" strokeDasharray={stop.tone === "delivered" ? undefined : "1.6 1.3"} opacity=".78" />;
+        })}
       </svg>
-      <div style={css("position:absolute;left:43%;top:48%;transform:translate(-50%,-50%);background:#16323b;color:#fff;border-radius:8px;padding:8px 10px;box-shadow:0 3px 10px rgba(22,50,59,.25)") }><div className="mono" style={css("font-size:9px;font-weight:700;letter-spacing:.08em")}>HUB</div><div style={css("font-size:10px;color:#b8c9ce;margin-top:2px")}>Food Bank Warehouse</div></div>
-      {stops.map((stop, index) => { const point = STOP_POINT[stop.agency ?? "STAGING"] ?? STOP_POINT.STAGING; const tone = TONE[stop.tone]; return <div key={stop.orderId} style={css(`position:absolute;left:${point[0]}%;top:${point[1]}%;transform:translate(-50%,-50%);display:flex;align-items:center;gap:7px;background:#fff;border:1px solid #d2d9d4;border-left:4px solid ${tone.accent};border-radius:8px;padding:7px 9px;box-shadow:0 2px 7px rgba(31,51,57,.13);white-space:nowrap`)}><span className="mono" style={css(`width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:${tone.accent};color:#fff;font-size:8px;font-weight:700`)}>{stop.sequence ?? index + 1}</span><div><div style={css("font-size:10px;font-weight:700;color:#20353c")}>{stop.orderId} · {stop.agency ?? "Pickup staging"}</div><div className="mono" style={css(`font-size:8.5px;color:${tone.fg};margin-top:2px`) }>{stop.cases ?? "—"} cases</div></div></div>; })}
+      {hub ? (
+        <div style={css(`position:absolute;left:${hubPoint[0]}%;top:${hubPoint[1]}%;transform:translate(-50%,-50%);background:#16323b;color:#fff;border-radius:8px;padding:8px 10px;box-shadow:0 3px 10px rgba(22,50,59,.25);white-space:nowrap`) }>
+          <div className="mono" style={css("font-size:9px;font-weight:700;letter-spacing:.08em")}>HUB</div>
+          <div style={css("font-size:10px;color:#b8c9ce;margin-top:2px")}>{hub.name}</div>
+        </div>
+      ) : null}
+      {placed.map(({ stop, loc, point }, index) => {
+        const tone = TONE[stop.tone];
+        return <div key={stop.orderId} style={css(`position:absolute;left:${point[0]}%;top:${point[1]}%;transform:translate(-50%,-50%);display:flex;align-items:center;gap:7px;background:#fff;border:1px solid #d2d9d4;border-left:4px solid ${tone.accent};border-radius:8px;padding:7px 9px;box-shadow:0 2px 7px rgba(31,51,57,.13);max-width:190px`)}><span className="mono" style={css(`width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:${tone.accent};color:#fff;font-size:8px;font-weight:700`)}>{stop.sequence ?? index + 1}</span><div style={css("min-width:0")}><div style={css("font-size:10px;font-weight:700;color:#20353c;overflow:hidden;text-overflow:ellipsis;white-space:nowrap")}>{stop.orderId} · {loc.name}</div><div className="mono" style={css(`font-size:8.5px;color:${tone.fg};margin-top:2px`) }>{stop.cases ?? "—"} cases</div></div></div>;
+      })}
     </div>
-    <div className="mono" data-testid="schematic-provenance-label" style={css("font-size:9px;color:#75878c;margin:7px 2px 0;letter-spacing:.02em")}>{provenance}</div>
+    <div className="mono" data-testid="schematic-provenance-label" style={css("font-size:9px;color:#75878c;margin:7px 2px 0;letter-spacing:.02em;line-height:1.5")}>
+      {provenance}
+    </div>
+    <div className="mono" data-testid="map-location-disclosure" style={css("font-size:9px;color:#93a1a6;margin:3px 2px 0;letter-spacing:.02em;line-height:1.5")}>
+      {locations.length} configured reference locations · no live GPS{disclosure ? ` — ${disclosure}` : ""}
+    </div>
   </div>;
 }

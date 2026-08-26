@@ -14,13 +14,16 @@ export interface SessionSnapshot {
 
 export interface EventEnvelope {
   event_id: string;
-  sequence: number;
+  /** Canonical integer, or a `b`-prefixed branch ordinal. */
+  sequence: number | string;
   effective_at: string;
   event_type: string;
-  action_required: boolean;
-  severity: string;
+  authority?: string;
   activity_entry: {
+    severity: string;
     headline: string;
+    detail: string;
+    action_required: boolean;
   };
 }
 
@@ -28,6 +31,15 @@ export interface AdvanceResult {
   ok: boolean;
   status?: number;
   message?: string; // "HUMAN_APPROVAL_REQUIRED", "REPLAY_COMPLETE", "CANONICAL_ADVANCE_BLOCKED_IN_BRANCH"
+}
+
+export interface BranchResult {
+  branch: "vague" | "complete";
+  label: string;
+  custody: { unique: number; confirmed: number; unconfirmed: number };
+  domain_mutations: number;
+  evidence_mutations: number;
+  events: EventEnvelope[];
 }
 
 interface GoldenRuntimeConfig {
@@ -51,14 +63,26 @@ export class GoldenRuntimeDataSource {
     return await res.json();
   }
 
-  async getProjection(sessionId: string): Promise<FullShelfProjection> {
+  async getProjection(sessionId: string, observedCursor?: number): Promise<FullShelfProjection> {
     const res = await fetch(
       `${this.config.baseUrl}/api/v1/replay/sessions/${sessionId}/projection`
     );
     if (!res.ok) throw new Error(`Failed to get projection: ${res.status}`);
     const raw = await res.json();
-    const normalized = normalize(raw);
-    return normalized;
+    return normalize(raw, observedCursor);
+  }
+
+  /** Session state: cursor, mode, approval gate, branch. */
+  async getState(sessionId: string): Promise<{
+    cursor: number;
+    mode: string;
+    approval_required: boolean;
+    approved: boolean;
+    branch: string | null;
+  }> {
+    const res = await fetch(`${this.config.baseUrl}/api/v1/replay/sessions/${sessionId}`);
+    if (!res.ok) throw new Error(`Failed to get state: ${res.status}`);
+    return await res.json();
   }
 
   subscribe(
@@ -171,18 +195,16 @@ export class GoldenRuntimeDataSource {
     throw new Error(`Advance failed: ${res.status}`);
   }
 
+  /**
+   * Submit the runtime's own `approval_payload_template` verbatim, with
+   * only the client-generated idempotency key added. The frontend never
+   * re-derives the plan diff hash or re-shapes an action: altering any
+   * bound value invalidates the approval and commits zero mutations.
+   */
   async approve(
     sessionId: string,
-    binding: {
-      plan_id: string | null;
-      incident_id: string | null;
-      expected_revision: string | null;
-      target_revision: string | null;
-      actions: string[];
-      plan_diff_hash: string | null;
-      idempotency_key: string;
-    }
-  ): Promise<void> {
+    binding: Record<string, unknown>
+  ): Promise<{ receipt?: { receipt_id?: string }; duplicate?: boolean }> {
     const res = await fetch(
       `${this.config.baseUrl}/api/v1/replay/sessions/${sessionId}/approve`,
       {
@@ -191,13 +213,21 @@ export class GoldenRuntimeDataSource {
         body: JSON.stringify(binding),
       }
     );
-    if (!res.ok) throw new Error(`Approval failed: ${res.status}`);
+    if (!res.ok) {
+      const detail = await res.json().catch(() => ({}));
+      throw new Error(`Approval failed: ${res.status} ${detail.detail ?? ""}`.trim());
+    }
+    return await res.json();
   }
 
+  /**
+   * Enter an isolated proof branch. Refused with
+   * `409 PROOF_BRANCH_NOT_AVAILABLE_YET` before event 22.
+   */
   async enterBranch(
     sessionId: string,
     proofType: "vague" | "complete"
-  ): Promise<void> {
+  ): Promise<BranchResult> {
     const res = await fetch(
       `${this.config.baseUrl}/api/v1/replay/sessions/${sessionId}/branch`,
       {
@@ -206,20 +236,20 @@ export class GoldenRuntimeDataSource {
         body: JSON.stringify({ proof: proofType }),
       }
     );
-    if (!res.ok) throw new Error(`Failed to enter branch: ${res.status}`);
+    if (!res.ok) {
+      const detail = await res.json().catch(() => ({}));
+      throw new Error(detail.detail ?? `Failed to enter branch: ${res.status}`);
+    }
+    return await res.json();
   }
 
-  async exitBranch(
-    sessionId: string
-  ): Promise<{ projection: FullShelfProjection }> {
+  /** Return to canonical. The runtime restores byte-identical state. */
+  async exitBranch(sessionId: string): Promise<void> {
     const res = await fetch(
       `${this.config.baseUrl}/api/v1/replay/sessions/${sessionId}/branch`,
       { method: "DELETE" }
     );
     if (!res.ok) throw new Error(`Failed to exit branch: ${res.status}`);
-    const body = await res.json();
-    const normalized = normalize(body.projection);
-    return { projection: normalized };
   }
 
   async reset(sessionId: string): Promise<SessionSnapshot> {

@@ -1,4 +1,32 @@
 // =====================================================================
+// SUPERSEDED — retained as a record, NOT run.
+// ---------------------------------------------------------------------
+// This suite verified the beat-stepped UI that preceded the Golden
+// Runtime Controller session transport. It drives the app with
+// ArrowRight keypresses and asserts selectors that the session-driven
+// architecture no longer has:
+//
+//   data-presentation-mode="film"   the beat/film wrapper
+//   sidecar-quiet                   ActivitySidecar (replaced by the
+//                                   chronological FleetActivityRail)
+//   tab-custody / tab-recovery      renamed incident-tab-*
+//   moment-* / ?beat=               beat navigation, removed entirely
+//
+// It also cannot hold a cursor: the runtime autoplays committed events,
+// so a keypress-stepped suite races real progression.
+//
+// Its substantive CONTRACT claims — 96/88/8 custody, 58/60 capacity,
+// rev07→rev08, PARTIALLY_CONTAINED, SF-A03's 20-case shortfall,
+// DRAFT_WITH_CONSTRAINTS, the vague/complete partner branches, the
+// refusal, and the no-live-GPS rule — are all asserted, against the real
+// runtime and real UI, in e2e/golden-journey.spec.ts.
+//
+// Nothing here was weakened to pass. The file is renamed out of the
+// Playwright glob so a superseded harness cannot be mistaken for a
+// failing product regression.
+// =====================================================================
+
+// =====================================================================
 // Full Shelf v6.1 — acceptance verification at 1600x900
 // ---------------------------------------------------------------------
 // Runs against the REAL localhost replay server and a real Vite dev

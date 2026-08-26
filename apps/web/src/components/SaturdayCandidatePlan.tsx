@@ -12,7 +12,8 @@
 // =====================================================================
 
 import { css } from "../styles/css";
-import type { TomorrowView } from "../types/fullShelf";
+import type { MapLocation, TomorrowView } from "../types/fullShelf";
+import { schematicPoints } from "./schematicPoints";
 
 const PANEL = "background:#16323b;border-radius:12px;padding:12px 14px;display:flex;flex-direction:column;color:#dce7e9;min-height:0";
 
@@ -58,158 +59,133 @@ function UnavailablePanel({ reason }: { reason: string | null }) {
   );
 }
 
-function CandidateMap({ view }: { view: TomorrowView }) {
+/**
+ * Saturday's candidate stops over the SAME six configured reference
+ * locations the Today map uses.
+ *
+ * There is deliberately no drawn route here. No route geometry, polyline,
+ * distance, ETA or position exists at any cursor, so a candidate stop is
+ * placed at its configured site and connected to the hub by a dashed
+ * assignment line that reads as intent, never as travel. Nothing on this
+ * surface is telemetry: the runtime reports no position for any vehicle.
+ */
+function CandidateMap({ view, locations }: { view: TomorrowView; locations: MapLocation[] }) {
   const stops = view.candidateVehicles.flatMap((v) =>
     v.stops.map((s) => ({ ...s, vehicleId: v.vehicleId })),
   );
-  // Positions are laid out to fit the viewBox for any stop count, so a
-  // third candidate stop cannot walk off the right edge. Geometry is
-  // presentational; the facts are sequence, agency and cases.
-  const at = (i: number) => {
-    const span = Math.max(stops.length - 1, 1);
-    return { x: 330 + (i - (stops.length - 1) / 2) * Math.min(150, 520 / span), y: 250 - i * 60 };
-  };
+
+  const points = schematicPoints(locations);
+  const hub = locations.find((l) => l.role === "HUB");
+  const hubPoint = (hub && points.get(hub.id)) ?? [50, 50];
+
+  // A candidate with no configured location is dropped, never placed at
+  // an invented coordinate.
+  const placed = stops
+    .map((stop) => {
+      const loc = locations.find(
+        (l) => l.agencyId === stop.agencyId || l.orderIds?.includes(stop.orderId),
+      );
+      const point = loc && points.get(loc.id);
+      return point ? { stop, loc: loc!, point } : null;
+    })
+    .filter((x): x is NonNullable<typeof x> => x !== null);
+
   return (
     <div style={css(PANEL)} data-testid="saturday-candidate-map">
-      <div style={css("flex:none;display:flex;align-items:baseline;justify-content:space-between")}>
+      <div style={css("flex:none;display:flex;align-items:baseline;justify-content:space-between;gap:10px")}>
         <span style={css("font-size:12.5px;font-weight:600;color:#eef4f4;white-space:nowrap")}>
-          Candidate dispatch map
+          Candidate stops
         </span>
         <span
           className="mono"
-          style={css("font-size:8px;letter-spacing:.04em;color:#7e939c;margin-left:10px")}
+          data-testid="saturday-map-provenance"
+          style={css("font-size:8px;letter-spacing:.04em;color:#7e939c;text-align:right")}
         >
-          SIMULATED TELEMETRY
+          CONFIGURED REFERENCE LOCATIONS · NO LIVE GPS
         </span>
       </div>
+
       <div
         style={css(
-          "flex:1;min-height:0;margin-top:8px;border-radius:9px;overflow:hidden;position:relative;background:#dfe5df",
+          "flex:1;min-height:0;margin-top:8px;border-radius:9px;overflow:hidden;position:relative;background:#12292f;border:1px solid #2b4c56",
         )}
       >
-        <svg
-          viewBox="0 0 660 430"
-          width="100%"
-          height="100%"
-          preserveAspectRatio="xMidYMid slice"
-          role="img"
-          aria-labelledby="satmap"
-          style={css("display:block")}
-        >
-          <title id="satmap">
-            Saturday candidate dispatch map — hub, candidate stops, and unassigned demand. Candidate
-            positions are simulated, not live GPS.
-          </title>
-          <g fill="#e8ede6">
-            <rect x="20" y="18" width="150" height="86" rx="4" />
-            <rect x="182" y="18" width="150" height="86" rx="4" />
-            <rect x="344" y="18" width="140" height="86" rx="4" />
-            <rect x="496" y="18" width="150" height="86" rx="4" />
-            <rect x="20" y="118" width="150" height="96" rx="4" />
-            <rect x="344" y="118" width="140" height="96" rx="4" />
-            <rect x="496" y="118" width="150" height="96" rx="4" />
-            <rect x="20" y="228" width="150" height="90" rx="4" />
-            <rect x="182" y="228" width="150" height="90" rx="4" />
-            <rect x="344" y="228" width="140" height="90" rx="4" />
-            <rect x="20" y="332" width="150" height="80" rx="4" />
-            <rect x="182" y="332" width="150" height="80" rx="4" />
-            <rect x="344" y="332" width="140" height="80" rx="4" />
-            <rect x="496" y="332" width="150" height="80" rx="4" />
+        <svg viewBox="0 0 100 100" preserveAspectRatio="none" style={css("position:absolute;inset:0;width:100%;height:100%")}>
+          <g stroke="#1e3a42" strokeWidth="1.4">
+            <path d="M0 25 H100 M0 50 H100 M0 75 H100" />
+            <path d="M25 0 V100 M50 0 V100 M75 0 V100" />
           </g>
-          <rect x="182" y="118" width="150" height="96" rx="6" fill="#d6e6cf" />
-          <text x="257" y="170" textAnchor="middle" fill="#8fae82" fontSize="9" fontFamily="IBM Plex Mono">
-            GREENWAY
-          </text>
-          <path d="M496 228 L646 246 L646 318 L496 300 Z" fill="#cfe0e6" />
-          <text x="576" y="270" textAnchor="middle" fill="#8fb0bb" fontSize="9" fontFamily="IBM Plex Mono">
-            RIVER
-          </text>
-          {/* Candidate route: dashed, because it is a draft, not a commitment. */}
-          {stops.length > 0 ? (
-            <path
-              d={`M176 268 ${stops.map((_, i) => `L${at(i).x} ${at(i).y}`).join(" ")}`}
-              fill="none"
+          {placed.map(({ stop, point }) => (
+            <line
+              key={stop.orderId}
+              x1={hubPoint[0]}
+              y1={hubPoint[1]}
+              x2={point[0]}
+              y2={point[1]}
               stroke="#4f97b0"
-              strokeWidth="3.5"
-              strokeDasharray="7 5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
+              strokeWidth=".7"
+              strokeDasharray="1.8 1.4"
+              opacity=".8"
             />
-          ) : null}
-          <g>
-            <rect x="158" y="252" width="36" height="32" rx="6" fill="#16323b" stroke="#4f97b0" strokeWidth="2" />
-            <text
-              x="176"
-              y="272"
-              textAnchor="middle"
-              fill="#eef4f4"
-              fontSize="9"
-              fontFamily="IBM Plex Mono"
-              fontWeight="700"
-            >
-              HUB
-            </text>
-          </g>
-          <g fontFamily="IBM Plex Mono">
-            {stops.map((s, i) => {
-              const { x, y } = at(i);
-              return (
-                <g key={s.orderId}>
-                  <circle
-                    cx={x}
-                    cy={y}
-                    r="13"
-                    fill="#16323b"
-                    stroke="#fff"
-                    strokeWidth="2"
-                    strokeDasharray="4 3"
-                  />
-                  <text x={x} y={y + 4} textAnchor="middle" fill="#fff" fontSize="10" fontWeight="700">
-                    {s.sequence}
-                  </text>
-                  <text x={x} y={y + 26} textAnchor="middle" fill="#3a4a50" fontSize="8">
-                    {s.agency ?? "—"} · {s.cases ?? "—"}
-                  </text>
-                </g>
-              );
-            })}
-            {view.unassignedDemand.map((u, i) => (
-              <g key={u.shortfallId}>
-                <circle
-                  cx={250 + i * 110}
-                  cy={330}
-                  r="15"
-                  fill="none"
-                  stroke="#c98a2e"
-                  strokeWidth="2.5"
-                  strokeDasharray="5 4"
-                />
-                <text
-                  x={250 + i * 110}
-                  y={334}
-                  textAnchor="middle"
-                  fill="#8a5a12"
-                  fontSize="9"
-                  fontWeight="700"
-                >
-                  !
-                </text>
-                <text x={250 + i * 110} y={358} textAnchor="middle" fill="#8a5a12" fontSize="8.5">
-                  unassigned · {u.cases ?? "—"}
-                </text>
-              </g>
-            ))}
-          </g>
+          ))}
         </svg>
+
+        {hub ? (
+          <div
+            style={css(
+              `position:absolute;left:${hubPoint[0]}%;top:${hubPoint[1]}%;transform:translate(-50%,-50%);` +
+                "background:#16323b;border:1px solid #4f97b0;border-radius:7px;padding:5px 8px;white-space:nowrap",
+            )}
+          >
+            <div className="mono" style={css("font-size:8px;font-weight:700;letter-spacing:.07em;color:#eef4f4")}>HUB</div>
+          </div>
+        ) : null}
+
+        {placed.map(({ stop, loc, point }) => (
+          <div
+            key={stop.orderId}
+            data-testid="saturday-candidate-stop"
+            style={css(
+              `position:absolute;left:${point[0]}%;top:${point[1]}%;transform:translate(-50%,-50%);` +
+                "display:flex;align-items:center;gap:6px;background:#173139;border:1px dashed #4f97b0;" +
+                "border-radius:7px;padding:5px 8px;white-space:nowrap",
+            )}
+          >
+            <span
+              className="mono"
+              style={css(
+                "width:17px;height:17px;border-radius:50%;display:flex;align-items:center;justify-content:center;" +
+                  "background:#16323b;border:1px dashed #fff;color:#fff;font-size:7.5px;font-weight:700;flex:none",
+              )}
+            >
+              {stop.sequence}
+            </span>
+            <div>
+              <div style={css("font-size:9px;font-weight:600;color:#dce7e9")}>{loc.name}</div>
+              <div className="mono" style={css("font-size:7.5px;color:#9fb4ba;margin-top:1px")}>
+                {stop.cases ?? "—"} cases · candidate
+              </div>
+            </div>
+          </div>
+        ))}
       </div>
-      <div className="mono" style={css("flex:none;font-size:8.5px;color:#7e939c;margin-top:7px;line-height:1.4")}>
+
+      <div className="mono" style={css("flex:none;font-size:8.5px;color:#7e939c;margin-top:7px;line-height:1.45")}>
         Constrained draft · candidate assignments are provisional and carry no delivery guarantee.
+        No route, distance, ETA or vehicle position is shown, because none exists.
       </div>
     </div>
   );
 }
 
-export function SaturdayCandidatePlan({ view }: { view: TomorrowView }) {
+export function SaturdayCandidatePlan({
+  view,
+  locations = [],
+}: {
+  view: TomorrowView;
+  /** The runtime's six configured reference locations. */
+  locations?: MapLocation[];
+}) {
   return (
     <div style={css("flex:1;min-height:0;display:flex;flex-direction:column;margin-top:12px")} data-enter="">
       <div style={css("background:#f9f4f0;border:1px solid #e3c3ba;border-left:4px solid #a23b2b;border-radius:10px;padding:14px 16px;margin-bottom:14px")}>
@@ -245,7 +221,11 @@ export function SaturdayCandidatePlan({ view }: { view: TomorrowView }) {
           "flex:1;min-height:0;display:grid;grid-template-columns:1.15fr 1fr;gap:14px;margin-top:12px",
         )}
       >
-        {view.available ? <CandidateMap view={view} /> : <UnavailablePanel reason={view.unavailableReason} />}
+        {view.available ? (
+          <CandidateMap view={view} locations={locations} />
+        ) : (
+          <UnavailablePanel reason={view.unavailableReason} />
+        )}
 
         <div style={css("min-height:0;display:flex;flex-direction:column;gap:10px;overflow:auto")}>
           {view.available

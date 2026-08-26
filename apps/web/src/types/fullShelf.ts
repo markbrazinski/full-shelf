@@ -490,6 +490,15 @@ export interface RepairProposalView {
   authority: string;
   approvalRequired: boolean;
   activationSupported: boolean;
+  /** "36 + 22 = 58/60" — the runtime's own arithmetic, never re-derived. */
+  capacityStatement?: string | null;
+  /** "36 + 22 + 20 = 78 exceeds 60" — why both orders cannot fit. */
+  infeasibilityStatement?: string | null;
+  /** Submit-ready binding from the runtime; only idempotency_key is ours. */
+  approvalPayloadTemplate?: Record<string, unknown> | null;
+  /** PROPOSED at event 8; APPROVED at event 9. */
+  status?: string;
+  approvalReceiptId?: string | null;
 }
 
 export interface RecallSourceView {
@@ -540,6 +549,28 @@ export interface PartnerEvidenceProofView {
   isolatedProof: true;
 }
 
+/**
+ * A vehicle as the runtime reports it. `alarm.active` is a reported
+ * mechanical fault with its own raising event — never inferred from a
+ * position, of which none exists (ADR-010).
+ */
+export interface FleetVehicleView {
+  vehicleId: string;
+  displayName: string;
+  status: string;
+  isOperational: boolean;
+  refrigerationCapable: boolean;
+  refrigerationOperational: boolean;
+  capacityCases: number | null;
+  manifestCases: number | null;
+  remainingCases: number | null;
+  assignedOrders: string[];
+  revision: string | null;
+  alarm: { active: boolean; kind: string | null; incidentId: string | null; raisedAtEvent: number | null };
+  /** Always live_gps:false / position_available:false in this runtime. */
+  telemetry: { liveGps: boolean; positionAvailable: boolean; basis: string; disclosure: string } | null;
+}
+
 export interface MapLocation {
   id: string;
   name: string;
@@ -547,11 +578,26 @@ export interface MapLocation {
   lon: number;
   role: string;
   agencyId?: string | null;
+  address?: string | null;
+  custodyNodeId?: string | null;
+  orderIds?: string[];
 }
 
+/**
+ * The event-19 ADVISORY recovery. It is NOT `RecoveryView`, which is the
+ * event-20 COMMITTED allocation. `mutationApplied` is false here by
+ * definition: the runtime states the proposal commits at a later event.
+ */
 export interface RecoveryProposalView {
   question: string;
   headline: string;
+  status: string;
+  /** Always false at event 19. The proposal has mutated nothing. */
+  mutationApplied: boolean;
+  /** The event at which this proposal becomes committed. */
+  commitsAtEvent: number | null;
+  safeLotId: string | null;
+  allocations: { agencyId: string; cases: number; status: string }[];
   items: RecoveryItem[];
   safeReplacements: { total: number; breakdown: string };
   shortfall: { value: number; agency: string; note: string };
@@ -568,6 +614,10 @@ export interface FullShelfProjection {
   recallSource?: RecallSourceView;
   partnerEvidence?: PartnerEvidenceProofView[];
   referenceLocations?: MapLocation[];
+  /** The runtime's own map disclosure. Rendered verbatim wherever the map is. */
+  locationDisclosure?: string;
+  /** `current_day.vehicles` — present from event 5. */
+  fleet?: FleetVehicleView[];
   branchState?: { authority: "ISOLATED"; proofLabel: string };
   currentDay: CurrentDayView;
   incident?: IncidentView;
