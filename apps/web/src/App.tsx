@@ -52,10 +52,7 @@ export default function App() {
         setProjection(proj);
         setLoading(false);
 
-        // Start autoplay
-        await backend.start(snap.session_id, 900);
-
-        // Subscribe to SSE — every event triggers projection re-fetch
+        // Subscribe to SSE first — set up listener before triggering events
         if (unsubscribe.current) unsubscribe.current();
         let lastEventId = "";
         unsubscribe.current = backend.subscribe(
@@ -78,6 +75,10 @@ export default function App() {
             setError(err instanceof Error ? err.message : String(err));
           }
         );
+
+        // Give SSE subscription a moment to be ready, then start autoplay
+        await new Promise(resolve => setTimeout(resolve, 100));
+        await backend.start(snap.session_id, 900);
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
         setLoading(false);

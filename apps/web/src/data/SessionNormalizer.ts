@@ -17,8 +17,8 @@ export function normalize(raw: RawProjection): FullShelfProjection {
 
   // Add recovery proposal mapping if present (advisory, cursor 19)
   let recoveryProposal: RecoveryProposalView | undefined;
-  if (raw.current_day.recovery_proposal) {
-    const rp = raw.current_day.recovery_proposal;
+  const rp = raw.current_day?.recovery_proposal;
+  if (rp) {
     const exp = rp.explanation;
     recoveryProposal = {
       question: "Can we recover safely?",
@@ -32,7 +32,7 @@ export function normalize(raw: RawProjection): FullShelfProjection {
       },
       shortfall: {
         value: exp?.cases_short ?? 0,
-        agency: rp.shortfalls[0]?.agency_id ?? "unknown",
+        agency: rp.shortfalls?.[0]?.agency_id ?? "unknown",
         note: "Unmet demand",
       },
     };

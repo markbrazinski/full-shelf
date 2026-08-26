@@ -284,7 +284,7 @@ export function normalize(raw: RawProjection, beatId: BeatId): FullShelfProjecti
     projection.recallSource = source;
   }
 
-  if (raw.partner_evidence_as_of.length) {
+  if (raw.partner_evidence_as_of?.length) {
     projection.partnerEvidence = raw.partner_evidence_as_of.map((entry): PartnerEvidenceProofView => {
       const work = entry.before_after.work_item;
       return {
@@ -367,12 +367,12 @@ export function normalize(raw: RawProjection, beatId: BeatId): FullShelfProjecti
     projection.custody = buildCustody(cg);
   }
 
-  if (cd.recovery.explanation) {
+  if (cd.recovery?.explanation) {
     projection.recovery = buildRecovery(raw);
   }
 
   const refusalIncident = cd.incidents.find((i) => i.refusal);
-  if (refusalIncident?.refusal) {
+  if (refusalIncident?.refusal && cd.recovery?.explanation) {
     projection.governance = buildGovernance(refusalIncident, cd.recovery.explanation);
   }
 
