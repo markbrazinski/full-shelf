@@ -52,6 +52,17 @@ const STYLE = {
 
 type MapsNamespace = typeof globalThis & { google?: any };
 
+/**
+ * How many fully decoded visible tile images constitute a painted
+ * basemap. A 410px-tall panel at this zoom draws well over this; the
+ * threshold exists so a couple of stray marker or control images can
+ * never make an unpainted map look valid.
+ */
+const MIN_PAINTED_TILES = 8;
+
+/** Bounded wait before degrading to the truthful schematic. */
+const READY_TIMEOUT_MS = 10_000;
+
 let loaderPromise: Promise<void> | null = null;
 
 /**
@@ -131,6 +142,9 @@ export function PlannedDispatchMap({
   const ref = useRef<HTMLDivElement | null>(null);
   const painted = useRef(false);
   const [failed, setFailed] = useState(false);
+  // False until the basemap has genuinely painted. A loading surface
+  // covers the panel meanwhile, so a capture cannot catch it half-drawn.
+  const [ready, setReady] = useState(false);
 
   // The projection is re-read after every committed event, so `stops` and
   // `locations` arrive as fresh array identities roughly once a second.
@@ -142,8 +156,12 @@ export function PlannedDispatchMap({
 
   useEffect(() => {
     let cancelled = false;
+    const cleanups: (() => void)[] = [];
     const hub = locations.find((l) => l.role === "HUB") ?? locations[0];
     if (!hub) return; // nothing configured → draw nothing, invent nothing
+
+    painted.current = false;
+    setReady(false);
 
     loadMapsApi(apiKey)
       .then(() => {
@@ -239,19 +257,65 @@ export function PlannedDispatchMap({
 
         if (!bounds.isEmpty()) map.fitBounds(bounds, 56);
 
-        // An unauthorized key can load the API yet render nothing, which
-        // would leave an empty grey panel. Confirm the map actually
-        // painted tiles; if it did not, fall back to the schematic.
-        maps.event.addListenerOnce(map, "tilesloaded", () => {
-          painted.current = true;
-        });
-        window.setTimeout(() => {
+        // ---- readiness ------------------------------------------------
+        // A loaded API script proves nothing: an unauthorized key can load
+        // the API and render an empty grey box, and a slow network can
+        // leave large unpainted regions long after `tilesloaded` fires.
+        // The map is announced ready only when ALL of the following hold:
+        //
+        //   1. `idle`        — the viewport settled after fitBounds
+        //   2. `tilesloaded` — the basemap reported a tile pass
+        //   3. a meaningful set of visible tile images are FULLY decoded
+        //
+        // Until then a loading surface covers the panel, so a film capture
+        // can never catch a half-painted map.
+        let sawIdle = false;
+        let sawTiles = false;
+
+        /** Count visible basemap tiles that have actually finished decoding. */
+        const paintedTiles = (): number => {
+          const host = ref.current;
+          if (!host) return 0;
+          const imgs = Array.from(host.querySelectorAll("img"));
+          return imgs.filter((img) => {
+            // `complete` alone is true for a failed load; naturalWidth
+            // proves real decoded pixels arrived.
+            if (!img.complete || img.naturalWidth === 0) return false;
+            const r = img.getBoundingClientRect();
+            return r.width > 0 && r.height > 0;
+          }).length;
+        };
+
+        const settle = () => {
           if (cancelled || painted.current) return;
-          // Only the Maps `tilesloaded` event establishes a painted basemap.
-          // Overlay marker images must never make a tile-less map look valid.
+          if (!sawIdle || !sawTiles) return;
+          if (paintedTiles() < MIN_PAINTED_TILES) return;
+          painted.current = true;
+          setReady(true);
+        };
+
+        maps.event.addListenerOnce(map, "idle", () => {
+          sawIdle = true;
+          settle();
+        });
+        maps.event.addListenerOnce(map, "tilesloaded", () => {
+          sawTiles = true;
+          settle();
+        });
+        // Tile <img> elements decode after the events fire, so poll for
+        // the paint itself rather than trusting the events alone.
+        const poll = window.setInterval(settle, 120);
+
+        // Bounded: a map that never satisfies the condition degrades to
+        // the truthful schematic rather than hanging the panel forever.
+        window.setTimeout(() => {
+          window.clearInterval(poll);
+          if (cancelled || painted.current) return;
           setFailed(true);
           onFailure();
-        }, 3_500);
+        }, READY_TIMEOUT_MS);
+
+        cleanups.push(() => window.clearInterval(poll));
       })
       .catch(() => {
         if (cancelled) return;
@@ -262,6 +326,7 @@ export function PlannedDispatchMap({
 
     return () => {
       cancelled = true;
+      for (const fn of cleanups) fn();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [apiKey, stopsKey, locationsKey]);
@@ -270,11 +335,33 @@ export function PlannedDispatchMap({
 
   return (
     <div>
-      <div
-        ref={ref}
-        data-testid="planned-dispatch-map"
-        style={css("width:100%;height:410px;border-radius:9px;border:1px solid #dbe1dc;background:#e7ebe7")}
-      />
+      <div style={css("position:relative;width:100%;height:410px")}>
+        <div
+          ref={ref}
+          data-testid="planned-dispatch-map"
+          data-map-ready={String(ready)}
+          style={css("position:absolute;inset:0;border-radius:9px;border:1px solid #dbe1dc;background:#e7ebe7")}
+        />
+        {/* Covers the panel until the basemap has genuinely painted, so a
+            film capture can never catch blank or half-drawn tiles. */}
+        {!ready ? (
+          <div
+            data-testid="map-loading"
+            style={css(
+              "position:absolute;inset:0;border-radius:9px;border:1px solid #dbe1dc;background:#e7ebe7;" +
+                "display:flex;flex-direction:column;align-items:center;justify-content:center;gap:11px",
+            )}
+          >
+            <span
+              className="fs-spin"
+              style={css("width:24px;height:24px;border-radius:50%;border:3px solid #d3dad7;border-top-color:#1f6f8b")}
+            />
+            <span className="mono" style={css("font-size:10px;letter-spacing:.09em;color:#74848a")}>
+              LOADING BASEMAP…
+            </span>
+          </div>
+        ) : null}
+      </div>
       <div style={css("display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:9px")}>
         {(Object.keys(STYLE) as (keyof typeof STYLE)[]).map((k) => (
           <span key={k} style={css("display:flex;align-items:center;gap:6px;font-size:11px;color:#43555c")}>

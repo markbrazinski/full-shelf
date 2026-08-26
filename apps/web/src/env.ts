@@ -46,8 +46,12 @@ export function createDataSource(): FullShelfDataSource {
  * real key is never read from, or written to, the page.
  */
 export function googleMapsApiKey(): string | undefined {
-  const forced = (globalThis as { __FS_FORCE_MAP_KEY?: string }).__FS_FORCE_MAP_KEY;
-  if (forced) return forced;
+  const g = globalThis as { __FS_FORCE_MAP_KEY?: string; __FS_FORCE_NO_MAP_KEY?: boolean };
+  // Verification must be able to exercise the no-key fallback on a
+  // machine that legitimately HAS a key configured, otherwise that path
+  // would pass merely because nothing was set.
+  if (g.__FS_FORCE_NO_MAP_KEY) return undefined;
+  if (g.__FS_FORCE_MAP_KEY) return g.__FS_FORCE_MAP_KEY;
   const k = import.meta.env.VITE_GOOGLE_MAPS_API_KEY?.trim();
   return k ? k : undefined;
 }

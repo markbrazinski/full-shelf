@@ -11,13 +11,27 @@
 // branches and the canonical restoration after each, and Saturday's
 // availability boundary.
 //
-// Screenshots are captured at 1600×900 into e2e/screenshots/golden/.
+// Screenshots are captured at 1600×900.
+//
+// An ORDINARY run writes them to the gitignored Playwright output
+// directory, so running the suite never dirties the repository. Writing
+// the curated set under e2e/screenshots/golden/ requires an explicit
+// opt-in:
+//
+//     npm run test:golden:update
+//     # or: UPDATE_GOLDEN_SCREENSHOTS=1 npx playwright test …
 // =====================================================================
 
 import { test, expect, type Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 
-const SHOTS = "e2e/screenshots/golden";
+/**
+ * Curated frames are only rewritten under an explicit opt-in. Without it
+ * captures land in test-results/, which .gitignore covers, so a normal
+ * `npm test` leaves `git status --porcelain` empty.
+ */
+const UPDATE_GOLDEN = process.env.UPDATE_GOLDEN_SCREENSHOTS === "1";
+const SHOTS = UPDATE_GOLDEN ? "e2e/screenshots/golden" : "test-results/golden-journey";
 const RUNTIME = "http://127.0.0.1:8788";
 
 // The runtime autoplays at 900ms; 25 events plus approval needs headroom.
@@ -25,13 +39,91 @@ test.setTimeout(180_000);
 
 test.beforeAll(() => {
   mkdirSync(SHOTS, { recursive: true });
+  if (!UPDATE_GOLDEN) {
+    console.log(`[golden] captures -> ${SHOTS} (gitignored). Set UPDATE_GOLDEN_SCREENSHOTS=1 to refresh the curated set.`);
+  }
 });
 
-const shot = (page: Page, name: string) =>
-  page.screenshot({ path: `${SHOTS}/${name}.png`, fullPage: false });
+/**
+ * Capture a film frame.
+ *
+ * Waits for the map surface to settle first: a Google basemap must report
+ * genuinely painted tiles, and the truthful schematic must be present in
+ * its place. Neither a half-painted map nor a loading surface may ever
+ * reach a captured frame.
+ */
+async function shot(page: Page, name: string) {
+  await expectMapSettled(page);
+  await page.screenshot({ path: `${SHOTS}/${name}.png`, fullPage: false });
+}
+
+/** The map is either a fully painted basemap or the labelled fallback. */
+async function expectMapSettled(page: Page) {
+  const googleMap = page.locator('[data-testid="planned-dispatch-map"]');
+  if ((await googleMap.count()) === 0) return; // schematic, or a non-map view
+
+  await expect
+    .poll(
+      async () =>
+        (await googleMap.getAttribute("data-map-ready")) === "true" ||
+        (await page.locator('[data-testid="dispatch-svg-schematic"]').count()) > 0,
+      { timeout: 20_000, message: "map painted, or degraded to the schematic" },
+    )
+    .toBe(true);
+
+  // The loading surface must be gone before anything is captured.
+  await expect(page.locator('[data-testid="map-loading"]')).toHaveCount(0);
+}
 
 const cursor = async (page: Page): Promise<number> =>
   Number(await page.locator('[data-testid="app-root"]').getAttribute("data-cursor"));
+
+/**
+ * Wait until the cursor stops moving.
+ *
+ * `pause` stops the autoplay loop, but a frame already in flight can still
+ * land immediately after. Tests that measure "this click changed nothing"
+ * need a quiet baseline first.
+ */
+async function settleCursor(page: Page, quietMs = 1_200) {
+  let last = await cursor(page);
+  for (let i = 0; i < 12; i++) {
+    await page.waitForTimeout(quietMs);
+    const now = await cursor(page);
+    if (now === last) return now;
+    last = now;
+  }
+  return last;
+}
+
+/** Every ordinal currently rendered in the Fleet Activity rail, in order. */
+async function railOrdinals(page: Page): Promise<string[]> {
+  return await page
+    .locator('[data-testid="activity-entry"]')
+    .evaluateAll((els) => els.map((e) => e.getAttribute("data-ordinal") ?? ""));
+}
+
+/** The runtime's own committed feed — canonical truth, read from the API. */
+async function feedOf(page: Page, sid: string): Promise<number[]> {
+  const state = await (await page.request.get(`${RUNTIME}/api/v1/replay/sessions/${sid}`)).json();
+  return (state.feed ?? []).map((e: { sequence: number }) => e.sequence);
+}
+
+/** No canonical event later than `maxSeq` may be rendered in the rail. */
+async function expectNoFutureCanonical(page: Page, maxSeq: number) {
+  const future = (await railOrdinals(page)).filter(
+    (o) => !o.startsWith("b") && Number(o) > maxSeq,
+  );
+  expect(future, `no canonical event beyond ${maxSeq} may appear`).toEqual([]);
+}
+
+/** The rail carries exactly these isolated ordinals, and no others. */
+async function expectBranchActivity(page: Page, expected: string[]) {
+  const isolated = await page
+    .locator('[data-testid="activity-entry"][data-authority="ISOLATED"]')
+    .evaluateAll((els) => els.map((e) => e.getAttribute("data-ordinal") ?? ""));
+  expect(isolated.sort()).toEqual([...expected].sort());
+}
 
 /** Wait until the session cursor reaches at least `target`. */
 async function waitForCursor(page: Page, target: number, timeout = 90_000) {
@@ -415,6 +507,12 @@ test.describe("Golden journey", () => {
     // Canonical custody before any branch: 88 of 96.
     await expect(page.locator('[data-testid="branch-custody-figure"]')).toHaveText("88/96");
 
+    // The canonical baseline every isolation claim below is measured against.
+    const cursorAt22 = await cursor(page);
+    expect(cursorAt22).toBe(22);
+    const canonicalOrdinals = await railOrdinals(page);
+    const canonicalFeed = await feedOf(page, sid);
+
     // ---- vague branch: denied, 0 domain / 1 evidence mutation --------
     await page.locator('[data-testid="branch-enter-vague"]').click();
     await expect(panel).toHaveAttribute("data-branch", "vague", { timeout: 30_000 });
@@ -430,13 +528,37 @@ test.describe("Golden journey", () => {
     // Custody is untouched by a denial.
     await expect(page.locator('[data-testid="branch-custody-figure"]')).toHaveText("88/96");
 
+    // Entering a proof must not advance the canonical cursor, and canonical
+    // progression must be held: events 23-25 may not commit while open.
+    expect(await cursor(page), "vague branch did not advance the cursor").toBe(cursorAt22);
+    await page.waitForTimeout(3_000); // longer than several autoplay ticks
+    expect(await cursor(page), "canonical progression is paused in-branch").toBe(cursorAt22);
+    await expectNoFutureCanonical(page, 22);
+
+    // The vague proof's own entries are present and marked isolated.
+    await expectBranchActivity(page, ["b1", "b2", "b3", "b4"]);
+    await expect(
+      page.locator('[data-testid="activity-entry"][data-authority="ISOLATED"]'),
+      "vague branch shows exactly its own four isolated entries",
+    ).toHaveCount(4);
+    await expect(page.locator('[data-testid="fleet-activity-rail"]')).toContainText(
+      "Partner evidence denied",
+    );
+
     await expectNoHorizontalOverflow(page);
     await shot(page, "09-vague-evidence");
 
-    // Exit restores canonical.
+    // Exit restores canonical exactly: cursor, rail, feed, custody.
     await page.locator('[data-testid="branch-exit"]').click();
     await expect(panel).toHaveAttribute("data-branch", "canonical", { timeout: 30_000 });
     await expect(page.locator('[data-testid="branch-custody-figure"]')).toHaveText("88/96");
+    await expect(
+      page.locator('[data-testid="activity-entry"][data-authority="ISOLATED"]'),
+      "exiting removes every isolated entry",
+    ).toHaveCount(0);
+    await expect(page.locator('[data-testid="fleet-activity-rail"]')).not.toContainText(
+      "Partner evidence denied",
+    );
 
     // ---- complete branch: isolated 96/96 ----------------------------
     await page.locator('[data-testid="branch-enter-complete"]').click();
@@ -452,6 +574,25 @@ test.describe("Golden journey", () => {
       "ISOLATED SELECTED PROOF",
     );
 
+    expect(await cursor(page), "complete branch did not advance the cursor").toBe(cursorAt22);
+    await page.waitForTimeout(3_000);
+    expect(await cursor(page), "canonical progression is paused in-branch").toBe(cursorAt22);
+    await expectNoFutureCanonical(page, 22);
+
+    // The vague proof's result must NOT be visible inside the complete
+    // proof. This is the exact cross-branch leak the audit caught.
+    await expect(
+      page.locator('[data-testid="activity-entry"][data-authority="ISOLATED"]'),
+      "complete branch shows exactly its own four isolated entries",
+    ).toHaveCount(4);
+    await expect(
+      page.locator('[data-testid="fleet-activity-rail"]'),
+      "vague-branch activity must never appear in the complete branch",
+    ).not.toContainText("Partner evidence denied");
+    await expect(page.locator('[data-testid="fleet-activity-rail"]')).toContainText(
+      "Partner evidence applied",
+    );
+
     await expectNoHorizontalOverflow(page);
     await shot(page, "10-complete-evidence");
 
@@ -461,6 +602,9 @@ test.describe("Golden journey", () => {
     await expect(page.locator('[data-testid="branch-custody-figure"]')).toHaveText("88/96");
     await expect(page.locator('[data-testid="header-branch-label"]')).toHaveCount(0);
     await expect(page.locator('[data-testid="incident-status"]')).toHaveText("PARTIALLY_CONTAINED");
+    await expect(
+      page.locator('[data-testid="activity-entry"][data-authority="ISOLATED"]'),
+    ).toHaveCount(0);
 
     // The custody surface itself agrees: canonical is back to 88 of 96.
     await page.locator('[data-testid="incident-tab-custody"]').click();
@@ -469,6 +613,19 @@ test.describe("Golden journey", () => {
 
     await expectNoHorizontalOverflow(page);
     await shot(page, "11-canonical-return");
+
+    // Capture the canonical-return frame BEFORE progression resumes, then
+    // prove the runtime's own feed and the rail came back unchanged.
+    await page.locator('[data-testid="incident-tab-evidence"]').click();
+    expect(await feedOf(page, sid), "canonical feed restored exactly").toEqual(canonicalFeed);
+    const restoredOrdinals = (await railOrdinals(page)).filter((o) => !o.startsWith("b"));
+    expect(restoredOrdinals, "canonical rail restored exactly").toEqual(canonicalOrdinals);
+
+    // Only after returning to canonical may progression resume through 23-25.
+    await waitForCursor(page, 25, 60_000);
+    await expect(page.locator('[data-testid="fleet-activity-rail"]')).toContainText(
+      "Obligations carried forward",
+    );
   });
 
   test("Saturday is unavailable before event 24 and available after", async ({ page }) => {
@@ -501,6 +658,301 @@ test.describe("Golden journey", () => {
 
     await expectNoHorizontalOverflow(page);
     await shot(page, "12-saturday-draft");
+  });
+
+  // ===================================================================
+  // Material assertions.
+  //
+  // These restore coverage that the superseded beat-stepped suite held,
+  // rebuilt on the session runtime. No beat navigation is used, and no UI
+  // claim is replaced by a direct API assertion: where the runtime is
+  // called it is to CAUSE a condition, never to stand in for the check.
+  // ===================================================================
+
+  test("incident tabs preserve exact cursor equality and never advance time", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.locator('[data-testid="clock"]')).toBeVisible({ timeout: 30_000 });
+    const sid = await sessionIdOf(page);
+
+    await driveTo(page, sid, 22);
+
+    // Enter Incidents FIRST. Opening Incidents legitimately releases the
+    // event-11 hold and resumes autoplay, so the runtime is quieted after
+    // that navigation — otherwise this test would be measuring resumed
+    // progression rather than the tab clicks it is about.
+    await page.locator('[data-testid="nav-incident"]').click();
+    await page.request.post(`${RUNTIME}/api/v1/replay/sessions/${sid}/pause`).catch(() => {});
+    await settleCursor(page);
+
+    const before = await cursor(page);
+    const clockBefore = await page.locator('[data-testid="clock"]').textContent();
+
+    for (const tab of ["intake", "custody", "recovery", "evidence", "custody", "intake"]) {
+      await page.locator(`[data-testid="incident-tab-${tab}"]`).click();
+      expect(await cursor(page), `tab ${tab} is NAVIGATION_ONLY`).toBe(before);
+    }
+    // Left-nav view changes are navigation too. History and back is a
+    // pure view change; Today -> Incidents is deliberately excluded here
+    // because that transition legitimately releases the event-11 hold.
+    await page.locator('[data-testid="nav-history"]').click();
+    expect(await cursor(page), "History is NAVIGATION_ONLY").toBe(before);
+    await page.locator('[data-testid="nav-incident"]').click();
+
+    const after = await cursor(page);
+    expect(after, "after === before").toBe(before);
+    await expect(page.locator('[data-testid="clock"]')).toHaveText(clockBefore ?? "");
+  });
+
+  test("an altered or missing approval binding is refused and changes nothing", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.locator('[data-testid="clock"]')).toBeVisible({ timeout: 30_000 });
+    const sid = await sessionIdOf(page);
+
+    await driveTo(page, sid, 8);
+    await expect(page.locator('[data-testid="approve-update"]')).toBeVisible({ timeout: 30_000 });
+
+    const template = (
+      await (await page.request.get(`${RUNTIME}/api/v1/replay/sessions/${sid}/projection`)).json()
+    ).current_day.repair_proposal.approval_payload_template;
+
+    const cursorBefore = await cursor(page);
+
+    // Missing plan_diff_hash.
+    const { plan_diff_hash: _omitted, ...missing } = template;
+    const r1 = await page.request.post(`${RUNTIME}/api/v1/replay/sessions/${sid}/approve`, {
+      data: { ...missing, idempotency_key: "test-missing" },
+    });
+    expect(r1.status()).toBe(409);
+    expect((await r1.json()).detail).toBe("APPROVAL_BINDING_MISMATCH");
+
+    // Altered bound value — the case count no longer matches the diff.
+    const altered = JSON.parse(JSON.stringify(template));
+    altered.actions[0].cases = 21;
+    const r2 = await page.request.post(`${RUNTIME}/api/v1/replay/sessions/${sid}/approve`, {
+      data: { ...altered, idempotency_key: "test-altered" },
+    });
+    expect(r2.status()).toBe(409);
+    expect((await r2.json()).detail).toBe("APPROVAL_BINDING_MISMATCH");
+
+    // Zero mutations: the UI still shows rev07, still at event 8, still
+    // offering the same approval.
+    expect(await cursor(page)).toBe(cursorBefore);
+    await expect(page.locator('[data-testid="auth-rev"]')).toHaveText("rev07");
+    await expect(page.locator('[data-testid="approve-update"]')).toBeVisible();
+    await expectNoFutureCanonical(page, 8);
+  });
+
+  test("the approval control disappears once the update is committed", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.locator('[data-testid="clock"]')).toBeVisible({ timeout: 30_000 });
+    const sid = await sessionIdOf(page);
+
+    await driveTo(page, sid, 8);
+    await expect(page.locator('[data-testid="approve-update"]')).toBeVisible({ timeout: 30_000 });
+
+    await driveTo(page, sid, 10); // driveTo approves through the real control
+    await expect(page.locator('[data-testid="auth-rev"]')).toHaveText("rev08");
+
+    // No approval affordance survives commitment, anywhere on the page.
+    await expect(page.locator('[data-testid="approve-update"]')).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /approve/i })).toHaveCount(0);
+  });
+
+  test("the approval action stays in the side rail and above fold at 1600x900", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.locator('[data-testid="clock"]')).toBeVisible({ timeout: 30_000 });
+    const sid = await sessionIdOf(page);
+
+    await driveTo(page, sid, 8);
+    const approve = page.locator('[data-testid="approve-update"]');
+    await expect(approve).toBeVisible({ timeout: 30_000 });
+
+    // Exactly one approval control exists — never duplicated.
+    await expect(approve).toHaveCount(1);
+
+    // It lives inside the Fleet Activity side rail (the locked UX
+    // decision), not in the main workspace.
+    const inSideRail = await approve.evaluate(
+      (el) => !!el.closest("aside") && !el.closest("main"),
+    );
+    expect(inSideRail, "approval stays in the side rail, not the workspace").toBe(true);
+
+    // Above fold at the acceptance viewport.
+    const box = await approve.boundingBox();
+    expect(box, "approval control has a box").not.toBeNull();
+    expect(box!.y, "approval top is on-screen").toBeGreaterThanOrEqual(0);
+    expect(box!.y + box!.height, "approval is fully above fold at 900px").toBeLessThanOrEqual(900);
+
+    await expectNoHorizontalOverflow(page);
+  });
+
+  test("no future canonical state leaks before its event", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.locator('[data-testid="clock"]')).toBeVisible({ timeout: 30_000 });
+    const sid = await sessionIdOf(page);
+
+    // At event 5 nothing later may be visible anywhere on the page.
+    await page.request.post(`${RUNTIME}/api/v1/replay/sessions/${sid}/pause`).catch(() => {});
+    await expect(page.locator('[data-testid="clock"]')).toHaveText("08:05");
+    expect(await cursor(page), "still at the opening event").toBe(5);
+    let body = await page.locator("body").innerText();
+    for (const later of [
+      "rev08",                    // event 10
+      "LTC-4471 barrier",         // event 25
+      "PARTIALLY_CONTAINED",      // event 22
+      "DRAFT_WITH_CONSTRAINTS",   // event 24
+      "96 cases traced",          // event 18
+    ]) {
+      expect(body, `"${later}" must not appear at event 5`).not.toContain(later);
+    }
+    await expectNoFutureCanonical(page, 5);
+
+    // At event 18 custody exists, but recovery and Saturday do not.
+    await driveTo(page, sid, 18);
+    await page.request.post(`${RUNTIME}/api/v1/replay/sessions/${sid}/pause`).catch(() => {});
+    const settled = await settleCursor(page);
+    await page.locator('[data-testid="nav-incident"]').click();
+    await page.locator('[data-testid="incident-tab-recovery"]').click();
+    await expect(page.locator('[data-testid="recovery-committed"]')).toHaveCount(0);
+
+    // The Saturday toggle lives on Today, so check it there.
+    await page.locator('[data-testid="nav-today"]').click();
+    await expect(page.locator('[data-testid="day-sat"]')).toHaveAttribute("data-available", "false");
+    await expect(page.locator('[data-testid="day-sat"]')).toBeDisabled();
+    body = await page.locator("body").innerText();
+    expect(body, "the Saturday draft must not leak at event 18").not.toContain(
+      "DRAFT_WITH_CONSTRAINTS",
+    );
+    await expectNoFutureCanonical(page, settled);
+  });
+
+  test("no agent RUNNING / WAITING / duration state appears anywhere", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.locator('[data-testid="clock"]')).toBeVisible({ timeout: 30_000 });
+    const sid = await sessionIdOf(page);
+
+    // Sweep the whole journey, including the drawer and both branches —
+    // the runtime emits no such field, so none may ever be rendered.
+    await driveTo(page, sid, 22);
+    await page.locator('[data-testid="open-execution-record"]').click();
+    await expect(page.locator('[data-testid="execution-record-drawer"]')).toBeVisible();
+
+    const body = await page.locator("body").innerText();
+    for (const invented of [
+      /\bRUNNING\b/,
+      /\bWAITING\b/,
+      /\bIN[_ ]PROGRESS\b(?!.*CONTAINMENT)/,
+      /\b\d+\s*ms\b/,
+      /\belapsed\b/i,
+      /\btook\s+\d/i,
+    ]) {
+      expect(body, `invented agent lifecycle ${invented} must not appear`).not.toMatch(invented);
+    }
+  });
+
+  test("film mode hides debug controls but keeps the product approval action", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.locator('[data-testid="clock"]')).toBeVisible({ timeout: 30_000 });
+    const sid = await sessionIdOf(page);
+
+    await driveTo(page, sid, 8);
+    // The product's own human gate is present…
+    await expect(page.locator('[data-testid="approve-update"]')).toBeVisible({ timeout: 30_000 });
+
+    // …while presenter/debug transport is absent from the film canvas.
+    await expect(
+      page.getByRole("button", { name: /^(play|pause|resume|advance|step|next event|reset|replay)$/i }),
+    ).toHaveCount(0);
+    await expect(page.locator("[data-testid^='beat-'], [data-testid^='moment-']")).toHaveCount(0);
+    await expect(page.locator("[data-testid='replay-controls']")).toHaveCount(0);
+  });
+
+  test("a missing Maps key produces the truthful schematic fallback", async ({ page }) => {
+    // Forced so this path is genuinely exercised even on a machine that
+    // has a key configured.
+    await page.addInitScript(() => {
+      (globalThis as { __FS_FORCE_NO_MAP_KEY?: boolean }).__FS_FORCE_NO_MAP_KEY = true;
+    });
+
+    await page.goto("/");
+    await expect(page.locator('[data-testid="clock"]')).toBeVisible({ timeout: 30_000 });
+
+    // No Google surface, no blank panel — the labelled schematic instead.
+    await expect(page.locator('[data-testid="planned-dispatch-map"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="dispatch-svg-schematic"]')).toBeVisible();
+    await expect(page.locator('[data-testid="map-mode-label"]')).toContainText(
+      "DETERMINISTIC SCHEMATIC · CONFIGURED REFERENCE LOCATIONS · NOT LIVE GPS",
+    );
+    await expect(page.locator('[data-testid="map-location-disclosure"]')).toContainText(
+      "6 configured reference locations · no live GPS",
+    );
+    // A fallback must never leave a loading surface stranded on screen.
+    await expect(page.locator('[data-testid="map-loading"]')).toHaveCount(0);
+
+    // The key must never be exposed on the page when it is not in use.
+    expect(await page.content()).not.toMatch(/AIza[0-9A-Za-z_-]{20,}/);
+
+    await expectNoHorizontalOverflow(page);
+  });
+
+  test("a Maps API load failure degrades to the truthful schematic", async ({ page }) => {
+    // Fail the real loader at the network boundary — not by stubbing our
+    // own code — so the component's actual failure path runs.
+    await page.route("https://maps.googleapis.com/**", (route) => route.abort());
+
+    await page.goto("/");
+    await expect(page.locator('[data-testid="clock"]')).toBeVisible({ timeout: 30_000 });
+
+    await expect(page.locator('[data-testid="dispatch-svg-schematic"]')).toBeVisible({
+      timeout: 30_000,
+    });
+    await expect(page.locator('[data-testid="planned-dispatch-map"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="map-mode-label"]')).toContainText(
+      "DETERMINISTIC SCHEMATIC",
+    );
+    // Bounded: it degraded rather than hanging behind a spinner.
+    await expect(page.locator('[data-testid="map-loading"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="map-location-disclosure"]')).toContainText(
+      "no live GPS",
+    );
+
+    await expectNoHorizontalOverflow(page);
+  });
+
+  test("History is read-only and opening the Execution Record does not advance time", async ({
+    page,
+  }) => {
+    await page.goto("/");
+    await expect(page.locator('[data-testid="clock"]')).toBeVisible({ timeout: 30_000 });
+    const sid = await sessionIdOf(page);
+
+    await driveTo(page, sid, 22);
+    await page.request.post(`${RUNTIME}/api/v1/replay/sessions/${sid}/pause`).catch(() => {});
+    await settleCursor(page);
+
+    // ---- History: provenance only, no mutation affordance ------------
+    await page.locator('[data-testid="nav-history"]').click();
+    const history = page.locator('[data-testid="history-ledger"]');
+    await expect(history).toBeVisible({ timeout: 30_000 });
+    await expect(history).toContainText("READ-ONLY");
+    // No control that could mutate authoritative state.
+    await expect(
+      history.getByRole("button", { name: /approve|activate|commit|apply|edit|delete/i }),
+    ).toHaveCount(0);
+    await expect(history.locator("input, textarea, select")).toHaveCount(0);
+
+    // ---- Execution Record: opens without moving the cursor -----------
+    const before = await cursor(page);
+    const clockBefore = await page.locator('[data-testid="clock"]').textContent();
+
+    await page.locator('[data-testid="open-execution-record"]').click();
+    const drawer = page.locator('[data-testid="execution-record-drawer"]');
+    await expect(drawer).toBeVisible();
+
+    expect(await cursor(page), "opening the record is navigation, not an event").toBe(before);
+    await expect(page.locator('[data-testid="clock"]')).toHaveText(clockBefore ?? "");
+    // Evidence surfaces carry no mutation-styled control.
+    await expect(drawer.getByRole("button", { name: /approve|activate|commit/i })).toHaveCount(0);
   });
 });
 

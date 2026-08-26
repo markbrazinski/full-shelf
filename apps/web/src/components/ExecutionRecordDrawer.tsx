@@ -38,7 +38,10 @@ export function ExecutionRecordDrawer({ evidence, onClose }: Props) {
     : "—";
 
   return (
-    <div style={css("position:fixed;inset:0;z-index:60;display:flex;justify-content:flex-end")}>
+    <div
+      data-testid="execution-record-drawer"
+      style={css("position:fixed;inset:0;z-index:60;display:flex;justify-content:flex-end")}
+    >
       <div onClick={onClose} style={css("position:absolute;inset:0;background:rgba(16,32,37,.42)")} />
       <div className="fs-drawer" style={css("position:relative;width:468px;height:100%;background:#f4f2ec;box-shadow:-6px 0 24px rgba(16,32,37,.28);overflow-y:auto")}>
         <div style={css("position:sticky;top:0;z-index:2;background:#16323b;color:#f4f6f5;padding:16px 20px;display:flex;align-items:flex-start;justify-content:space-between")}>

@@ -4,7 +4,7 @@ import type { HistoryView } from "../types/fullShelf";
 
 export function HistoryLedger({ history, onToday }: { history: HistoryView; onToday: () => void }) {
   return (
-    <>
+    <div data-testid="history-ledger">
       <div style={css("display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:18px")}>
         <div>
           <div className="mono" style={css("font-size:11px;letter-spacing:.12em;color:#74848a;font-weight:600")}>HISTORY · READ-ONLY</div>
@@ -49,6 +49,6 @@ export function HistoryLedger({ history, onToday }: { history: HistoryView; onTo
           </div>
         </div>
       </div>
-    </>
+    </div>
   );
 }

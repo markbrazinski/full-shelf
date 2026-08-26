@@ -11,6 +11,8 @@
     "typecheck": "tsc --noEmit",
     "test": "playwright test",
     "test:e2e": "playwright test",
+    "test:golden": "playwright test e2e/golden-journey.spec.ts",
+    "test:golden:update": "UPDATE_GOLDEN_SCREENSHOTS=1 playwright test e2e/golden-journey.spec.ts",
     "dev:replay": "VITE_DATA_SOURCE=deterministic_replay VITE_ORCHESTRATOR_URL=http://127.0.0.1:8787 vite --host 127.0.0.1 --port 5173"
   },
   "dependencies": {

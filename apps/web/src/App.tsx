@@ -52,7 +52,12 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [execOpen, setExecOpen] = useState(false);
+  // Canonical activity accumulates across the whole session. Branch
+  // activity is held SEPARATELY and belongs to exactly one branch, so a
+  // proof's entries can never persist into canonical or leak across into
+  // the other proof.
   const [activity, setActivity] = useState<ActivityRailEntry[]>([]);
+  const [branchActivity, setBranchActivity] = useState<ActivityRailEntry[]>([]);
   const [gatePaused, setGatePaused] = useState(false);
   const [recallPaused, setRecallPaused] = useState(false);
   const [branch, setBranch] = useState<BranchKind | null>(null);
@@ -70,22 +75,25 @@ export default function App() {
   const branchRef = useRef<BranchKind | null>(null);
   branchRef.current = branch;
 
-  const appendActivity = useCallback((env: EventEnvelope, authority: "CANONICAL" | "ISOLATED") => {
-    const entry: ActivityRailEntry = {
-      ordinal: String(env.sequence),
-      clock: clockOf(env.effective_at),
-      severity: env.activity_entry?.severity ?? "INFO",
-      headline: env.activity_entry?.headline ?? env.event_type,
-      detail: env.activity_entry?.detail ?? "",
-      actionRequired: env.activity_entry?.action_required === true,
-      authority,
-    };
+  const railEntry = (
+    env: EventEnvelope,
+    authority: "CANONICAL" | "ISOLATED",
+  ): ActivityRailEntry => ({
+    ordinal: String(env.sequence),
+    clock: clockOf(env.effective_at),
+    severity: env.activity_entry?.severity ?? "INFO",
+    headline: env.activity_entry?.headline ?? env.event_type,
+    detail: env.activity_entry?.detail ?? "",
+    actionRequired: env.activity_entry?.action_required === true,
+    authority,
+  });
+
+  const appendCanonical = useCallback((env: EventEnvelope) => {
+    const entry = railEntry(env, "CANONICAL");
     // Append-only and chronological, de-duplicated by ordinal so an SSE
     // resume can never double-post a committed event.
     setActivity((prev) =>
-      prev.some((e) => e.authority === authority && e.ordinal === entry.ordinal)
-        ? prev
-        : [...prev, entry],
+      prev.some((e) => e.ordinal === entry.ordinal) ? prev : [...prev, entry],
     );
   }, []);
 
@@ -119,7 +127,13 @@ export default function App() {
             // Branch ordinals are `b`-prefixed and never canonical history.
             if (!Number.isFinite(seq)) return;
 
-            appendActivity(env, "CANONICAL");
+            // A canonical frame still in flight when a proof opens must
+            // not land: inside an isolated authority the rail shows
+            // canonical history only up to the cursor the branch was
+            // entered at, and the cursor itself must not move.
+            if (branchRef.current) return;
+
+            appendCanonical(env);
             setCursor(seq);
 
             // Event 11 — the recall arrives. If the operator is still on
@@ -160,7 +174,7 @@ export default function App() {
       disposed = true;
       unsubscribe.current?.();
     };
-  }, [backend, appendActivity]);
+  }, [backend, appendCanonical]);
 
   // ---- clicking Incidents releases the event-11 hold -----------------
   useEffect(() => {
@@ -203,10 +217,23 @@ export default function App() {
       if (!sessionId.current) return;
       setBranchBusy(true);
       try {
+        // Canonical progression PAUSES for the duration of a proof.
+        // Without this, autoplay keeps committing events 23-25 while the
+        // operator is inside an isolated authority, so the rail would
+        // show canonical state the branch view must not imply.
+        await backend.pause(sessionId.current).catch(() => {});
+
         const result = await backend.enterBranch(sessionId.current, kind);
         setBranch(kind);
         branchRef.current = kind;
-        for (const env of result.events) appendActivity(env, "ISOLATED");
+
+        // REPLACE, never append. Both proofs number their events b1..b4,
+        // so accumulating would let the vague branch's entries surface
+        // inside the complete branch under a colliding ordinal.
+        setBranchActivity(result.events.map((env) => railEntry(env, "ISOLATED")));
+
+        // Entering a proof must not move the canonical cursor: re-read at
+        // the cursor already held rather than adopting a new one.
         setProjection(await backend.getProjection(sessionId.current, cursor));
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
@@ -214,7 +241,7 @@ export default function App() {
         setBranchBusy(false);
       }
     },
-    [backend, cursor, appendActivity],
+    [backend, cursor],
   );
 
   const exitBranch = useCallback(async () => {
@@ -224,8 +251,12 @@ export default function App() {
       await backend.exitBranch(sessionId.current);
       setBranch(null);
       branchRef.current = null;
+      // A proof leaves no trace: every isolated entry is removed.
+      setBranchActivity([]);
       // Canonical returns byte-identical: 88/96 and PARTIALLY_CONTAINED.
       setProjection(await backend.getProjection(sessionId.current, cursor));
+      // Only now may canonical progression resume, through events 23-25.
+      await backend.start(sessionId.current, AUTOPLAY_MS).catch(() => {});
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -489,7 +520,8 @@ export default function App() {
                 />
               </div>
             ) : null}
-            <FleetActivityRail entries={activity} />
+            {/* Canonical events, plus the CURRENT branch's entries only. */}
+            <FleetActivityRail entries={branch ? [...activity, ...branchActivity] : activity} />
           </aside>
         ) : null}
       </div>
