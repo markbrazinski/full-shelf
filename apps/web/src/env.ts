@@ -10,9 +10,9 @@
 // =====================================================================
 
 import type { FullShelfDataSource } from "./data/FullShelfDataSource";
-import { LiveOrchestratorDataSource, ReplayHttpDataSource } from "./data/ProjectionHttpDataSource";
+import { SessionBridgeDataSource } from "./data/SessionBridgeDataSource";
 
-const DEFAULT_REPLAY_URL = "http://127.0.0.1:8787";
+const DEFAULT_REPLAY_URL = "http://127.0.0.1:8788";
 
 export type DataSourceKind = "deterministic_replay" | "live";
 
@@ -33,11 +33,8 @@ export function resolveOrchestratorUrl(kind: DataSourceKind): string {
 }
 
 export function createDataSource(): FullShelfDataSource {
-  const kind = resolveDataSourceKind();
-  const url = resolveOrchestratorUrl(kind);
-  return kind === "live"
-    ? new LiveOrchestratorDataSource(url)
-    : new ReplayHttpDataSource(url);
+  // Golden Runtime Controller on 8788 (session-based)
+  return new SessionBridgeDataSource();
 }
 
 /**

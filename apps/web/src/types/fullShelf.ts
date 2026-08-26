@@ -540,14 +540,35 @@ export interface PartnerEvidenceProofView {
   isolatedProof: true;
 }
 
+export interface MapLocation {
+  id: string;
+  name: string;
+  lat: number;
+  lon: number;
+  role: string;
+  agencyId?: string | null;
+}
+
+export interface RecoveryProposalView {
+  question: string;
+  headline: string;
+  items: RecoveryItem[];
+  safeReplacements: { total: number; breakdown: string };
+  shortfall: { value: number; agency: string; note: string };
+}
+
 export interface FullShelfProjection {
   beatId: BeatId;
   asOf: string;
   dataMode: DataMode;
+  cursor?: number;
   incidentSummary: IncidentSummary;
   repairProposal?: RepairProposalView;
+  recoveryProposal?: RecoveryProposalView;
   recallSource?: RecallSourceView;
   partnerEvidence?: PartnerEvidenceProofView[];
+  referenceLocations?: MapLocation[];
+  branchState?: { authority: "ISOLATED"; proofLabel: string };
   currentDay: CurrentDayView;
   incident?: IncidentView;
   recall?: RecallView;

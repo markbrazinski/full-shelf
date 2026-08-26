@@ -39,7 +39,7 @@ import { RepairProposal } from "./components/RepairProposal";
 import { PartnerEvidenceProof } from "./components/PartnerEvidenceProof";
 import { useTelemetryPlayback } from "./data/telemetry/useTelemetryPlayback";
 
-const dataSource: FullShelfDataSource = createDataSource();
+const dataSource: FullShelfDataSource & { init?: () => Promise<void> } = createDataSource();
 const MAPS_API_KEY = googleMapsApiKey();
 const REPLAY_MODE = isReplayMode();
 const DEBUG_REPLAY_CONTROLS = debugReplayControlsEnabled();
@@ -106,6 +106,16 @@ export default function App() {
         : day === "sat"
           ? SATURDAY
           : friday;
+
+  // Initialize session bridge on mount
+  useEffect(() => {
+    if (dataSource.init) {
+      dataSource.init().catch((e: unknown) => {
+        setError(e instanceof Error ? e.message : String(e));
+        setLoading(false);
+      });
+    }
+  }, []);
 
   const load = useCallback((next: BeatId) => {
     pending.current = next;

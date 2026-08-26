@@ -200,16 +200,57 @@ export interface RawRepairProposal {
   activation_supported: boolean;
 }
 
+export interface RawVehicle {
+  vehicle_id: string;
+  name: string | null;
+  capacity_cases: number | null;
+  assigned_cases: number | null;
+  remaining_cases: number | null;
+  at_capacity: boolean | null;
+  is_operational: boolean | null;
+  alarm?: {
+    active: boolean;
+    kind: string | null;
+    raised_at_event: string | null;
+  };
+}
+
+export interface RawRecoveryProposal {
+  allocations: RawAllocation[];
+  shortfalls: RawShortfall[];
+  explanation: RawRecoveryExplanation | null;
+  mutation_applied: boolean;
+  commits_at_event?: string | null;
+}
+
+export interface RawReferenceLocation {
+  location_id: string;
+  name: string;
+  latitude: number;
+  longitude: number;
+  role: string;
+  agency_id?: string | null;
+  order_ids?: string[];
+  location_mode: string;
+  live_gps: boolean;
+}
+
+export interface RawReferenceLocations {
+  disclosure: string;
+  locations: RawReferenceLocation[];
+}
+
 export interface RawCurrentDay {
   plan_id: string;
   plan_revisions: RawPlanRevision[];
   active_plan_revision: string | null;
   commitments: RawCommitment[];
-  vehicles: unknown[] | null;
+  vehicles: RawVehicle[] | null;
   approvals: RawApproval[];
   incidents: RawIncident[];
   plan_constraints: RawPlanConstraint[];
   recovery: RawRecovery;
+  recovery_proposal?: RawRecoveryProposal;
   dispatch: RawDispatch | null;
   repair_proposal: RawRepairProposal | null;
 }
@@ -405,6 +446,18 @@ export interface RawPartnerEvidence {
   };
 }
 
+export interface RawEventEnvelope {
+  event_id: string;
+  sequence: number;
+  effective_at: string;
+  event_type: string;
+  action_required: boolean;
+  severity: string;
+  activity_entry: {
+    headline: string;
+  };
+}
+
 export interface RawProjection {
   tenant_id: string;
   operating_day: string;
@@ -413,6 +466,7 @@ export interface RawProjection {
   classification: string;
   replay_notice?: string;
   projection_boundary: RawProjectionBoundary;
+  reference_locations?: RawReferenceLocations;
   current_day: RawCurrentDay;
   agent_activity_as_of: RawAgentActivity | null;
   execution_evidence_as_of: RawExecutionEvidence;
