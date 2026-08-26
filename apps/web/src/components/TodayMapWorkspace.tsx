@@ -1,15 +1,13 @@
 import { useCallback, useMemo, useState } from "react";
 import { css } from "../styles/css";
 import type { CurrentDayView, DispatchStop, DispatchView } from "../types/fullShelf";
-import type { TelemetryPlayback } from "../data/telemetry/playback";
-import { PlannedDispatchMap, TelemetryStatus, type PlannedStop } from "./PlannedDispatchMap";
+import { PlannedDispatchMap, type PlannedStop } from "./PlannedDispatchMap";
 
 interface Props {
   currentDay: CurrentDayView;
   dispatch: DispatchView;
   mapsApiKey?: string;
   plannedStops: PlannedStop[];
-  telemetry?: TelemetryPlayback;
 }
 
 const STOP_POINT: Record<string, [number, number]> = {
@@ -26,13 +24,11 @@ const TONE = {
   recall: { accent: "#a23b2b", bg: "#f5e8e4", fg: "#8a2f22" },
 } as const;
 
-export function TodayMapWorkspace({ currentDay, dispatch, mapsApiKey, plannedStops, telemetry }: Props) {
+export function TodayMapWorkspace({ currentDay, dispatch, mapsApiKey, plannedStops }: Props) {
   const [mapFailed, setMapFailed] = useState(false);
   const onMapFailure = useCallback(() => setMapFailed(true), []);
   const showGoogleMap = !!mapsApiKey && plannedStops.length > 0 && !mapFailed;
-  const googleMapLabel = telemetry
-    ? "GOOGLE MAPS · CONFIGURED REFERENCE LOCATIONS · SIMULATED TELEMETRY · NOT LIVE GPS"
-    : "GOOGLE MAPS · CONFIGURED REFERENCE LOCATIONS · NOT LIVE GPS";
+  const googleMapLabel = "GOOGLE MAPS · CONFIGURED REFERENCE LOCATIONS · NOT LIVE GPS";
   const fallbackLabel = "DETERMINISTIC SCHEMATIC · CONFIGURED REFERENCE LOCATIONS · NOT LIVE GPS";
   const manifests = useMemo(() => {
     const grouped = new Map<string, DispatchStop[]>();
@@ -81,12 +77,9 @@ export function TodayMapWorkspace({ currentDay, dispatch, mapsApiKey, plannedSto
           </div>
           <div style={css("padding:10px;background:#f5f6f2") }>
             {showGoogleMap ? (
-              <PlannedDispatchMap stops={plannedStops} label={googleMapLabel} apiKey={mapsApiKey!} onFailure={onMapFailure} telemetry={telemetry} />
+              <PlannedDispatchMap stops={plannedStops} label={googleMapLabel} apiKey={mapsApiKey!} onFailure={onMapFailure} />
             ) : (
-              <>
-                <RouteSchematic stops={Object.values(dispatch.stops)} provenance={fallbackLabel} />
-                <TelemetryStatus telemetry={telemetry} />
-              </>
+              <RouteSchematic stops={Object.values(dispatch.stops)} provenance={fallbackLabel} />
             )}
           </div>
         </div>

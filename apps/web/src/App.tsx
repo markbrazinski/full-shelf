@@ -385,7 +385,6 @@ export default function App() {
                       dispatch={p?.dispatch ?? { title: "", schematicLabel: "", note: "", stops: {}, vehicles: {}, capacityDecision: { beforeLabel: "", beforeValue: "", addLabel: "", addValue: "", afterLabel: "", afterValue: "", afterFillPct: 0, remainingLabel: "", remainingValue: "", needsLabel: "", needsValue: "", verdict: "", explain: "" } }}
                       mapsApiKey={MAPS_API_KEY}
                       plannedStops={plannedStops}
-                      telemetry={undefined}
                     />
                   )}
                 </>

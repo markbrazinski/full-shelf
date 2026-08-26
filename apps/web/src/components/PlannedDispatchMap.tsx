@@ -21,8 +21,6 @@
 import { useEffect, useRef, useState } from "react";
 import { css } from "../styles/css";
 import { DEMO_TENANT_LOCATIONS, locationFor, type ReferenceLocation } from "../data/contract/locations";
-import type { TelemetryPlayback } from "../data/telemetry/playback";
-import { syncVehicleMarkers, VEHICLE_LABEL } from "./VehicleTelemetryLayer";
 
 export interface PlannedStop {
   orderId: string;
@@ -38,8 +36,6 @@ export interface PlannedDispatchMapProps {
   label: string;
   apiKey: string;
   onFailure: () => void;
-  /** Contextual SIMULATED_TELEMETRY overlay. Absent → planned routes only. */
-  telemetry?: TelemetryPlayback;
 }
 
 // Planned-path styling. Colors carry plan intent, never live status.
@@ -85,18 +81,13 @@ function loadMapsApi(apiKey: string): Promise<void> {
   return loaderPromise;
 }
 
-export function PlannedDispatchMap({ stops, label, apiKey, onFailure, telemetry }: PlannedDispatchMapProps) {
+export function PlannedDispatchMap({ stops, label, apiKey, onFailure }: PlannedDispatchMapProps) {
   const ref = useRef<HTMLDivElement | null>(null);
   const painted = useRef(false);
   const [failed, setFailed] = useState(false);
   // The live map instance and its vehicle markers, kept across renders so
   // telemetry updates MOVE markers rather than rebuilding the map.
   const mapRef = useRef<any>(null);
-  const markers = useRef(new Map<string, any>());
-  // Read inside the build effect without making the map rebuild on every
-  // telemetry tick — marker updates are handled by the effect below.
-  const telemetryRef = useRef(telemetry);
-  telemetryRef.current = telemetry;
 
   useEffect(() => {
     let cancelled = false;
@@ -186,11 +177,6 @@ export function PlannedDispatchMap({ stops, label, apiKey, onFailure, telemetry 
           bounds.extend(pos);
         }
 
-        // Vehicle markers ride on top of the planned drawing.
-        if (telemetryRef.current) {
-          syncVehicleMarkers(maps, map, telemetryRef.current.vehicles, markers.current);
-          for (const v of telemetryRef.current.vehicles) bounds.extend({ lat: v.renderLat, lng: v.renderLng });
-        }
         mapRef.current = map;
 
         if (!bounds.isEmpty()) map.fitBounds(bounds, 56);
@@ -227,17 +213,6 @@ export function PlannedDispatchMap({ stops, label, apiKey, onFailure, telemetry 
   // escape to React and blank the whole panel — the exact failure the
   // schematic fallback exists to prevent. A degraded Maps runtime must
   // cost us the map, never the page.
-  useEffect(() => {
-    const maps = (globalThis as MapsNamespace).google?.maps;
-    if (!maps || !mapRef.current || !telemetry) return;
-    try {
-      syncVehicleMarkers(maps, mapRef.current, telemetry.vehicles, markers.current);
-    } catch {
-      markers.current.clear();
-      setFailed(true);
-      onFailure();
-    }
-  }, [telemetry, onFailure]);
 
   if (failed) return null;
 
@@ -259,52 +234,9 @@ export function PlannedDispatchMap({ stops, label, apiKey, onFailure, telemetry 
           ◆ {label}
         </span>
       </div>
-      <TelemetryStatus telemetry={telemetry} />
       <div className="mono" style={css("font-size:10px;color:#93a1a6;margin-top:5px;letter-spacing:.02em")}>
         Facility coordinates are DEMO_TENANT_LOCATION_REFERENCE configuration for {DEMO_TENANT_LOCATIONS.length} sites.
-        {telemetry ? " Vehicle markers replay a checked-in simulated telematics fixture; impacted orders and the revised plan come from the accepted projection." : ""}
       </div>
     </div>
-  );
-}
-
-/** Shared status layer so the Maps and schematic paths carry equal truth. */
-export function TelemetryStatus({ telemetry }: { telemetry?: TelemetryPlayback }) {
-  if (!telemetry) return null;
-  return (
-    <>
-      <div data-testid="telemetry-strip" style={css("margin-top:9px;padding-top:9px;border-top:1px solid #dbe1dc;display:flex;align-items:center;gap:14px;flex-wrap:wrap")}>
-        <span className="mono" data-testid="telemetry-classification" style={css("font-size:11px;font-weight:700;color:#a85f12;background:#f6ebd9;border:1px solid #e6cfa4;border-radius:5px;padding:3px 8px;letter-spacing:.02em")}>
-          SIMULATED TELEMETRY · NOT LIVE GPS
-        </span>
-        {telemetry.vehicles.map((v) => (
-          <span
-            key={v.vehicleId}
-            data-testid={`telemetry-vehicle-${v.vehicleId}`}
-            data-status={v.contextualStatus}
-            style={css(`display:flex;align-items:center;gap:6px;font-size:11px;color:${v.contextualStatus === "FAULT_REPORTED" ? "#a23b2b" : "#43555c"}`)}
-          >
-            <span style={css(`width:9px;height:9px;border-radius:50%;background:${v.contextualStatus === "FAULT_REPORTED" ? "#a23b2b" : "#1f6f8b"}`)} />
-            <span className="mono" style={css("font-weight:600")}>{VEHICLE_LABEL[v.vehicleId] ?? v.vehicleId}</span>
-            <span className="mono">Last sample · {v.lastSampleTime}</span>
-          </span>
-        ))}
-      </div>
-      {telemetry.healthEvents.map((e) => (
-        <div
-          key={e.event_id}
-          data-testid="refrigeration-alarm"
-          role="status"
-          style={css("margin-top:9px;background:#f3e5e1;border:1px solid #e3c3ba;border-radius:8px;padding:9px 12px;display:flex;align-items:center;gap:10px")}
-        >
-          <span className="mono" style={css("font-size:12px;font-weight:700;color:#a23b2b;letter-spacing:.02em")}>
-            Refrigeration alarm received · {VEHICLE_LABEL[e.vehicle_id] ?? e.vehicle_id}
-          </span>
-          <span className="mono" style={css("font-size:11px;color:#8a2f22")}>
-            {e.event_type} · {e.source_type} · SIMULATED FLEET TELEMATICS · {e.source_classification} · not derived from position
-          </span>
-        </div>
-      ))}
-    </>
   );
 }
