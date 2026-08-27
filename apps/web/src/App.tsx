@@ -8,37 +8,47 @@
 // Approval is the only visible human mutation gate. Every other surface
 // is read-only evidence.
 //
-// Presenter transport controls are deliberately absent from the film
-// canvas. Hidden keyboard shortcuts remain for a presenter (space / →/ R).
+// Three modes, and only one of them shows transport:
+//
+//   default        normal product behavior; autoplay drives the day
+//   ?presenter=1   filming: starts PAUSED, keyboard only, NO visible
+//                  transport of any kind
+//   ?debug=1       visible replay controls, reset, speed, and proof-branch
+//                  injection — developer diagnostics only
+//
+// No keyboard action may bypass the human approval gate, and no mode
+// grants authority the product does not already have.
 // =====================================================================
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { css } from "./styles/css";
 import { plannedStopsFrom } from "./data/contract/plannedStops";
-import { googleMapsApiKey } from "./env";
+import {
+  googleMapsApiKey,
+  debugReplayControlsEnabled,
+  presenterModeEnabled,
+} from "./env";
+import { routesForBoundary } from "./data/contract/routeGeometry";
 import { GoldenRuntimeDataSource, type EventEnvelope } from "./data/GoldenRuntimeDataSource";
 import type { FullShelfProjection } from "./types/fullShelf";
 
-import { TestModeBanner } from "./components/TestModeBanner";
 import { TodayMapWorkspace } from "./components/TodayMapWorkspace";
-import { RecallWorkspace } from "./components/RecallWorkspace";
+import { IncidentWorkspace, type StageKey } from "./components/IncidentWorkspace";
 import { HistoryLedger } from "./components/HistoryLedger";
 import { ExecutionRecordDrawer } from "./components/ExecutionRecordDrawer";
 import { SaturdayCandidatePlan } from "./components/SaturdayCandidatePlan";
 import { ConnectionError } from "./components/ConnectionError";
 import { RepairProposal } from "./components/RepairProposal";
-import { CustodyGraph } from "./components/CustodyGraph";
-import { GovernanceRefusal } from "./components/GovernanceRefusal";
-import { RecoveryProposed, RecoveryCommitted } from "./components/ServiceRecovery";
 import { EvidenceBranchPanel, type BranchKind } from "./components/EvidenceBranchPanel";
 import { FleetActivityRail, type ActivityRailEntry } from "./components/FleetActivityRail";
 
 const MAPS_API_KEY = googleMapsApiKey();
 const AUTOPLAY_MS = 900;
+const DEBUG_CONTROLS = debugReplayControlsEnabled();
+const PRESENTER = presenterModeEnabled();
 
 type View = "today" | "incident" | "history";
 type Day = "fri" | "sat";
-type IncidentTab = "intake" | "custody" | "recovery" | "evidence";
 
 /** "…T10:13:00-07:00" → "10:13". Never re-derives a date. */
 const clockOf = (iso: string): string => /T(\d{2}:\d{2})/.exec(iso)?.[1] ?? iso;
@@ -46,7 +56,8 @@ const clockOf = (iso: string): string => /T(\d{2}:\d{2})/.exec(iso)?.[1] ?? iso;
 export default function App() {
   const [view, setView] = useState<View>("today");
   const [day, setDay] = useState<Day>("fri");
-  const [incidentTab, setIncidentTab] = useState<IncidentTab>("intake");
+  // A pinned stage DISPLAYS a completed stage. It never moves the cursor.
+  const [pinnedStage, setPinnedStage] = useState<StageKey | null>(null);
   const [projection, setProjection] = useState<FullShelfProjection | null>(null);
   const [cursor, setCursor] = useState(5);
   const [loading, setLoading] = useState(true);
@@ -59,7 +70,11 @@ export default function App() {
   const [activity, setActivity] = useState<ActivityRailEntry[]>([]);
   const [branchActivity, setBranchActivity] = useState<ActivityRailEntry[]>([]);
   const [gatePaused, setGatePaused] = useState(false);
+  // The event-11 presentation hold. It is rendered only while the cursor
+  // is still AT event 11: once progression moves on, the banner is stale.
   const [recallPaused, setRecallPaused] = useState(false);
+  // Presenter mode opens paused; Space toggles progression.
+  const [paused, setPaused] = useState(PRESENTER);
   const [branch, setBranch] = useState<BranchKind | null>(null);
   const [branchBusy, setBranchBusy] = useState(false);
 
@@ -161,7 +176,10 @@ export default function App() {
           },
         );
 
-        await backend.start(snap.session_id, AUTOPLAY_MS);
+        // Presenter mode is a filming surface: it starts PAUSED and is
+        // advanced by hand, so a take is deterministic. Normal product
+        // mode autoplays the day.
+        if (!PRESENTER) await backend.start(snap.session_id, AUTOPLAY_MS);
       } catch (e) {
         if (!disposed) {
           setError(e instanceof Error ? e.message : String(e));
@@ -177,13 +195,20 @@ export default function App() {
   }, [backend, appendCanonical]);
 
   // ---- clicking Incidents releases the event-11 hold -----------------
+  // In PRESENTER mode opening Incidents changes the view and nothing
+  // else: progression stays exactly where the presenter left it, so a
+  // take is never disturbed by a navigation click.
   useEffect(() => {
     if (!recallPaused || view !== "incident" || !sessionId.current) return;
+    if (PRESENTER || paused) {
+      setRecallPaused(false);
+      return;
+    }
     (async () => {
       await backend.start(sessionId.current, AUTOPLAY_MS).catch(() => {});
       setRecallPaused(false);
     })();
-  }, [view, recallPaused, backend]);
+  }, [view, recallPaused, paused, backend]);
 
   const reconnect = useCallback(async () => {
     if (!sessionId.current) return;
@@ -264,37 +289,56 @@ export default function App() {
     }
   }, [backend, cursor]);
 
-  // ---- hidden presenter keys (no visible transport in film mode) -----
+  // ---- presenter keyboard (no visible transport in film mode) -------
+  // Shortcuts are ignored while focus is in an input or inside a dialog
+  // or drawer, and NOTHING here can bypass the human approval gate: the
+  // runtime refuses `advance` at event 8 with 409, and this handler has
+  // no approval path of its own.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!sessionId.current) return;
       const t = e.target as HTMLElement | null;
-      if (t?.matches("input, textarea, select, [contenteditable='true']")) return;
+      if (t?.closest("input, textarea, select, [contenteditable='true']")) return;
+      // A drawer or modal owns the keyboard while it is open.
+      if (t?.closest("[role='dialog']")) return;
+      if (execOpen) return;
 
       if (e.code === "Space") {
         e.preventDefault();
-        if (recallPaused) {
+        // Pause / resume progression.
+        if (paused) {
           backend.start(sessionId.current, AUTOPLAY_MS).catch(() => {});
+          setPaused(false);
           setRecallPaused(false);
         } else {
           backend.pause(sessionId.current).catch(() => {});
-          setRecallPaused(true);
+          setPaused(true);
         }
       } else if (e.code === "ArrowRight") {
         e.preventDefault();
+        // Exactly one canonical event. Refused at the gate by the runtime.
         backend.advance(sessionId.current).catch(() => {});
       } else if (e.code === "KeyR") {
         e.preventDefault();
+        // Resets only this disposable replay session.
         window.location.reload();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [recallPaused, backend]);
+  }, [paused, execOpen, backend]);
 
   const p = projection;
   const activeIncidents = p?.incidentSummary.activeCount ?? 0;
   const plannedStops = useMemo(() => (p?.dispatch ? plannedStopsFrom(p.dispatch) : []), [p?.dispatch]);
+  // Which routes apply is decided by committed state: the vehicle alarm
+  // the runtime reports, and the active plan revision it publishes.
+  const truck1Failed = !!p?.fleet?.some((v) => v.alarm.active);
+  const rev08Active = p?.currentDay.authRev === "rev08";
+  const routes = useMemo(
+    () => routesForBoundary({ truck1Failed, rev08Active }),
+    [truck1Failed, rev08Active],
+  );
   const locations = p?.referenceLocations ?? [];
 
   // Saturday opens only once the runtime supplies `next_day_draft` (24).
@@ -327,8 +371,6 @@ export default function App() {
       data-branch={branch ?? "canonical"}
       style={css("height:100vh;display:flex;flex-direction:column;background:#eef0ea;overflow:hidden")}
     >
-      <TestModeBanner dataMode={p?.dataMode ?? "SYNTHETIC_TEST"} />
-
       {/* HEADER */}
       <header
         style={css(
@@ -468,24 +510,46 @@ export default function App() {
                 day={day}
                 setDay={setDay}
                 saturdayAvailable={saturdayAvailable}
-                recallPaused={recallPaused}
+                recallPaused={recallPaused && cursor === 11}
                 onOpenIncidents={() => setView("incident")}
                 plannedStops={plannedStops}
+                routes={routes}
                 locations={locations}
               />
             ) : view === "incident" ? (
-              <IncidentView
-                p={p}
-                tab={incidentTab}
-                setTab={setIncidentTab}
-                branch={branch}
-                branchBusy={branchBusy}
-                branchAvailable={branchAvailable}
-                branchCustody={branchCustody}
-                onEnterBranch={enterBranch}
-                onExitBranch={exitBranch}
-                onOpenEvidence={() => setExecOpen(true)}
-              />
+              activeIncidents > 0 || p.recall ? (
+                <>
+                  <IncidentWorkspace
+                    p={p}
+                    cursor={cursor}
+                    pinnedStage={pinnedStage}
+                    onPinStage={setPinnedStage}
+                    onOpenEvidence={() => setExecOpen(true)}
+                  />
+                  {/* Proof branches are DEBUG-ONLY. In product and
+                      presenter modes no selection control renders; a
+                      branch injected by debug still shows its received
+                      partner response and stays isolated. */}
+                  {DEBUG_CONTROLS || branch ? (
+                    <EvidenceBranchPanel
+                      available={branchAvailable}
+                      active={branch}
+                      busy={branchBusy}
+                      proofLabel={p.branchState?.proofLabel ?? null}
+                      evidence={p.partnerEvidence?.[0]}
+                      custody={branchCustody}
+                      showControls={DEBUG_CONTROLS}
+                      onEnter={enterBranch}
+                      onExit={exitBranch}
+                    />
+                  ) : null}
+                </>
+              ) : (
+                <Empty
+                  text="No incident is open at this boundary."
+                  testId="incident-none"
+                />
+              )
             ) : (
               <HistoryLedger
                 history={p.history ?? { asOf: "", ledger: [], lineage: [], note: "" }}
@@ -521,10 +585,74 @@ export default function App() {
               </div>
             ) : null}
             {/* Canonical events, plus the CURRENT branch's entries only. */}
-            <FleetActivityRail entries={branch ? [...activity, ...branchActivity] : activity} />
+            <FleetActivityRail
+              entries={branch ? [...activity, ...branchActivity] : activity}
+              onOpenReceipt={() => setExecOpen(true)}
+            />
           </aside>
         ) : null}
       </div>
+
+      {/* DEBUG ONLY. Absent from the product and from the filmed frame. */}
+      {DEBUG_CONTROLS ? (
+        <div
+          data-testid="replay-controls"
+          style={css(
+            "flex:none;background:#0b1a20;border-top:1px solid #1e3a42;color:#cfe0e4;display:flex;" +
+              "align-items:center;gap:12px;padding:8px 18px",
+          )}
+        >
+          <span className="mono" style={css("font-size:9px;letter-spacing:.1em;color:#7e939c;font-weight:700")}>
+            DEBUG · REPLAY
+          </span>
+          <button
+            type="button"
+            data-testid="debug-play"
+            onClick={() => {
+              if (!sessionId.current) return;
+              if (paused) {
+                backend.start(sessionId.current, AUTOPLAY_MS).catch(() => {});
+                setPaused(false);
+                setRecallPaused(false);
+              } else {
+                backend.pause(sessionId.current).catch(() => {});
+                setPaused(true);
+              }
+            }}
+            style={css(
+              "background:#1f3d47;border:1px solid #2b4c56;color:#cfe0e4;border-radius:6px;" +
+                "padding:6px 12px;font-size:11.5px;font-weight:700;cursor:pointer",
+            )}
+          >
+            {paused ? "Play" : "Pause"}
+          </button>
+          <button
+            type="button"
+            data-testid="debug-advance"
+            onClick={() => sessionId.current && backend.advance(sessionId.current).catch(() => {})}
+            style={css(
+              "background:#1f3d47;border:1px solid #2b4c56;color:#cfe0e4;border-radius:6px;" +
+                "padding:6px 12px;font-size:11.5px;font-weight:600;cursor:pointer",
+            )}
+          >
+            Advance →
+          </button>
+          <button
+            type="button"
+            data-testid="debug-reset"
+            onClick={() => window.location.reload()}
+            style={css(
+              "background:#1f3d47;border:1px solid #2b4c56;color:#cfe0e4;border-radius:6px;" +
+                "padding:6px 12px;font-size:11.5px;font-weight:500;cursor:pointer",
+            )}
+          >
+            Reset
+          </button>
+          <span className="mono" data-testid="debug-cursor" style={css("font-size:10px;color:#9fb4ba;margin-left:auto")}>
+            EVENT {cursor} / 25
+          </span>
+        </div>
+      ) : null}
 
       {execOpen ? (
         <ExecutionRecordDrawer evidence={p?.executionEvidence} onClose={() => setExecOpen(false)} />
@@ -543,6 +671,7 @@ function TodayView({
   recallPaused,
   onOpenIncidents,
   plannedStops,
+  routes,
   locations,
 }: {
   p: FullShelfProjection;
@@ -552,13 +681,23 @@ function TodayView({
   recallPaused: boolean;
   onOpenIncidents: () => void;
   plannedStops: ReturnType<typeof plannedStopsFrom>;
+  routes: ReturnType<typeof routesForBoundary>;
   locations: NonNullable<FullShelfProjection["referenceLocations"]>;
 }) {
   // The alarm is a reported mechanical fault carried on the vehicle
   // itself, raised at event 6. It is NOT derived from the proposal — the
-  // failure is visible before any repair is proposed — and never from a
-  // position, of which none exists.
-  const alarmed = p.fleet?.find((v) => v.alarm.active);
+  // failure is visible before any repair is proposed.
+  //
+  // The PAGE-LEVEL alert belongs to the unresolved incident, not to the
+  // vehicle: once the runtime reports INC-2210 RESOLVED (rev08 committed)
+  // the red banner goes, while Truck 1 stays truthfully unavailable in
+  // the fleet inventory below. The truck is still broken; the incident is
+  // no longer outstanding work.
+  const alarmedVehicle = p.fleet?.find((v) => v.alarm.active);
+  const alarmIncidentOpen = p.incidentSummary.incidents.some(
+    (i) => i.id === alarmedVehicle?.alarm.incidentId && i.active,
+  );
+  const alarmed = alarmIncidentOpen ? alarmedVehicle : undefined;
 
   return (
     <>
@@ -584,7 +723,6 @@ function TodayView({
             <div className="mono" style={css("font-size:9.5px;color:#9a4a3a;margin-top:4px")}>
               reported mechanical fault
               {alarmed.alarm.raisedAtEvent ? ` · raised at event ${alarmed.alarm.raisedAtEvent}` : ""}
-              {" "}· not derived from position
             </div>
           </div>
         </div>
@@ -654,10 +792,30 @@ function TodayView({
             Saturday · Draft
           </button>
         </div>
+
+        {saturdayAvailable && day === "fri" ? (
+          <button
+            type="button"
+            data-testid="saturday-ready-cta"
+            onClick={() => setDay("sat")}
+            style={css(
+              "display:flex;align-items:center;gap:8px;background:#fbf3e2;border:1px solid #e6cf9e;" +
+                "color:#7a4f10;border-radius:8px;padding:7px 13px;font-size:12.5px;font-weight:700;cursor:pointer",
+            )}
+          >
+            <span style={css("width:8px;height:8px;border-radius:50%;background:#c98a2e")} />
+            Saturday draft ready — Review plan →
+          </button>
+        ) : null}
       </div>
 
       {day === "sat" && p.tomorrow ? (
-        <SaturdayCandidatePlan view={p.tomorrow} locations={locations} />
+        <SaturdayCandidatePlan
+          view={p.tomorrow}
+          locations={locations}
+          mapsApiKey={MAPS_API_KEY}
+          locationDisclosure={p.locationDisclosure}
+        />
       ) : (
         <TodayMapWorkspace
           currentDay={p.currentDay}
@@ -675,8 +833,10 @@ function TodayView({
               },
             }
           }
+          fleet={p.fleet}
           mapsApiKey={MAPS_API_KEY}
           plannedStops={plannedStops}
+          routes={routes}
           locations={locations}
           locationDisclosure={p.locationDisclosure}
         />
@@ -686,135 +846,6 @@ function TodayView({
 }
 
 // ---------------------------------------------------------------------
-
-const INCIDENT_TABS: [IncidentTab, string][] = [
-  ["intake", "Intake"],
-  ["custody", "Custody"],
-  ["recovery", "Recovery"],
-  ["evidence", "Selected proof"],
-];
-
-function IncidentView({
-  p,
-  tab,
-  setTab,
-  branch,
-  branchBusy,
-  branchAvailable,
-  branchCustody,
-  onEnterBranch,
-  onExitBranch,
-  onOpenEvidence,
-}: {
-  p: FullShelfProjection;
-  tab: IncidentTab;
-  setTab: (t: IncidentTab) => void;
-  branch: BranchKind | null;
-  branchBusy: boolean;
-  branchAvailable: boolean;
-  branchCustody: { total: number; confirmed: number; unconfirmed: number } | null;
-  onEnterBranch: (k: BranchKind) => void;
-  onExitBranch: () => void;
-  onOpenEvidence: () => void;
-}) {
-  const recallIncident = p.incidentSummary.incidents.find((i) => i.type === "FOOD_SAFETY_RECALL");
-
-  return (
-    <>
-      <div style={css("flex:none;display:flex;align-items:center;gap:12px;flex-wrap:wrap")}>
-        <div className="mono" style={css("font-size:11px;color:#74848a;letter-spacing:.02em")}>
-          {recallIncident?.id ?? "Incidents"} · {recallIncident?.affectedLotId ?? "—"}
-        </div>
-        {recallIncident ? (
-          <span
-            className="mono"
-            data-testid="incident-status"
-            style={css(
-              "font-size:9.5px;font-weight:700;letter-spacing:.06em;color:#8a5a12;background:#f8eedc;" +
-                "border:1px solid #ead3a9;border-radius:5px;padding:4px 9px",
-            )}
-          >
-            {recallIncident.status}
-          </span>
-        ) : null}
-
-        {/* Tabs select views only — NAVIGATION_ONLY, no cursor change. */}
-        <div style={css("display:flex;background:#e2e6df;border-radius:9px;padding:3px;margin-left:auto")}>
-          {INCIDENT_TABS.map(([id, label]) => (
-            <button
-              key={id}
-              type="button"
-              onClick={() => setTab(id)}
-              aria-pressed={tab === id}
-              data-testid={`incident-tab-${id}`}
-              style={css(
-                `background:${tab === id ? "#16323b" : "transparent"};color:${tab === id ? "#eef4f4" : "#5c6b71"};` +
-                  "border:none;border-radius:7px;padding:6px 13px;font-size:12px;font-weight:600;cursor:pointer",
-              )}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {tab === "intake" ? (
-        p.recall ? (
-          <RecallWorkspace
-            recall={p.recall}
-            source={p.recallSource}
-            onToday={() => setTab("custody")}
-            onGo={() => setTab("custody")}
-            onOpenEvidence={onOpenEvidence}
-          />
-        ) : (
-          <Empty text="No recall intake has been committed at this boundary." testId="incident-intake-empty" />
-        )
-      ) : null}
-
-      {tab === "custody" ? (
-        p.custody ? (
-          <CustodyGraph custody={p.custody} onOpenEvidence={onOpenEvidence} />
-        ) : (
-          <Empty text="Custody reconciliation has not been committed at this boundary." testId="incident-custody-empty" />
-        )
-      ) : null}
-
-      {tab === "recovery" ? (
-        <div style={css("display:flex;flex-direction:column;gap:14px")}>
-          {/* Event 19 advisory and event 20 committed are genuinely
-              different states. The committed allocation replaces the
-              advisory one; it never merely relabels it. */}
-          {p.recovery ? (
-            <RecoveryCommitted recovery={p.recovery} />
-          ) : p.recoveryProposal ? (
-            <RecoveryProposed proposal={p.recoveryProposal} />
-          ) : (
-            <Empty text="No recovery has been proposed at this boundary." testId="incident-recovery-empty" />
-          )}
-
-          {/* Event 21 — closure refused, zero domain mutations. */}
-          {p.governance ? (
-            <GovernanceRefusal governance={p.governance} onOpenEvidence={onOpenEvidence} />
-          ) : null}
-        </div>
-      ) : null}
-
-      {tab === "evidence" ? (
-        <EvidenceBranchPanel
-          available={branchAvailable}
-          active={branch}
-          busy={branchBusy}
-          proofLabel={p.branchState?.proofLabel ?? null}
-          evidence={p.partnerEvidence?.[0]}
-          custody={branchCustody}
-          onEnter={onEnterBranch}
-          onExit={onExitBranch}
-        />
-      ) : null}
-    </>
-  );
-}
 
 function Empty({ text, testId }: { text: string; testId: string }) {
   return (

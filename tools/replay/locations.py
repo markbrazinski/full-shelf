@@ -5,10 +5,10 @@ geocoding and calls no Google service; coordinates were resolved once against
 OpenStreetMap Nominatim and are recorded here with their provenance so any
 reviewer can re-check them.
 
+Display names are SYNTHETIC facility names for a deterministic demonstration.
 Every entry carries location_mode CONFIGURED_REFERENCE and live_gps false. No
-live GPS, tracking, or operational affiliation with the named organizations is
-claimed. The organizations are real East Bay food-security providers used as
-plausible geography for a deterministic demonstration only.
+live GPS, tracking, or affiliation with any real organization is claimed. The
+coordinates are plausible East Bay geography only.
 """
 
 DISCLOSURE = (
@@ -22,16 +22,16 @@ GEOCODE_SOURCE_URL = "https://nominatim.openstreetmap.org/"
 GEOCODE_LICENSE = "© OpenStreetMap contributors, ODbL"
 GEOCODE_RESOLVED_ON = "2026-08-25"
 
-# match_quality records how the geocoder resolved each query, so a reviewer can
-# see which coordinates landed on the named organization and which landed on the
-# street address only. It is deliberately not rounded up to "verified" for all.
-#   ORGANIZATION_MATCH - the result names the organization itself
-#   ADDRESS_MATCH      - the result names the street address, not the org
+# match_quality records how precisely the geocoder resolved each coordinate,
+# retained so a reviewer can see the provenance of the geography. Display names
+# are synthetic and are NOT what was geocoded.
+#   ORGANIZATION_MATCH - the query resolved to a named site
+#   ADDRESS_MATCH      - the query resolved to a street address only
 REFERENCE_LOCATIONS = (
     {
         "location_id": "FS-LOC-ACCFB",
-        "display_name": "Alameda County Community Food Bank",
-        "street_address": "7900 Edgewater Drive, Oakland, CA",
+        "display_name": "Bay Harvest Food Bank",
+        "street_address": "1 Harvest Way, Oakland, CA",
         "latitude": 37.741645,
         "longitude": -122.201189,
         "role": "HUB",
@@ -46,8 +46,8 @@ REFERENCE_LOCATIONS = (
     },
     {
         "location_id": "FS-LOC-BFN",
-        "display_name": "Berkeley Food Network",
-        "street_address": "1925 Ninth Street, Berkeley, CA",
+        "display_name": "Berkeley Community Pantry",
+        "street_address": "200 Shattuck Commons, Berkeley, CA",
         "latitude": 37.869016,
         "longitude": -122.294151,
         "role": "AGENCY",
@@ -62,8 +62,8 @@ REFERENCE_LOCATIONS = (
     },
     {
         "location_id": "FS-LOC-AFB",
-        "display_name": "Alameda Food Bank",
-        "street_address": "677 West Ranger Avenue, Alameda, CA",
+        "display_name": "Alameda Family Pantry",
+        "street_address": "45 Marina Court, Alameda, CA",
         "latitude": 37.784686,
         "longitude": -122.299163,
         "role": "AGENCY",
@@ -78,8 +78,8 @@ REFERENCE_LOCATIONS = (
     },
     {
         "location_id": "FS-LOC-SLCFP",
-        "display_name": "San Leandro Community Food Pantry",
-        "street_address": "14235 Bancroft Avenue, San Leandro, CA",
+        "display_name": "East Oakland Community Pantry",
+        "street_address": "3100 Foothill Commons, Oakland, CA",
         "latitude": 37.712594,
         "longitude": -122.137318,
         "role": "AGENCY",
@@ -94,8 +94,8 @@ REFERENCE_LOCATIONS = (
     },
     {
         "location_id": "FS-LOC-PHFS",
-        "display_name": "Peace Haven Freedom Store",
-        "street_address": "1063 A Street, Hayward, CA",
+        "display_name": "Hayward Neighborhood Food Center",
+        "street_address": "820 Mission Court, Hayward, CA",
         "latitude": 37.674445,
         "longitude": -122.082600,
         "role": "AGENCY",
@@ -110,8 +110,8 @@ REFERENCE_LOCATIONS = (
     },
     {
         "location_id": "FS-LOC-TCV",
-        "display_name": "Tri-City Volunteers Food Bank",
-        "street_address": "37350 Joseph Street, Fremont, CA",
+        "display_name": "Fremont Family Pantry",
+        "street_address": "500 Mission Creek Way, Fremont, CA",
         "latitude": 37.555890,
         "longitude": -122.007661,
         "role": "AGENCY",

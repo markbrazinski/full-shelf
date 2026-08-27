@@ -53,10 +53,6 @@ export function ExecutionRecordDrawer({ evidence, onClose }: Props) {
           <span role="button" tabIndex={0} onClick={onClose} onKeyDown={(e) => e.key === "Enter" && onClose()} style={css("font-size:20px;color:#a4b4ba;cursor:pointer;line-height:1;padding:2px 6px")}>✕</span>
         </div>
         <div style={css("padding:18px 20px 26px")}>
-          <div style={css("background:#3a2f12;color:#e6d6a8;border-radius:8px;padding:8px 12px;margin-bottom:14px")}>
-            <span className="mono" style={css("font-size:10px;font-weight:700;letter-spacing:.1em")}>DETERMINISTIC TEST MODE</span>
-            <span className="mono" style={css("font-size:11px;margin-left:8px")}>live references bound by the backend adapter</span>
-          </div>
           <div style={css("background:#fff;border:1px solid #d5d8d2;border-radius:10px;padding:15px 16px;margin-bottom:14px")}>
             <div style={css("display:flex;align-items:center;justify-content:space-between;margin-bottom:10px")}>
               <div className="mono" style={css("font-size:11px;letter-spacing:.08em;color:#74848a;font-weight:600")}>COORDINATOR EXECUTION</div>
@@ -118,6 +114,20 @@ export function ExecutionRecordDrawer({ evidence, onClose }: Props) {
             <AuthRow glyph="⛭" glyphColor="#16323b" title="Deterministic policy result" body={ev.authority.policyText} />
             <AuthRow glyph="●" glyphColor="#3f7d5a" title="Ledger receipt" mono monoBody={ledgerLine} />
             <AuthRow glyph="●" glyphColor="#3f7d5a" title="KMS verification" mono monoBody={kmsLine} last />
+          </div>
+
+          {/* The ONE synthetic-replay disclosure. It lives here so the
+              operating surfaces stay free of repeated demo disclaimers. */}
+          <div
+            data-testid="synthetic-replay-disclosure"
+            style={css("background:#eef0ea;border:1px solid #dfe4e0;border-radius:10px;padding:12px 16px;margin-bottom:14px")}
+          >
+            <div className="mono" style={css("font-size:11px;letter-spacing:.08em;color:#74848a;font-weight:600;margin-bottom:6px")}>
+              REPLAY DISCLOSURE
+            </div>
+            <div style={css("font-size:12px;color:#43555c;line-height:1.5")}>
+              Synthetic replay using configured facilities and planned reference routes.
+            </div>
           </div>
 
           {ev.refusal && (

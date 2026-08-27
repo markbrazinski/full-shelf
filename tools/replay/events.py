@@ -183,7 +183,7 @@ CANONICAL_EVENTS = (
         15, "FS-E015-MOVEMENT-BARRIER-ACTIVATED", "MOVEMENT_BARRIER_ACTIVATED",
         T(10, 5), "AUTONOMOUS_CHAINED", POLICY, RECALL_INC,
         _a("CRITICAL", "Movement barrier active",
-           "Further movement of LTC-4471 is barred. Site 01 acknowledgment opened."),
+           "Further movement of LTC-4471 is barred. East Bay Distribution Annex acknowledgment opened."),
         fixture_key="custody",
         receipt_refs=("fixture-RCT-movement-barrier",)),
     CanonicalEvent(
@@ -202,17 +202,17 @@ CANONICAL_EVENTS = (
         18, "FS-E018-CUSTODY-RECONCILED", "CUSTODY_RECONCILED",
         T(10, 10), "AUTONOMOUS_CHAINED", AGENT_CUSTODY, RECALL_INC,
         _a("ATTENTION", "Custody reconciled",
-           "96 unique, 88 confirmed, 8 unconfirmed at Site 01. No double count.")),
+           "96 unique, 88 confirmed, 8 unconfirmed at East Bay Distribution Annex. No double count.")),
     CanonicalEvent(
         19, "FS-E019-SAFE-RECOVERY-PROPOSED", "SAFE_RECOVERY_PROPOSED",
         T(10, 10), "AUTONOMOUS_CHAINED", AGENT_FULFILLMENT, RECALL_INC,
         _a("ATTENTION", "Safe recovery proposed",
-           "18 cases to Agency 01, 22 to Agency 02. Agency 03 short 20.")),
+           "18 cases to Berkeley Community Pantry, 22 to Alameda Family Pantry. East Oakland Community Pantry short 20.")),
     CanonicalEvent(
         20, "FS-E020-SAFE-RECOVERY-COMMITTED", "SAFE_RECOVERY_COMMITTED",
         T(10, 10), "AUTONOMOUS_CHAINED", POLICY, RECALL_INC,
         _a("SUCCESS", "Safe recovery committed",
-           "Exactly 40 safe replacements. Agency 03 shortfall SF-A03 is 20."),
+           "Exactly 40 safe replacements. East Oakland Community Pantry shortfall SF-A03 is 20."),
         fixture_key="recovery",
         receipt_refs=("fixture-RCT-safe-recovery",)),
     CanonicalEvent(
@@ -231,7 +231,7 @@ CANONICAL_EVENTS = (
         23, "FS-E023-DAY-OUTCOME-PUBLISHED", "DAY_OUTCOME_PUBLISHED",
         T(16, 30), "AUTONOMOUS_SCHEDULED", PROJECTION, RECALL_INC,
         _a("INFO", "Friday outcome published",
-           "88/96 confirmed, 40 recovered, 20 short, Site 01 open."),
+           "88/96 confirmed, 40 recovered, 20 short, East Bay Distribution Annex open."),
         fixture_key="outcome"),
     CanonicalEvent(
         24, "FS-E024-SATURDAY-DRAFT-PROPOSED", "SATURDAY_DRAFT_PROPOSED",
@@ -243,7 +243,7 @@ CANONICAL_EVENTS = (
         25, "FS-E025-OBLIGATIONS-CARRIED-FORWARD", "OBLIGATIONS_CARRIED_FORWARD",
         T(17, 0), "AUTONOMOUS_CHAINED", PROJECTION, RECALL_INC,
         _a("ATTENTION", "Obligations carried forward",
-           "LTC-4471 barrier, Agency 03 short 20, Site 01 acknowledgment, "
+           "LTC-4471 barrier, East Oakland Community Pantry short 20, East Bay Distribution Annex acknowledgment, "
            "and the unresolved incident.")),
 )
 

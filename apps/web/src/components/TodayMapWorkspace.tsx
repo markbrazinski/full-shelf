@@ -1,14 +1,31 @@
 import { useCallback, useMemo, useState } from "react";
 import { css } from "../styles/css";
-import type { CurrentDayView, DispatchStop, DispatchView, MapLocation } from "../types/fullShelf";
+import type {
+  CurrentDayView,
+  DispatchStop,
+  DispatchView,
+  FleetVehicleView,
+  MapLocation,
+} from "../types/fullShelf";
 import { PlannedDispatchMap, type PlannedStop } from "./PlannedDispatchMap";
 import { schematicPoints } from "./schematicPoints";
+import {
+  ROUTE_ATTRIBUTION,
+  ROUTE_COLORS,
+  ROUTE_LABELS,
+  type PlannedRoute,
+} from "../data/contract/routeGeometry";
+import { facilityName } from "../data/contract/facilityNames";
 
 interface Props {
   currentDay: CurrentDayView;
   dispatch: DispatchView;
+  /** Authoritative fleet, including vehicles no longer holding a manifest. */
+  fleet?: FleetVehicleView[];
   mapsApiKey?: string;
   plannedStops: PlannedStop[];
+  /** Committed reference routes that apply at this boundary. */
+  routes: PlannedRoute[];
   /** The runtime's six configured reference locations. */
   locations: MapLocation[];
   /** The runtime's own disclosure, rendered verbatim. */
@@ -36,7 +53,7 @@ const TONE = {
   recall: { accent: "#a23b2b", bg: "#f5e8e4", fg: "#8a2f22" },
 } as const;
 
-export function TodayMapWorkspace({ currentDay, dispatch, mapsApiKey, plannedStops, locations, locationDisclosure }: Props) {
+export function TodayMapWorkspace({ currentDay, dispatch, fleet, mapsApiKey, plannedStops, routes, locations, locationDisclosure }: Props) {
   const [mapFailed, setMapFailed] = useState(false);
   const onMapFailure = useCallback(() => setMapFailed(true), []);
   const showGoogleMap = !!mapsApiKey && locations.length > 0 && !mapFailed;
@@ -52,15 +69,35 @@ export function TodayMapWorkspace({ currentDay, dispatch, mapsApiKey, plannedSto
       .map(([vehicleId, rows]) => ({
         vehicleId,
         label: vehicleId === "PARTNER_PICKUP"
-          ? "Partner pickup"
+          ? `Partner fulfillment · ${facilityName("PARTNER")}`
           : dispatch.vehicles[vehicleId === "TRUCK-01" ? "t1" : vehicleId === "TRUCK-02" ? "t2" : vehicleId]?.label ?? vehicleId,
         rows: rows.sort((a, b) => (a.sequence ?? 999) - (b.sequence ?? 999)),
       }))
       .sort((a, b) => a.vehicleId.localeCompare(b.vehicleId));
   }, [dispatch.stops, dispatch.vehicles]);
-  const stopCount = manifests.reduce((n, manifest) => n + manifest.rows.length, 0);
-  const caseCount = manifests.reduce(
-    (n, manifest) => n + manifest.rows.reduce((sum, stop) => sum + (stop.cases ?? 0), 0), 0,
+  const allRows = manifests.flatMap((m) => m.rows);
+  // A commitment already DELIVERED under a superseded revision is still
+  // part of today's work. The active dispatch block no longer carries it,
+  // so it is read from the committed commitments instead.
+  const deliveredCommitments = (currentDay.commitments ?? []).filter(
+    (c) => c.stateTone === "delivered" && !allRows.some((r) => r.orderId === c.id),
+  );
+  const stopCount = allRows.length + deliveredCommitments.length;
+  // Delivered and remaining PARTITION the day's cases: a delivered row is
+  // never also counted as remaining, and a commitment already represented
+  // by a manifest row is never re-added. 18 delivered + 78 remaining = 96.
+  const deliveredCases =
+    allRows.filter((r) => r.tone === "delivered").reduce((sum, r) => sum + (r.cases ?? 0), 0) +
+    deliveredCommitments.reduce((sum, c) => sum + (c.cases ?? 0), 0);
+  const remainingCases = allRows
+    .filter((r) => r.tone !== "delivered")
+    .reduce((sum, r) => sum + (r.cases ?? 0), 0);
+  const caseCount = deliveredCases + remainingCases;
+
+  // Vehicles the runtime still reports but that hold no active manifest —
+  // a failed truck must stay visible rather than silently disappearing.
+  const unavailableVehicles = (fleet ?? []).filter(
+    (v) => !v.isOperational && !manifests.some((m) => m.vehicleId === v.vehicleId),
   );
 
   return (
@@ -74,7 +111,9 @@ export function TodayMapWorkspace({ currentDay, dispatch, mapsApiKey, plannedSto
         <div style={css("display:flex;gap:8px;align-items:stretch") }>
           <Metric label="PLAN" value={currentDay.authRev ?? "—"} />
           <Metric label="STOPS" value={String(stopCount)} />
-          <Metric label="CASES" value={String(caseCount)} />
+          <Metric label="TOTAL CASES" value={String(caseCount)} testId="total-cases" />
+          <Metric label="DELIVERED" value={String(deliveredCases)} testId="delivered-cases" />
+          <Metric label="REMAINING" value={String(remainingCases)} testId="remaining-cases" />
         </div>
       </div>
 
@@ -91,6 +130,7 @@ export function TodayMapWorkspace({ currentDay, dispatch, mapsApiKey, plannedSto
             {showGoogleMap ? (
               <PlannedDispatchMap
                 stops={plannedStops}
+                routes={routes}
                 locations={locations}
                 disclosure={locationDisclosure}
                 label={googleMapLabel}
@@ -100,6 +140,7 @@ export function TodayMapWorkspace({ currentDay, dispatch, mapsApiKey, plannedSto
             ) : (
               <RouteSchematic
                 stops={Object.values(dispatch.stops)}
+                routes={routes}
                 locations={locations}
                 disclosure={locationDisclosure}
                 provenance={fallbackLabel}
@@ -117,14 +158,61 @@ export function TodayMapWorkspace({ currentDay, dispatch, mapsApiKey, plannedSto
             <span className="mono" style={css("font-size:10px;color:#60747a")}>{manifests.length} assignments</span>
           </div>
           {manifests.map((manifest) => <Manifest key={manifest.vehicleId} vehicleId={manifest.vehicleId} label={manifest.label} stops={manifest.rows} />)}
+
+          {/* A vehicle that lost its manifest stays in the fleet
+              inventory, truthfully unavailable, with the work it already
+              completed before it failed. */}
+          {unavailableVehicles.map((v) => (
+            <div
+              key={v.vehicleId}
+              data-testid="unavailable-vehicle"
+              style={css("background:#fff;border:1px solid #e6bcb0;border-radius:10px;overflow:hidden")}
+            >
+              <div style={css("display:flex;align-items:center;justify-content:space-between;padding:9px 11px;background:#fdf5f3;border-bottom:1px solid #f0d5cd")}>
+                <div style={css("display:flex;align-items:center;gap:8px")}>
+                  <span style={css("width:8px;height:8px;border-radius:50%;background:#c0503a")} />
+                  <strong style={css("font-size:11px;color:#20353c")}>{v.displayName}</strong>
+                  <span className="mono" style={css("font-size:8px;color:#89969a")}>{v.vehicleId}</span>
+                </div>
+                <span className="mono" style={css("font-size:9px;color:#8a2f22;font-weight:700")}>
+                  UNAVAILABLE
+                </span>
+              </div>
+              <div className="mono" style={css("font-size:9.5px;color:#8a2f22;padding:8px 11px;line-height:1.5")}>
+                {(v.status ?? "").replace(/_/g, " ").toLowerCase()} · holds no active manifest under the current plan
+              </div>
+              {deliveredCommitments
+                .filter((c) => c.vehicle && c.vehicle.includes("1"))
+                .map((c) => (
+                  <div
+                    key={c.id}
+                    data-testid="delivered-commitment"
+                    style={css("display:grid;grid-template-columns:27px minmax(0,1fr) auto;gap:8px;align-items:center;padding:8px 10px;border-top:1px solid #f3ece9")}
+                  >
+                    <span className="mono" style={css("width:23px;height:23px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;background:#e8f2ec;color:#2f6748")}>✓</span>
+                    <div style={css("min-width:0")}>
+                      <div style={css("display:flex;align-items:baseline;gap:6px")}>
+                        <strong className="mono" style={css("font-size:10.5px;color:#20353c")}>{c.id}</strong>
+                        <span style={css("font-size:11px;color:#40555c;overflow:hidden;text-overflow:ellipsis;white-space:nowrap")}>{facilityName(c.agency)}</span>
+                      </div>
+                      <div className="mono" style={css("font-size:8.5px;color:#839196;margin-top:2px")}>{c.lot}</div>
+                    </div>
+                    <div style={css("text-align:right")}>
+                      <div className="mono" style={css("font-size:11px;font-weight:700;color:#20353c")}>{c.cases}</div>
+                      <div className="mono" style={css("font-size:7.5px;color:#2f6748;text-transform:uppercase;margin-top:2px")}>delivered</div>
+                    </div>
+                  </div>
+                ))}
+            </div>
+          ))}
         </aside>
       </div>
     </section>
   );
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
-  return <div style={css("min-width:72px;background:#fff;border:1px solid #d7ddd8;border-radius:8px;padding:8px 10px") }>
+function Metric({ label, value, testId }: { label: string; value: string; testId?: string }) {
+  return <div data-testid={testId} style={css("min-width:72px;background:#fff;border:1px solid #d7ddd8;border-radius:8px;padding:8px 10px") }>
     <div className="mono" style={css("font-size:8.5px;letter-spacing:.1em;color:#839196;font-weight:700")}>{label}</div>
     <div className="mono" style={css("font-size:13px;color:#1d343c;font-weight:700;margin-top:2px")}>{value}</div>
   </div>;
@@ -142,7 +230,7 @@ function Manifest({ vehicleId, label, stops }: { vehicleId: string; label: strin
       const tone = TONE[stop.tone];
       return <div key={stop.orderId} style={css("display:grid;grid-template-columns:27px minmax(0,1fr) auto;gap:8px;align-items:center;padding:8px 10px;border-bottom:1px solid #eff1ed") }>
         <span className="mono" style={css(`width:23px;height:23px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;background:${tone.bg};color:${tone.fg}`)}>{stop.sequence ?? index + 1}</span>
-        <div style={css("min-width:0") }><div style={css("display:flex;align-items:baseline;gap:6px") }><strong className="mono" style={css("font-size:10.5px;color:#20353c")}>{stop.orderId}</strong><span style={css("font-size:11px;color:#40555c;overflow:hidden;text-overflow:ellipsis;white-space:nowrap")}>{stop.agency ?? "Pickup staging"}</span></div><div className="mono" style={css("font-size:8.5px;color:#839196;margin-top:2px")}>{stop.lotId ?? "lot not reported"}</div></div>
+        <div style={css("min-width:0") }><div style={css("display:flex;align-items:baseline;gap:6px") }><strong className="mono" style={css("font-size:10.5px;color:#20353c")}>{stop.orderId}</strong><span style={css("font-size:11px;color:#40555c;overflow:hidden;text-overflow:ellipsis;white-space:nowrap")}>{stop.agency ? facilityName(stop.agency) : facilityName("PARTNER")}</span></div><div className="mono" style={css("font-size:8.5px;color:#839196;margin-top:2px")}>{stop.lotId ?? "lot not reported"}</div></div>
         <div style={css("text-align:right") }><div className="mono" style={css("font-size:11px;font-weight:700;color:#20353c")}>{stop.cases ?? "—"}</div><div className="mono" style={css(`font-size:7.5px;color:${tone.fg};text-transform:uppercase;margin-top:2px`) }>{stop.tone}</div></div>
       </div>;
     })}
@@ -151,11 +239,13 @@ function Manifest({ vehicleId, label, stops }: { vehicleId: string; label: strin
 
 function RouteSchematic({
   stops,
+  routes,
   locations,
   disclosure,
   provenance,
 }: {
   stops: DispatchStop[];
+  routes: PlannedRoute[];
   locations: MapLocation[];
   disclosure?: string;
   provenance: string;
@@ -163,6 +253,20 @@ function RouteSchematic({
   const points = schematicPoints(locations);
   const hub = locations.find((l) => l.role === "HUB");
   const hubPoint = (hub && points.get(hub.id)) ?? [50, 50];
+
+  // The fallback projects the SAME committed road geometry the Google
+  // basemap draws, using the same lat/lon envelope as the site markers,
+  // so the degraded surface is the same truth without a basemap under it.
+  const lats = locations.map((l) => l.lat);
+  const lons = locations.map((l) => l.lon);
+  const [minLat, maxLat] = [Math.min(...lats), Math.max(...lats)];
+  const [minLon, maxLon] = [Math.min(...lons), Math.max(...lons)];
+  const spanLat = maxLat - minLat || 1;
+  const spanLon = maxLon - minLon || 1;
+  const project = ([lat, lon]: [number, number]): [number, number] => [
+    14 + ((lon - minLon) / spanLon) * 72,
+    12 + ((maxLat - lat) / spanLat) * 76,
+  ];
 
   // A stop with no configured location is dropped rather than placed at
   // an invented coordinate.
@@ -174,31 +278,57 @@ function RouteSchematic({
     })
     .filter((x): x is { stop: DispatchStop; loc: MapLocation; point: [number, number] } => x !== null);
 
+  const legendRoles = Array.from(new Set(routes.map((r) => r.role)));
+
   return <div>
-    <div data-testid="dispatch-svg-schematic" style={css("position:relative;height:430px;border:1px solid #d6ded9;border-radius:8px;overflow:hidden;background:#e9ede8") }>
+    <div data-testid="dispatch-svg-schematic" style={css("position:relative;height:410px;border:1px solid #d6ded9;border-radius:8px;overflow:hidden;background:#eef1ec") }>
       <svg viewBox="0 0 100 100" preserveAspectRatio="none" style={css("position:absolute;inset:0;width:100%;height:100%") }>
-        <rect width="100" height="100" fill="#e9ede8" /><g stroke="#dce3dd" strokeWidth="1.8"><path d="M0 18 H100 M0 50 H100 M0 82 H100" /><path d="M13 0 V100 M39 0 V100 M68 0 V100 M90 0 V100" /></g>
-        {placed.map(({ stop, point }) => {
-          const tone = TONE[stop.tone];
-          return <line key={stop.orderId} x1={hubPoint[0]} y1={hubPoint[1]} x2={point[0]} y2={point[1]} stroke={tone.accent} strokeWidth=".65" strokeDasharray={stop.tone === "delivered" ? undefined : "1.6 1.3"} opacity=".78" />;
+        <rect width="100" height="100" fill="#eef1ec" />
+        {routes.map((route) => {
+          if (route.path.length < 2) return null;
+          const d = route.path
+            .map((c, i) => `${i === 0 ? "M" : "L"}${project(c).map((n) => n.toFixed(2)).join(" ")}`)
+            .join(" ");
+          return (
+            <path
+              key={route.key}
+              data-testid={`schematic-route-${route.role.toLowerCase()}`}
+              d={d}
+              fill="none"
+              stroke={ROUTE_COLORS[route.role]}
+              strokeWidth={route.role === "UNAVAILABLE" ? ".6" : ".85"}
+              strokeDasharray={route.dashed ? "1.8 1.4" : undefined}
+              strokeOpacity={route.role === "UNAVAILABLE" ? ".55" : ".95"}
+              strokeLinejoin="round"
+              strokeLinecap="round"
+            />
+          );
         })}
       </svg>
       {hub ? (
-        <div style={css(`position:absolute;left:${hubPoint[0]}%;top:${hubPoint[1]}%;transform:translate(-50%,-50%);background:#16323b;color:#fff;border-radius:8px;padding:8px 10px;box-shadow:0 3px 10px rgba(22,50,59,.25);white-space:nowrap`) }>
-          <div className="mono" style={css("font-size:9px;font-weight:700;letter-spacing:.08em")}>HUB</div>
+        <div style={css(`position:absolute;left:${hubPoint[0]}%;top:${hubPoint[1]}%;transform:translate(-50%,-50%);background:#16323b;color:#fff;border-radius:8px;padding:7px 9px;box-shadow:0 3px 10px rgba(22,50,59,.25);white-space:nowrap`) }>
+          <div className="mono" style={css("font-size:8.5px;font-weight:700;letter-spacing:.08em")}>HUB</div>
           <div style={css("font-size:10px;color:#b8c9ce;margin-top:2px")}>{hub.name}</div>
         </div>
       ) : null}
       {placed.map(({ stop, loc, point }, index) => {
         const tone = TONE[stop.tone];
-        return <div key={stop.orderId} style={css(`position:absolute;left:${point[0]}%;top:${point[1]}%;transform:translate(-50%,-50%);display:flex;align-items:center;gap:7px;background:#fff;border:1px solid #d2d9d4;border-left:4px solid ${tone.accent};border-radius:8px;padding:7px 9px;box-shadow:0 2px 7px rgba(31,51,57,.13);max-width:190px`)}><span className="mono" style={css(`width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:${tone.accent};color:#fff;font-size:8px;font-weight:700`)}>{stop.sequence ?? index + 1}</span><div style={css("min-width:0")}><div style={css("font-size:10px;font-weight:700;color:#20353c;overflow:hidden;text-overflow:ellipsis;white-space:nowrap")}>{stop.orderId} · {loc.name}</div><div className="mono" style={css(`font-size:8.5px;color:${tone.fg};margin-top:2px`) }>{stop.cases ?? "—"} cases</div></div></div>;
+        return <div key={stop.orderId} style={css(`position:absolute;left:${point[0]}%;top:${point[1]}%;transform:translate(-50%,-50%);display:flex;align-items:center;gap:7px;background:#fff;border:1px solid #d2d9d4;border-left:4px solid ${tone.accent};border-radius:8px;padding:6px 8px;box-shadow:0 2px 7px rgba(31,51,57,.13);max-width:186px`)}><span className="mono" style={css(`width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:${tone.accent};color:#fff;font-size:8px;font-weight:700`)}>{stop.sequence ?? index + 1}</span><div style={css("min-width:0")}><div style={css("font-size:10px;font-weight:700;color:#20353c;overflow:hidden;text-overflow:ellipsis;white-space:nowrap")}>{stop.orderId} · {loc.name}</div><div className="mono" style={css(`font-size:8.5px;color:${tone.fg};margin-top:2px`) }>{stop.cases ?? "—"} cases</div></div></div>;
       })}
     </div>
-    <div className="mono" data-testid="schematic-provenance-label" style={css("font-size:9px;color:#75878c;margin:7px 2px 0;letter-spacing:.02em;line-height:1.5")}>
-      {provenance}
+    <div style={css("display:flex;align-items:center;gap:13px;flex-wrap:wrap;margin-top:8px") }>
+      {legendRoles.map((role) => (
+        <span key={role} data-testid={`map-legend-${role.toLowerCase()}`} style={css("display:flex;align-items:center;gap:6px;font-size:11px;color:#43555c")}>
+          <span style={css(`width:16px;height:3px;border-radius:2px;background:${ROUTE_COLORS[role]}`)} />
+          {ROUTE_LABELS[role]}
+        </span>
+      ))}
+      <span className="mono" data-testid="schematic-provenance-label" style={css("margin-left:auto;font-size:9px;color:#75878c;letter-spacing:.02em")}>
+        {provenance}
+      </span>
     </div>
-    <div className="mono" data-testid="map-location-disclosure" style={css("font-size:9px;color:#93a1a6;margin:3px 2px 0;letter-spacing:.02em;line-height:1.5")}>
-      {locations.length} configured reference locations · no live GPS{disclosure ? ` — ${disclosure}` : ""}
+    <div className="mono" data-testid="map-location-disclosure" style={css("font-size:9.5px;color:#7d8d92;margin:4px 2px 0;letter-spacing:.02em;line-height:1.5")}>
+      {locations.length} configured reference locations · no live GPS{disclosure ? ` — ${disclosure}` : ""} · {ROUTE_ATTRIBUTION}
     </div>
   </div>;
 }

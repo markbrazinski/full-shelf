@@ -9,6 +9,11 @@
 // Available only from event 22 — before that the runtime answers
 // `409 PROOF_BRANCH_NOT_AVAILABLE_YET`, and the controls stay disabled.
 //
+// The BRANCH SELECTION controls are debug-only. In product and presenter
+// modes no "Vague evidence" / "Complete evidence" / "Return to canonical"
+// action renders; an injected branch presents itself as a received
+// partner response and states whether the evidence was sufficient.
+//
 // Entering a branch does not move the canonical cursor, feed, receipts or
 // projection. Exiting restores canonical 88/96 and PARTIALLY_CONTAINED,
 // byte-identical. Branch state is labelled ISOLATED SELECTED PROOF so it
@@ -27,6 +32,8 @@ interface Props {
   proofLabel: string | null;
   evidence?: PartnerEvidenceProofView;
   custody: { total: number; confirmed: number; unconfirmed: number } | null;
+  /** Debug-only. Selection controls never render in product/presenter. */
+  showControls?: boolean;
   onEnter: (kind: BranchKind) => void;
   onExit: () => void;
 }
@@ -38,6 +45,7 @@ export function EvidenceBranchPanel({
   proofLabel,
   evidence,
   custody,
+  showControls = false,
   onEnter,
   onExit,
 }: Props) {
@@ -48,7 +56,8 @@ export function EvidenceBranchPanel({
       data-testid="evidence-branch-panel"
       data-branch={active ?? "canonical"}
       style={css(
-        `background:#fff;border:1px solid ${active ? "#8f7fb8" : "#d5d8d2"};` +
+        "flex:none;" +
+          `background:#fff;border:1px solid ${active ? "#8f7fb8" : "#d5d8d2"};` +
           `${active ? "border-left:5px solid #6f5da0;" : ""}border-radius:11px;overflow:hidden`,
       )}
     >
@@ -59,13 +68,21 @@ export function EvidenceBranchPanel({
         )}
       >
         <div style={css("flex:1;min-width:220px")}>
-          <div className="mono" style={css("font-size:10px;letter-spacing:.1em;color:#74848a;font-weight:700")}>
-            SELECTED PROOF · PARTNER CUSTODY EVIDENCE
+          <div
+            className="mono"
+            data-testid="partner-response-heading"
+            style={css("font-size:10px;letter-spacing:.1em;color:#74848a;font-weight:700")}
+          >
+            {active ? "PARTNER RESPONSE RECEIVED" : "PARTNER RESPONSE · AWAITING"}
           </div>
           <div style={css("font-size:12px;color:#5c6b71;margin-top:4px;line-height:1.5")}>
-            {available
-              ? "Run either evidence branch in isolation. Canonical state is untouched and restored on exit."
-              : "Available from the canonical terminal state. The runtime refuses a branch before then."}
+            {active
+              ? denied
+                ? "The evidence received was INSUFFICIENT to confirm the outstanding cases. Evaluated in isolation; canonical state is untouched."
+                : "The evidence received was SUFFICIENT to confirm the outstanding cases. Evaluated in isolation; canonical state is untouched."
+              : showControls
+                ? "Debug: inject a partner response in isolation. Canonical state is untouched and restored on exit."
+                : "No partner response has been received for the outstanding cases."}
           </div>
         </div>
 
@@ -94,7 +111,8 @@ export function EvidenceBranchPanel({
         )}
       </div>
 
-      <div style={css("padding:12px 16px;display:flex;align-items:center;gap:9px;flex-wrap:wrap")}>
+      {showControls ? (
+      <div style={css("padding:12px 16px;display:flex;align-items:center;gap:9px;flex-wrap:wrap;position:relative;z-index:1")}>
         <BranchButton
           testId="branch-enter-vague"
           label="Vague evidence"
@@ -123,6 +141,7 @@ export function EvidenceBranchPanel({
           Return to canonical
         </button>
       </div>
+      ) : null}
 
       {custody ? (
         <div

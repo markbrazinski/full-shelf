@@ -177,8 +177,20 @@ export function normalize(raw: RawProjection, beatId: BeatId): FullShelfProjecti
   const approval = cd.approvals[0];
   const activeRev = cd.active_plan_revision;
 
-  // ---- commitments: only rows for the active revision -----------------
-  const rows = cd.commitments.filter((c) => !activeRev || c.revision === activeRev);
+  // ---- commitments: the active revision, plus work already done -------
+  // A commitment DELIVERED under a superseded revision is still a fact
+  // about today: a later revision re-plans the REMAINING work, it does not
+  // un-deliver what already happened. Dropping it would silently lose
+  // O201's 18 delivered cases the moment rev08 activates. De-duplicated by
+  // order id so a subtotal is never re-added.
+  const activeRows = cd.commitments.filter((c) => !activeRev || c.revision === activeRev);
+  const deliveredElsewhere = cd.commitments.filter(
+    (c) =>
+      c.status === "DELIVERED" &&
+      c.revision !== activeRev &&
+      !activeRows.some((a) => a.order_id === c.order_id),
+  );
+  const rows = [...deliveredElsewhere, ...activeRows];
   const commitments: Commitment[] = rows.map((c) => {
     const lotFlagged = !!flaggedLot && c.lot_id === flaggedLot;
     const [stateLabel, stateTone] = orderTone(c.status, lotFlagged);
@@ -349,7 +361,15 @@ export function normalize(raw: RawProjection, beatId: BeatId): FullShelfProjecti
   }
 
   if (cd.dispatch) {
-    projection.dispatch = buildDispatch(cd.dispatch, clock);
+    // Operational state is authoritative on current_day.vehicles, not on
+    // the dispatch block (whose is_operational is not populated), so the
+    // out-of-service set is resolved here and passed in.
+    const outOfService = new Set(
+      (cd.vehicles ?? [])
+        .filter((v) => v.is_operational === false)
+        .map((v) => v.vehicle_id),
+    );
+    projection.dispatch = buildDispatch(cd.dispatch, clock, outOfService);
   }
 
   // ---- agent activity: absent before its first safe boundary ---------
@@ -445,16 +465,27 @@ const agencySlot = (agency: string | null): string | null => {
 
 const VEHICLE_SLOT: Record<string, string> = { "TRUCK-01": "t1", "TRUCK-02": "t2" };
 
-function buildDispatch(d: RawDispatch, clock: string): DispatchView {
+function buildDispatch(
+  d: RawDispatch,
+  clock: string,
+  outOfService: Set<string> = new Set(),
+): DispatchView {
   const stops: DispatchView["stops"] = {};
   const vehicles: DispatchView["vehicles"] = {};
 
   for (const v of d.vehicles) {
     const vslot = VEHICLE_SLOT[v.vehicle_id] ?? v.vehicle_id;
+    // A still-planned stop on a vehicle that is out of service is
+    // IMPACTED. Both halves are authoritative — the runtime reports the
+    // vehicle as not operational and reports the stop as still planned —
+    // so this states a consequence of committed facts rather than
+    // inventing a status the contract does not carry.
+    const vehicleOutOfService =
+      v.is_operational === false || outOfService.has(v.vehicle_id);
     vehicles[vslot] = {
       label: v.name ?? vehicleLabel(v.vehicle_id),
-      status: v.is_operational === false ? "Out of service" : `${v.stop_count} stops`,
-      tone: v.is_operational === false ? "impacted" : "planned",
+      status: vehicleOutOfService ? "Out of service" : `${v.stop_count} stops`,
+      tone: vehicleOutOfService ? "impacted" : "planned",
     };
     v.stops.forEach((s) => {
       const slot = agencySlot(s.agency) ?? s.order_id;
@@ -463,7 +494,10 @@ function buildDispatch(d: RawDispatch, clock: string): DispatchView {
       stops[slot] = {
         title: `${s.sequence ?? "—"}. ${s.order_id} · ${s.agency ?? "—"}`,
         sub: s.cases != null ? `${s.cases} cases · ${vehicleLabel(v.vehicle_id)}` : vehicleLabel(v.vehicle_id),
-        tone: orderTone(s.status, false)[1],
+        tone:
+          vehicleOutOfService && s.status === "PLANNED"
+            ? "impacted"
+            : orderTone(s.status, false)[1],
         orderId: s.order_id,
         agency: s.agency,
         cases: s.cases,
@@ -544,7 +578,7 @@ function buildDispatch(d: RawDispatch, clock: string): DispatchView {
   return {
     title: `Planned dispatch · ${d.plan_id ?? "—"}${d.revision ? ` / ${d.revision}` : ""}`,
     schematicLabel: "Planned dispatch · not live vehicle tracking",
-    note: `Committed assignments as of ${clock} · no positions or bearings`,
+    note: `Committed assignments as of ${clock}`,
     stops,
     vehicles,
     capacityDecision,

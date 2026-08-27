@@ -64,8 +64,25 @@ export function isReplayMode(): boolean {
  * Replay navigation is deliberately absent from the ordinary film canvas.
  * A developer can opt into the diagnostic controls only on a local Vite
  * development build with an explicit `?debug=1` query parameter.
+ *
+ * Debug mode is the ONLY mode that renders visible replay transport,
+ * reset, speed, or proof-branch injection.
  */
 export function debugReplayControlsEnabled(): boolean {
   if (!import.meta.env.DEV || !isReplayMode() || typeof location === "undefined") return false;
   return new URLSearchParams(location.search).get("debug") === "1";
+}
+
+/**
+ * Presenter (filming) mode: `?presenter=1`.
+ *
+ * Starts PAUSED and is driven entirely from the keyboard, so a filmed
+ * take is deterministic. It renders NO visible transport of any kind —
+ * the frame must contain no presenter bar, Advance, Reset, speed slider,
+ * cursor counter, or proof injector. It grants no authority the product
+ * does not already have: the human approval gate still holds.
+ */
+export function presenterModeEnabled(): boolean {
+  if (typeof location === "undefined") return false;
+  return new URLSearchParams(location.search).get("presenter") === "1";
 }

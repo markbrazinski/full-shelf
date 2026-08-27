@@ -70,7 +70,7 @@ export function RepairProposal({
               Cold-chain capability unavailable · refrigerated commitments require recovery
             </div>
             <div className="mono" style={css("font-size:9px;color:#8a5a12;margin-top:4px")}>
-              reported by {alarm.source} · mechanical fault, not derived from position
+              reported by {alarm.source}
             </div>
           </div>
         </div>

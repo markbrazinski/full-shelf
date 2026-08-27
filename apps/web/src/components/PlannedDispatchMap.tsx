@@ -10,10 +10,11 @@
 // what the projection supplies and invents nothing.
 //
 // Nothing here renders a position, bearing, heading, speed, moving truck,
-// driven route, or "last reported" time. No route geometry exists at any
-// cursor (`telemetry.position_available` is false throughout), so stops
-// are placed as markers and connected to the hub by straight configured
-// lines that read as assignment, never as travel.
+// driven route, or "last reported" time. Route lines are CONFIGURED
+// REFERENCE geometry (see data/contract/routeGeometry.ts): road-following
+// polylines between configured facilities, committed once and never
+// fetched at render or capture time. They state which roads a planned
+// route would follow — never that a vehicle drove one.
 //
 // If the Maps key is absent or the API fails to load, the caller renders
 // the SVG schematic instead of a blank panel.
@@ -22,6 +23,14 @@
 import { useEffect, useRef, useState } from "react";
 import { css } from "../styles/css";
 import type { MapLocation } from "../types/fullShelf";
+import {
+  ROUTE_ATTRIBUTION,
+  ROUTE_COLORS,
+  ROUTE_LABELS,
+  type PlannedRoute,
+  type RouteRole,
+} from "../data/contract/routeGeometry";
+import { facilityName } from "../data/contract/facilityNames";
 
 export interface PlannedStop {
   orderId: string;
@@ -34,6 +43,8 @@ export interface PlannedStop {
 
 export interface PlannedDispatchMapProps {
   stops: PlannedStop[];
+  /** Committed reference routes that apply at this boundary. */
+  routes: PlannedRoute[];
   /** The runtime's six configured reference locations. */
   locations: MapLocation[];
   /** The runtime's own disclosure text, rendered verbatim. */
@@ -43,12 +54,20 @@ export interface PlannedDispatchMapProps {
   onFailure: () => void;
 }
 
-// Planned-path styling. Colors carry plan intent, never live status.
-const STYLE = {
-  ORIGINAL: { stroke: "#a23b2b", fill: "#a23b2b", label: "Original Truck 1 plan" },
-  REVISED: { stroke: "#1f6f8b", fill: "#1f6f8b", label: "Revised Truck 2 plan" },
-  PARTNER: { stroke: "#a85f12", fill: "#a85f12", label: "Partner pickup" },
-} as const;
+/** A stop's plan classification maps to exactly one visual identity. */
+const ROLE_FOR_KIND: Record<PlannedStop["kind"], RouteRole> = {
+  ORIGINAL: "TRUCK_1",
+  REVISED: "TRUCK_2",
+  PARTNER: "PARTNER",
+};
+
+/** Marker badges carry truck identity and stop order: T1-1, T2-1, P-1. */
+const STOP_PREFIX: Record<RouteRole, string> = {
+  TRUCK_1: "T1-",
+  TRUCK_2: "T2-",
+  PARTNER: "P-",
+  UNAVAILABLE: "T1-",
+};
 
 type MapsNamespace = typeof globalThis & { google?: any };
 
@@ -133,6 +152,7 @@ function locationForStop(stop: PlannedStop, locations: MapLocation[]): MapLocati
 
 export function PlannedDispatchMap({
   stops,
+  routes,
   locations,
   disclosure,
   label,
@@ -153,6 +173,7 @@ export function PlannedDispatchMap({
   // Key on the CONTENT that actually changes the drawing instead.
   const stopsKey = stops.map((s) => `${s.orderId}:${s.kind}:${s.sequence}`).join("|");
   const locationsKey = locations.map((l) => l.id).join("|");
+  const routesKey = routes.map((r) => `${r.key}:${r.role}`).join("|");
 
   useEffect(() => {
     let cancelled = false;
@@ -203,59 +224,72 @@ export function PlannedDispatchMap({
           bounds.extend({ lat: loc.lat, lng: loc.lon });
         }
 
-        // One numbered marker per planned stop, over its configured site,
-        // plus a hub→site line. The line is a configured connection, not a
-        // driven route: no route geometry exists at any cursor.
-        const drawn = new Set<string>();
+        // Committed reference routes. Each follows real roads between the
+        // configured facilities and returns to the hub. A dashed stroke
+        // reads as planned intent; a muted grey stroke is a withdrawn
+        // route belonging to an unavailable vehicle.
+        for (const route of routes) {
+          if (route.path.length < 2) continue;
+          const color = ROUTE_COLORS[route.role];
+          const path = route.path.map(([lat, lng]) => ({ lat, lng }));
+          new maps.Polyline({
+            map,
+            path,
+            strokeColor: color,
+            strokeOpacity: route.dashed ? 0 : route.role === "UNAVAILABLE" ? 0.5 : 0.9,
+            strokeWeight: route.role === "UNAVAILABLE" ? 3 : 4,
+            zIndex: route.role === "UNAVAILABLE" ? 1 : 2,
+            icons: route.dashed
+              ? [
+                  {
+                    icon: {
+                      path: "M 0,-1 0,1",
+                      strokeOpacity: 0.95,
+                      strokeWeight: 4,
+                      scale: 3,
+                      strokeColor: color,
+                    },
+                    offset: "0",
+                    repeat: "15px",
+                  },
+                ]
+              : undefined,
+          });
+          for (const point of path) bounds.extend(point);
+        }
+
+        // One marker per planned stop, over its configured site, carrying
+        // the truck identity and stop order (T1-1, T2-1, P-1).
         for (const stop of stops) {
           const loc = locationForStop(stop, locations);
           if (!loc) continue;
 
-          const style = STYLE[stop.kind];
+          const role = ROLE_FOR_KIND[stop.kind];
+          const color = ROUTE_COLORS[role];
           const pos = { lat: loc.lat, lng: loc.lon };
+          const badge = `${STOP_PREFIX[role]}${stop.sequence || ""}`;
 
           new maps.Marker({
             map,
             position: pos,
-            title: `${stop.orderId} · ${loc.name}${stop.cases != null ? ` · ${stop.cases} cases` : ""}`,
-            label: { text: String(stop.sequence), color: "#ffffff", fontSize: "11px", fontWeight: "700" },
+            zIndex: 3,
+            title:
+              `${badge} · ${stop.orderId} · ${facilityName(stop.agency) || loc.name}` +
+              (stop.cases != null ? ` · ${stop.cases} cases` : ""),
+            label: { text: badge, color: "#ffffff", fontSize: "10px", fontWeight: "700" },
             icon: {
               path: maps.SymbolPath.CIRCLE,
-              scale: 11,
-              fillColor: style.fill,
+              scale: 13,
+              fillColor: color,
               fillOpacity: 1,
               strokeColor: "#ffffff",
               strokeWeight: 2,
             },
           });
-
-          const key = `${stop.kind}:${loc.id}`;
-          if (!drawn.has(key)) {
-            drawn.add(key);
-            // Configured connection, not travelled. The superseded original
-            // plan is a muted solid line; live plans are dashed as intent.
-            const dashed = stop.kind !== "ORIGINAL";
-            new maps.Polyline({
-              map,
-              path: [{ lat: hub.lat, lng: hub.lon }, pos],
-              strokeColor: style.stroke,
-              strokeOpacity: dashed ? 0 : 0.45,
-              strokeWeight: dashed ? 4 : 3,
-              icons: dashed
-                ? [
-                    {
-                      icon: { path: "M 0,-1 0,1", strokeOpacity: 0.9, strokeWeight: 4, scale: 3, strokeColor: style.stroke },
-                      offset: "0",
-                      repeat: "14px",
-                    },
-                  ]
-                : undefined,
-            });
-          }
           bounds.extend(pos);
         }
 
-        if (!bounds.isEmpty()) map.fitBounds(bounds, 56);
+                if (!bounds.isEmpty()) map.fitBounds(bounds, 56);
 
         // ---- readiness ------------------------------------------------
         // A loaded API script proves nothing: an unauthorized key can load
@@ -329,9 +363,12 @@ export function PlannedDispatchMap({
       for (const fn of cleanups) fn();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [apiKey, stopsKey, locationsKey]);
+  }, [apiKey, stopsKey, locationsKey, routesKey]);
 
   if (failed) return null;
+
+  // Only the identities actually on the map are legended.
+  const legendRoles = Array.from(new Set(routes.map((r) => r.role)));
 
   return (
     <div>
@@ -363,23 +400,38 @@ export function PlannedDispatchMap({
         ) : null}
       </div>
       <div style={css("display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:9px")}>
-        {(Object.keys(STYLE) as (keyof typeof STYLE)[]).map((k) => (
-          <span key={k} style={css("display:flex;align-items:center;gap:6px;font-size:11px;color:#43555c")}>
-            <span style={css(`width:14px;height:3px;border-radius:2px;background:${STYLE[k].stroke}`)} />
-            {STYLE[k].label}
+        {legendRoles.map((role) => (
+          <span
+            key={role}
+            data-testid={`map-legend-${role.toLowerCase()}`}
+            style={css("display:flex;align-items:center;gap:6px;font-size:11px;color:#43555c")}
+          >
+            <span
+              style={css(
+                `width:16px;height:3px;border-radius:2px;background:${ROUTE_COLORS[role]}` +
+                  (role === "PARTNER" || role === "UNAVAILABLE"
+                    ? ";background-image:linear-gradient(90deg,currentColor 60%,transparent 0)"
+                    : ""),
+              )}
+            />
+            {ROUTE_LABELS[role]}
           </span>
         ))}
-        <span className="mono" data-testid="map-provenance-label" style={css("margin-left:auto;font-size:10px;color:#a85f12;letter-spacing:.02em;font-weight:600")}>
+        <span
+          className="mono"
+          data-testid="map-provenance-label"
+          style={css("margin-left:auto;font-size:10px;color:#a85f12;letter-spacing:.02em;font-weight:600")}
+        >
           ◆ {label}
         </span>
       </div>
       <div
         className="mono"
         data-testid="map-location-disclosure"
-        style={css("font-size:10px;color:#93a1a6;margin-top:5px;letter-spacing:.02em;line-height:1.5")}
+        style={css("font-size:10px;color:#7d8d92;margin-top:5px;letter-spacing:.02em;line-height:1.5")}
       >
         {locations.length} configured reference locations · no live GPS
-        {disclosure ? ` — ${disclosure}` : ""}
+        {disclosure ? ` — ${disclosure}` : ""} · {ROUTE_ATTRIBUTION}
       </div>
     </div>
   );

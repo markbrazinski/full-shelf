@@ -1,4 +1,5 @@
 import { css } from "../styles/css";
+import { facilityName } from "../data/contract/facilityNames";
 import { TONE } from "../styles/tokens";
 import type { GovernanceView } from "../types/fullShelf";
 
@@ -8,7 +9,7 @@ export function GovernanceRefusal({ governance, onOpenEvidence }: { governance: 
     <>
       <div style={css("margin-bottom:14px")}>
         <div className="mono" style={css("font-size:11px;letter-spacing:.12em;color:#74848a;font-weight:600")}>CLOSURE BLOCKED</div>
-        <h1 style={css("font-size:24px;font-weight:600;letter-spacing:-.01em;margin-top:5px;color:#16323b")}>Eight affected cases remain unconfirmed at Site 01</h1>
+        <h1 style={css("font-size:24px;font-weight:600;letter-spacing:-.01em;margin-top:5px;color:#16323b")}>{"Closure refused — 8 cases remain unconfirmed"}</h1>
         <div style={css("font-size:13px;color:#5c6b71;margin-top:5px;line-height:1.5")}>Full containment cannot be asserted without custody confirmation. The refusal is not a rejection — it is the necessary consequence of incomplete information.</div>
       </div>
       <div style={css("display:grid;grid-template-columns:1fr 340px;gap:18px;align-items:start")}>
@@ -40,7 +41,7 @@ export function GovernanceRefusal({ governance, onOpenEvidence }: { governance: 
             </div>
             <div style={css("margin-top:8px")}>
               <div className="mono" style={css("font-size:11px;letter-spacing:.06em;color:#e6cec8")}>5. INCIDENT REMAINS {r.posture}</div>
-              <div className="mono" style={css("font-size:11px;color:#cdb5ae;margin-top:6px;line-height:1.5")}>Movement barrier and Site 01 work item remain active. Obligation carries into Saturday.</div>
+              <div className="mono" style={css("font-size:11px;color:#cdb5ae;margin-top:6px;line-height:1.5")}>{`Movement barrier and ${facilityName("SITE-01")} work item remain active.`} Obligation carries into Saturday.</div>
             </div>
           </div>
         </div>

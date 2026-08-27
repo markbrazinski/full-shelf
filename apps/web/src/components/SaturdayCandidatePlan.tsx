@@ -13,7 +13,16 @@
 
 import { css } from "../styles/css";
 import type { MapLocation, TomorrowView } from "../types/fullShelf";
+import { useCallback, useState } from "react";
 import { schematicPoints } from "./schematicPoints";
+import { PlannedDispatchMap, type PlannedStop } from "./PlannedDispatchMap";
+import {
+  ROUTE_ATTRIBUTION,
+  ROUTE_COLORS,
+  saturdayRoute,
+  type PlannedRoute,
+} from "../data/contract/routeGeometry";
+import { facilityName } from "../data/contract/facilityNames";
 
 const PANEL = "background:#16323b;border-radius:12px;padding:12px 14px;display:flex;flex-direction:column;color:#dce7e9;min-height:0";
 
@@ -60,94 +69,175 @@ function UnavailablePanel({ reason }: { reason: string | null }) {
 }
 
 /**
- * Saturday's candidate stops over the SAME six configured reference
- * locations the Today map uses.
+ * Saturday's candidate route over the SAME six configured reference
+ * locations, using the SAME real Google Maps implementation and the same
+ * truthful fallback as Today.
  *
- * There is deliberately no drawn route here. No route geometry, polyline,
- * distance, ETA or position exists at any cursor, so a candidate stop is
- * placed at its configured site and connected to the hub by a dashed
- * assignment line that reads as intent, never as travel. Nothing on this
- * surface is telemetry: the runtime reports no position for any vehicle.
+ * The drawn line is committed CONFIGURED_REFERENCE_ROUTE geometry
+ * (hub -> Berkeley -> Alameda -> hub) and is dashed because the plan is a
+ * candidate. Nothing here is telemetry: the runtime reports no position
+ * for any vehicle, and no ETA or distance is claimed.
+ *
+ * East Oakland's 20 cases are unassigned demand: the site is shown, and
+ * it is deliberately NOT connected to the route.
  */
-function CandidateMap({ view, locations }: { view: TomorrowView; locations: MapLocation[] }) {
+function CandidateMap({
+  view,
+  locations,
+  mapsApiKey,
+  disclosure,
+}: {
+  view: TomorrowView;
+  locations: MapLocation[];
+  mapsApiKey?: string;
+  disclosure?: string;
+}) {
+  const [mapFailed, setMapFailed] = useState(false);
+  const onFailure = useCallback(() => setMapFailed(true), []);
+  const showGoogleMap = !!mapsApiKey && locations.length > 0 && !mapFailed;
+  const googleLabel = "GOOGLE MAPS · CONFIGURED REFERENCE LOCATIONS · NOT LIVE GPS";
+  const fallbackLabel = "DETERMINISTIC SCHEMATIC · CONFIGURED REFERENCE LOCATIONS · NOT LIVE GPS";
+
   const stops = view.candidateVehicles.flatMap((v) =>
     v.stops.map((s) => ({ ...s, vehicleId: v.vehicleId })),
   );
 
-  const points = schematicPoints(locations);
-  const hub = locations.find((l) => l.role === "HUB");
-  const hubPoint = (hub && points.get(hub.id)) ?? [50, 50];
+  // Candidate stops carry Truck 2's identity; unassigned demand does not
+  // join the route and is drawn as demand only.
+  const plannedStops: PlannedStop[] = stops.map((s) => ({
+    orderId: s.orderId,
+    agency: s.agencyId,
+    cases: s.cases,
+    sequence: s.sequence,
+    kind: "REVISED",
+  }));
 
-  // A candidate with no configured location is dropped, never placed at
-  // an invented coordinate.
-  const placed = stops
-    .map((stop) => {
-      const loc = locations.find(
-        (l) => l.agencyId === stop.agencyId || l.orderIds?.includes(stop.orderId),
-      );
-      const point = loc && points.get(loc.id);
-      return point ? { stop, loc: loc!, point } : null;
-    })
-    .filter((x): x is NonNullable<typeof x> => x !== null);
+  const route = saturdayRoute();
 
   return (
     <div style={css(PANEL)} data-testid="saturday-candidate-map">
       <div style={css("flex:none;display:flex;align-items:baseline;justify-content:space-between;gap:10px")}>
         <span style={css("font-size:12.5px;font-weight:600;color:#eef4f4;white-space:nowrap")}>
-          Candidate stops
+          Candidate route
         </span>
         <span
           className="mono"
           data-testid="saturday-map-provenance"
           style={css("font-size:8px;letter-spacing:.04em;color:#7e939c;text-align:right")}
         >
-          CONFIGURED REFERENCE LOCATIONS · NO LIVE GPS
+          {showGoogleMap ? googleLabel : fallbackLabel}
         </span>
       </div>
 
-      <div
-        style={css(
-          "flex:1;min-height:0;margin-top:8px;border-radius:9px;overflow:hidden;position:relative;background:#12292f;border:1px solid #2b4c56",
+      <div style={css("flex:1;min-height:0;margin-top:8px;background:#f5f6f2;border-radius:9px;padding:8px")}>
+        {showGoogleMap ? (
+          <PlannedDispatchMap
+            stops={plannedStops}
+            routes={[route]}
+            locations={locations}
+            disclosure={disclosure}
+            label={googleLabel}
+            apiKey={mapsApiKey!}
+            onFailure={onFailure}
+          />
+        ) : (
+          <SaturdaySchematic
+            stops={plannedStops}
+            route={route}
+            locations={locations}
+            disclosure={disclosure}
+            provenance={fallbackLabel}
+          />
         )}
+      </div>
+
+      <div className="mono" style={css("flex:none;font-size:8.5px;color:#7e939c;margin-top:7px;line-height:1.45")}>
+        Constrained draft · candidate assignments are provisional and carry no delivery guarantee.
+      </div>
+    </div>
+  );
+}
+
+/** Truthful fallback: the same committed geometry, without a basemap. */
+function SaturdaySchematic({
+  stops,
+  route,
+  locations,
+  disclosure,
+  provenance,
+}: {
+  stops: PlannedStop[];
+  route: PlannedRoute;
+  locations: MapLocation[];
+  disclosure?: string;
+  provenance: string;
+}) {
+  const points = schematicPoints(locations);
+  const hub = locations.find((l) => l.role === "HUB");
+  const hubPoint = (hub && points.get(hub.id)) ?? [50, 50];
+
+  const lats = locations.map((l) => l.lat);
+  const lons = locations.map((l) => l.lon);
+  const [minLat, maxLat] = [Math.min(...lats), Math.max(...lats)];
+  const [minLon, maxLon] = [Math.min(...lons), Math.max(...lons)];
+  const spanLat = maxLat - minLat || 1;
+  const spanLon = maxLon - minLon || 1;
+  const project = ([lat, lon]: [number, number]): [number, number] => [
+    14 + ((lon - minLon) / spanLon) * 72,
+    12 + ((maxLat - lat) / spanLat) * 76,
+  ];
+
+  const placed = stops
+    .map((stop) => {
+      const loc = locations.find(
+        (l) => l.agencyId === stop.agency || l.orderIds?.includes(stop.orderId),
+      );
+      const point = loc && points.get(loc.id);
+      return point ? { stop, loc: loc!, point } : null;
+    })
+    .filter((x): x is NonNullable<typeof x> => x !== null);
+
+  const d = route.path
+    .map((c, i) => `${i === 0 ? "M" : "L"}${project(c).map((n) => n.toFixed(2)).join(" ")}`)
+    .join(" ");
+
+  return (
+    <div>
+      <div
+        data-testid="dispatch-svg-schematic"
+        style={css("position:relative;height:330px;border:1px solid #d6ded9;border-radius:8px;overflow:hidden;background:#eef1ec")}
       >
         <svg viewBox="0 0 100 100" preserveAspectRatio="none" style={css("position:absolute;inset:0;width:100%;height:100%")}>
-          <g stroke="#1e3a42" strokeWidth="1.4">
-            <path d="M0 25 H100 M0 50 H100 M0 75 H100" />
-            <path d="M25 0 V100 M50 0 V100 M75 0 V100" />
-          </g>
-          {placed.map(({ stop, point }) => (
-            <line
-              key={stop.orderId}
-              x1={hubPoint[0]}
-              y1={hubPoint[1]}
-              x2={point[0]}
-              y2={point[1]}
-              stroke="#4f97b0"
-              strokeWidth=".7"
-              strokeDasharray="1.8 1.4"
-              opacity=".8"
-            />
-          ))}
+          <rect width="100" height="100" fill="#eef1ec" />
+          <path
+            data-testid="saturday-route-line"
+            d={d}
+            fill="none"
+            stroke={ROUTE_COLORS.TRUCK_2}
+            strokeWidth=".85"
+            strokeDasharray="1.8 1.4"
+            strokeLinejoin="round"
+            strokeLinecap="round"
+          />
         </svg>
-
         {hub ? (
           <div
             style={css(
               `position:absolute;left:${hubPoint[0]}%;top:${hubPoint[1]}%;transform:translate(-50%,-50%);` +
-                "background:#16323b;border:1px solid #4f97b0;border-radius:7px;padding:5px 8px;white-space:nowrap",
+                "background:#16323b;color:#fff;border-radius:7px;padding:5px 8px;white-space:nowrap",
             )}
           >
-            <div className="mono" style={css("font-size:8px;font-weight:700;letter-spacing:.07em;color:#eef4f4")}>HUB</div>
+            <div className="mono" style={css("font-size:8px;font-weight:700;letter-spacing:.07em")}>HUB</div>
+            <div style={css("font-size:9.5px;color:#b8c9ce;margin-top:1px")}>{hub.name}</div>
           </div>
         ) : null}
-
         {placed.map(({ stop, loc, point }) => (
           <div
             key={stop.orderId}
             data-testid="saturday-candidate-stop"
             style={css(
               `position:absolute;left:${point[0]}%;top:${point[1]}%;transform:translate(-50%,-50%);` +
-                "display:flex;align-items:center;gap:6px;background:#173139;border:1px dashed #4f97b0;" +
+                "display:flex;align-items:center;gap:6px;background:#fff;border:1px dashed #1f6f8b;" +
                 "border-radius:7px;padding:5px 8px;white-space:nowrap",
             )}
           >
@@ -155,24 +245,27 @@ function CandidateMap({ view, locations }: { view: TomorrowView; locations: MapL
               className="mono"
               style={css(
                 "width:17px;height:17px;border-radius:50%;display:flex;align-items:center;justify-content:center;" +
-                  "background:#16323b;border:1px dashed #fff;color:#fff;font-size:7.5px;font-weight:700;flex:none",
+                  `background:${ROUTE_COLORS.TRUCK_2};color:#fff;font-size:7.5px;font-weight:700;flex:none`,
               )}
             >
-              {stop.sequence}
+              T2-{stop.sequence}
             </span>
             <div>
-              <div style={css("font-size:9px;font-weight:600;color:#dce7e9")}>{loc.name}</div>
-              <div className="mono" style={css("font-size:7.5px;color:#9fb4ba;margin-top:1px")}>
+              <div style={css("font-size:9.5px;font-weight:700;color:#20353c")}>{loc.name}</div>
+              <div className="mono" style={css("font-size:8px;color:#5f6f74;margin-top:1px")}>
                 {stop.cases ?? "—"} cases · candidate
               </div>
             </div>
           </div>
         ))}
       </div>
-
-      <div className="mono" style={css("flex:none;font-size:8.5px;color:#7e939c;margin-top:7px;line-height:1.45")}>
-        Constrained draft · candidate assignments are provisional and carry no delivery guarantee.
-        No route, distance, ETA or vehicle position is shown, because none exists.
+      <div
+        className="mono"
+        data-testid="map-location-disclosure"
+        style={css("font-size:9.5px;color:#7d8d92;margin:6px 2px 0;letter-spacing:.02em;line-height:1.5")}
+      >
+        {provenance} · {locations.length} configured reference locations · no live GPS
+        {disclosure ? ` — ${disclosure}` : ""} · {ROUTE_ATTRIBUTION}
       </div>
     </div>
   );
@@ -181,18 +274,29 @@ function CandidateMap({ view, locations }: { view: TomorrowView; locations: MapL
 export function SaturdayCandidatePlan({
   view,
   locations = [],
+  mapsApiKey,
+  locationDisclosure,
 }: {
   view: TomorrowView;
   /** The runtime's six configured reference locations. */
   locations?: MapLocation[];
+  mapsApiKey?: string;
+  locationDisclosure?: string;
 }) {
+  const assignedCases = view.candidateVehicles.reduce(
+    (n, v) => n + (v.candidateLoadCases ?? 0),
+    0,
+  );
+  const unassignedCases = view.unassignedDemand.reduce((n, u) => n + (u.cases ?? 0), 0);
+
   return (
     <div style={css("flex:1;min-height:0;display:flex;flex-direction:column;margin-top:12px")} data-enter="">
       <div style={css("background:#f9f4f0;border:1px solid #e3c3ba;border-left:4px solid #a23b2b;border-radius:10px;padding:14px 16px;margin-bottom:14px")}>
         <div className="mono" style={css("font-size:10px;letter-spacing:.08em;color:#8a2f22;font-weight:600;line-height:1.4")}>
           FRIDAY UNRESOLVED CARRIES FORWARD
           <br />
-          Agency 03 short 20 · Site 01 custody confirmation open · LTC-4471 excluded
+          {facilityName("AGENCY-03")} short 20 · {facilityName("SITE-01")} custody confirmation
+          open · LTC-4471 excluded
         </div>
       </div>
       <div style={css("flex:none;display:flex;align-items:center;justify-content:space-between;gap:16px")}>
@@ -216,13 +320,61 @@ export function SaturdayCandidatePlan({
         </span>
       </div>
 
+      {/* Saturday's headline result, stated as one message. */}
+      <div
+        data-testid="saturday-primary-message"
+        style={css(
+          "flex:none;background:#f4f8f4;border:1px solid #cfe0d6;border-left:4px solid #2f7d5b;" +
+            "border-radius:10px;padding:11px 15px;margin-top:11px;display:flex;align-items:center;gap:14px;flex-wrap:wrap",
+        )}
+      >
+        <span style={css("font-size:14px;font-weight:700;color:#16262c")}>
+          Saturday draft: {assignedCases} cases assigned · {unassignedCases} cases still unassigned.
+        </span>
+      </div>
+
+      {/* Fleet availability. Truck 1's return to service is not an
+          authoritative field in this contract, so it is shown as
+          unconfirmed rather than predicted. */}
+      <div
+        data-testid="saturday-fleet-availability"
+        style={css(
+          "flex:none;display:flex;gap:10px;margin-top:10px;flex-wrap:wrap",
+        )}
+      >
+        <div
+          data-testid="fleet-truck-1"
+          style={css(
+            "flex:1;min-width:230px;background:#fff;border:1px solid #e6bcb0;border-left:4px solid #c0503a;" +
+              "border-radius:9px;padding:9px 12px",
+          )}
+        >
+          <div style={css("font-size:12px;font-weight:700;color:#16262c")}>Truck 1 — unavailable</div>
+          <div className="mono" style={css("font-size:9.5px;color:#8a2f22;margin-top:3px")}>
+            refrigeration failed · Return time not confirmed
+          </div>
+        </div>
+        <div
+          data-testid="fleet-truck-2"
+          style={css(
+            "flex:1;min-width:230px;background:#fff;border:1px solid #bcd6e0;border-left:4px solid #1f6f8b;" +
+              "border-radius:9px;padding:9px 12px",
+          )}
+        >
+          <div style={css("font-size:12px;font-weight:700;color:#16262c")}>Truck 2 — available</div>
+          <div className="mono" style={css("font-size:9.5px;color:#16536a;margin-top:3px")}>
+            60-case capacity
+          </div>
+        </div>
+      </div>
+
       <div
         style={css(
           "flex:1;min-height:0;display:grid;grid-template-columns:1.15fr 1fr;gap:14px;margin-top:12px",
         )}
       >
         {view.available ? (
-          <CandidateMap view={view} locations={locations} />
+          <CandidateMap view={view} locations={locations} mapsApiKey={mapsApiKey} disclosure={locationDisclosure} />
         ) : (
           <UnavailablePanel reason={view.unavailableReason} />
         )}
@@ -273,7 +425,7 @@ export function SaturdayCandidatePlan({
                           {s.sequence}
                         </span>
                         <span style={css("font-size:12px;font-weight:600;color:#16262c;flex:1")}>
-                          {s.agency ?? "—"}
+                          {facilityName(s.agencyId) || s.agency || "—"}
                         </span>
                         <span className="mono" style={css("font-size:10px;color:#3a4a50")}>
                           {s.cases ?? "—"} cases
@@ -321,7 +473,7 @@ export function SaturdayCandidatePlan({
                 UNASSIGNED DELIVERY DEMAND
               </span>
               <div style={css("font-size:12px;font-weight:600;color:#16262c;margin-top:6px")}>
-                {u.agencyId ?? "—"} · {u.cases ?? "—"} cases unassigned
+                {facilityName(u.agencyId) || u.agencyId || "—"} · {u.cases ?? "—"} cases unassigned
               </div>
               <div style={css("font-size:10.5px;color:#8a5a12;margin-top:2px;line-height:1.4")}>
                 {u.reason

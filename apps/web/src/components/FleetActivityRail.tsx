@@ -1,10 +1,12 @@
 // =====================================================================
 // Full Shelf — Fleet Activity rail
 // ---------------------------------------------------------------------
-// Append-only and chronological. One entry per COMMITTED event, in the
-// order the runtime committed it, driven entirely by the SSE envelope's
-// own `activity_entry` (severity, headline, detail, action_required) and
-// `effective_at`.
+// Append-only, NEWEST FIRST. One entry per COMMITTED event, driven
+// entirely by the SSE envelope's own `activity_entry` (severity,
+// headline, detail, action_required) and `effective_at`.
+//
+// The newest committed event is the most prominent card and sits at the
+// top, so the current state never depends on scrolling to the bottom.
 //
 // This is not a static list of agent cards and carries no invented
 // RUNNING / WAITING / duration / tool-call / ordering state — the runtime
@@ -16,7 +18,6 @@
 // event can never read as canonical history.
 // =====================================================================
 
-import { useEffect, useRef } from "react";
 import { css } from "../styles/css";
 
 export interface ActivityRailEntry {
@@ -38,13 +39,17 @@ const SEV: Record<string, { accent: string; fg: string; glyph: string }> = {
   REFUSAL: { accent: "#c14a34", fg: "#f0a99c", glyph: "⦸" },
 };
 
-export function FleetActivityRail({ entries }: { entries: ActivityRailEntry[] }) {
-  const endRef = useRef<HTMLDivElement | null>(null);
-
-  // Append-only: the newest committed event stays in view.
-  useEffect(() => {
-    endRef.current?.scrollIntoView({ block: "nearest" });
-  }, [entries.length]);
+export function FleetActivityRail({
+  entries,
+  onOpenReceipt,
+}: {
+  entries: ActivityRailEntry[];
+  onOpenReceipt?: () => void;
+}) {
+  // Newest first. The runtime commits in ascending order, so the rail
+  // renders the reverse of what it received; branch ordinals (`b1`…)
+  // stay after canonical ones within the same isolated view.
+  const ordered = [...entries].reverse();
 
   return (
     <div
@@ -62,7 +67,7 @@ export function FleetActivityRail({ entries }: { entries: ActivityRailEntry[] })
           data-testid="activity-count"
           style={css("font-size:8.5px;color:#7e939c;letter-spacing:.06em;margin-left:auto")}
         >
-          {entries.length} COMMITTED
+          {entries.length} COMMITTED · NEWEST FIRST
         </span>
       </div>
 
@@ -73,9 +78,10 @@ export function FleetActivityRail({ entries }: { entries: ActivityRailEntry[] })
           </div>
         ) : null}
 
-        {entries.map((e) => {
+        {ordered.map((e, index) => {
           const sev = SEV[e.severity] ?? SEV.INFO;
           const isolated = e.authority === "ISOLATED";
+          const current = index === 0;
           return (
             <div
               key={`${e.authority}-${e.ordinal}`}
@@ -83,39 +89,44 @@ export function FleetActivityRail({ entries }: { entries: ActivityRailEntry[] })
               data-ordinal={e.ordinal}
               data-severity={e.severity}
               data-authority={e.authority}
+              data-current={String(current)}
               style={css(
-                `background:${isolated ? "#1b2f38" : "#173139"};border:1px solid ${isolated ? "#3c5361" : "#1e3a42"};` +
-                  `border-left:3px solid ${sev.accent};border-radius:8px;padding:8px 10px;margin-bottom:7px` +
+                `background:${isolated ? "#1b2f38" : current ? "#1d414c" : "#173139"};` +
+                  `border:1px solid ${isolated ? "#3c5361" : current ? "#356070" : "#22414a"};` +
+                  `border-left:4px solid ${sev.accent};border-radius:9px;` +
+                  `padding:${current ? "12px 13px" : "10px 12px"};margin-bottom:8px` +
                   (isolated ? ";border-style:dashed" : ""),
               )}
             >
-              <div style={css("display:flex;align-items:center;gap:7px")}>
-                <span className="mono" style={css(`font-size:10px;color:${sev.fg};flex:none;width:11px`)}>
+              <div style={css("display:flex;align-items:center;gap:8px")}>
+                <span className="mono" style={css(`font-size:12px;color:${sev.fg};flex:none;width:13px`)}>
                   {sev.glyph}
                 </span>
                 <span
                   style={css(
-                    "font-size:10.5px;font-weight:600;color:#dce7e9;min-width:0;flex:1;" +
-                      "white-space:nowrap;overflow:hidden;text-overflow:ellipsis",
+                    `font-size:${current ? "15px" : "13.5px"};font-weight:${current ? "700" : "600"};` +
+                      "color:#f2f7f8;min-width:0;flex:1;line-height:1.3",
                   )}
                 >
                   {e.headline}
                 </span>
-                <span className="mono" style={css("font-size:8.5px;color:#7e939c;flex:none")}>
+                <span className="mono" style={css("font-size:11px;color:#c3d5da;flex:none;font-weight:600")}>
                   {e.clock}
                 </span>
               </div>
 
-              <div style={css("font-size:9.5px;color:#9fb4ba;margin-top:4px;line-height:1.45")}>
+              <div
+                style={css(
+                  `font-size:${current ? "14px" : "13px"};color:#cfdee2;margin-top:5px;line-height:1.5`,
+                )}
+              >
                 {e.detail}
               </div>
 
-              <div style={css("display:flex;align-items:center;gap:6px;margin-top:5px;flex-wrap:wrap")}>
+              <div style={css("display:flex;align-items:center;gap:7px;margin-top:7px;flex-wrap:wrap")}>
                 <span
                   className="mono"
-                  style={css(
-                    `font-size:7.5px;letter-spacing:.05em;color:${sev.fg};font-weight:700`,
-                  )}
+                  style={css(`font-size:9.5px;letter-spacing:.05em;color:${sev.fg};font-weight:700`)}
                 >
                   {e.severity}
                 </span>
@@ -124,8 +135,8 @@ export function FleetActivityRail({ entries }: { entries: ActivityRailEntry[] })
                     className="mono"
                     data-testid="activity-action-required"
                     style={css(
-                      "font-size:7.5px;letter-spacing:.05em;color:#f0c987;font-weight:700;" +
-                        "background:#33291a;border:1px solid #5a4726;border-radius:4px;padding:1px 5px",
+                      "font-size:9.5px;letter-spacing:.05em;color:#f7d9a4;font-weight:700;" +
+                        "background:#4a3a1c;border:1px solid #6d5527;border-radius:4px;padding:2px 6px",
                     )}
                   >
                     ACTION REQUIRED
@@ -135,21 +146,34 @@ export function FleetActivityRail({ entries }: { entries: ActivityRailEntry[] })
                   <span
                     className="mono"
                     style={css(
-                      "font-size:7.5px;letter-spacing:.05em;color:#c9b8e0;font-weight:700;" +
-                        "background:#2a2438;border:1px solid #4b3f66;border-radius:4px;padding:1px 5px",
+                      "font-size:9.5px;letter-spacing:.05em;color:#d5c9ea;font-weight:700;" +
+                        "background:#332b47;border:1px solid #574a75;border-radius:4px;padding:2px 6px",
                     )}
                   >
                     ISOLATED
                   </span>
                 ) : null}
-                <span className="mono" style={css("font-size:7.5px;color:#5e7982;margin-left:auto")}>
+                <span className="mono" style={css("font-size:9.5px;color:#93a9b0;margin-left:auto")}>
                   #{e.ordinal}
                 </span>
+                {onOpenReceipt ? (
+                  <button
+                    type="button"
+                    data-testid="activity-view-receipt"
+                    onClick={onOpenReceipt}
+                    className="mono"
+                    style={css(
+                      "font-size:9.5px;font-weight:700;letter-spacing:.04em;color:#9fd4ea;" +
+                        "background:none;border:none;padding:0;cursor:pointer",
+                    )}
+                  >
+                    View receipt →
+                  </button>
+                ) : null}
               </div>
             </div>
           );
         })}
-        <div ref={endRef} />
       </div>
     </div>
   );

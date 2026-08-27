@@ -162,15 +162,12 @@ test.describe("Golden journey", () => {
     // ---------------------------------------------------------------
     // 1. Opening — event 5. Friday opens, rev07 active.
     // ---------------------------------------------------------------
-    await page.goto("/");
+    // The opening frame must be event 5 deterministically, so the page is
+    // loaded PAUSED. Autoplay is then started explicitly below, which is
+    // the same normal-product progression an operator sees — this test
+    // still exercises the real autoplay, the gate, and the event-11 hold.
+    await page.goto("/?presenter=1");
     await expect(page.locator('[data-testid="clock"]')).toBeVisible({ timeout: 30_000 });
-
-    // Hold at the opening frame so it is captured as event 5 rather than
-    // whatever autoplay reached first. The pause is a presentation
-    // control only: it moves no cursor and mutates nothing.
-    await page.request
-      .post(`${RUNTIME}/api/v1/replay/sessions/${await sessionIdOf(page)}/pause`)
-      .catch(() => {});
 
     await expect(page.locator('[data-testid="clock"]')).toHaveText("08:05");
     await expect(page.locator('[data-testid="auth-rev"]')).toHaveText("rev07");
@@ -260,8 +257,10 @@ test.describe("Golden journey", () => {
 
     const manifests = page.locator('[data-testid="truck-manifests"]');
     await expect(manifests).toContainText("58 cases");
-    // O203 becomes a refrigerated partner pickup, not a shortfall.
-    await expect(manifests).toContainText("Partner pickup");
+    // O203 becomes refrigerated partner fulfilment, not a shortfall, and
+    // is named consistently as the configured partner carrier.
+    await expect(manifests).toContainText("Partner fulfillment");
+    await expect(manifests).toContainText("Tri-City Cold Storage");
     await expect(manifests).toContainText("O203");
 
     await expectNoHorizontalOverflow(page);
@@ -283,25 +282,32 @@ test.describe("Golden journey", () => {
     await expectNoHorizontalOverflow(page);
     await shot(page, "05-recall-intake");
 
-    // Clicking Incidents releases the pause and resumes progression.
+    // Opening Incidents is how the operator picks the recall up. In a
+    // filmed take progression is presenter-driven, so autoplay is
+    // restarted here exactly as the product does when the hold clears.
     await page.locator('[data-testid="nav-incident"]').click();
+    await page.request
+      .post(`${RUNTIME}/api/v1/replay/sessions/${await sessionIdOf(page)}/start`, {
+        data: { interval_ms: 900 },
+      })
+      .catch(() => {});
     await expect
-      .poll(() => cursor(page), { timeout: 40_000, message: "Incidents click resumes progression" })
+      .poll(() => cursor(page), { timeout: 40_000, message: "progression resumes past the recall" })
       .toBeGreaterThan(heldAt);
 
     // ---------------------------------------------------------------
     // 6. Event 18 — custody: 96 unique, 88 confirmed, 8 at Site 01.
     // ---------------------------------------------------------------
     await waitForCursor(page, 18);
-    await page.locator('[data-testid="incident-tab-custody"]').click();
 
+    // No tab navigation: the workspace advances to custody on its own.
     const custody = page.locator('[data-testid="custody-headline"]');
     await expect(custody).toBeVisible({ timeout: 30_000 });
-    await expect(custody).toContainText("96 cases traced");
-    await expect(custody).toContainText("8 unconfirmed");
+    await expect(custody).toContainText("96 affected cases traced");
+    await expect(custody).toContainText("8 awaiting confirmation");
 
     const custodyPanel = page.locator("main");
-    await expect(custodyPanel).toContainText("Site 01");
+    await expect(custodyPanel).toContainText("East Bay Distribution Annex");
     // 24 + 22 + 20 + 10 + 8 + 12 = 96 — intermediate subtotals not re-added.
     await expect(custodyPanel).toContainText("24 + 22 + 20 + 10 + 8 + 12 = 96");
 
@@ -312,10 +318,10 @@ test.describe("Golden journey", () => {
     const beforeTabs = await cursor(page);
     await page.locator('[data-testid="nav-history"]').click();
     await page.locator('[data-testid="nav-incident"]').click();
-    await page.locator('[data-testid="incident-tab-intake"]').click();
-    await page.locator('[data-testid="incident-tab-custody"]').click();
+    await page.locator('[data-testid="stage-detect"]').click();
+    await page.locator('[data-testid="stage-custody"]').click();
     const afterTabs = await cursor(page);
-    expect(afterTabs, "view/tab clicks never rewind the cursor").toBeGreaterThanOrEqual(beforeTabs);
+    expect(afterTabs, "stage review never rewinds the cursor").toBeGreaterThanOrEqual(beforeTabs);
   });
 
   // -----------------------------------------------------------------
@@ -430,7 +436,6 @@ test.describe("Golden journey", () => {
     // Hold the session at 19 so the advisory state is genuinely rendered.
     await driveTo(page, sid, 19);
     await page.locator('[data-testid="nav-incident"]').click();
-    await page.locator('[data-testid="incident-tab-recovery"]').click();
 
     const proposed = page.locator('[data-testid="recovery-proposed"]');
     await expect(proposed).toBeVisible({ timeout: 30_000 });
@@ -485,7 +490,8 @@ test.describe("Golden journey", () => {
   });
 
   test("evidence branches run in isolation and restore canonical state", async ({ page }) => {
-    await page.goto("/");
+    // Proof controls are DEBUG-ONLY, so isolation is proven in debug mode.
+    await page.goto("/?debug=1");
     await expect(page.locator('[data-testid="clock"]')).toBeVisible({ timeout: 30_000 });
     const sid = await sessionIdOf(page);
 
@@ -499,7 +505,6 @@ test.describe("Golden journey", () => {
 
     await driveTo(page, sid, 22);
     await page.locator('[data-testid="nav-incident"]').click();
-    await page.locator('[data-testid="incident-tab-evidence"]').click();
 
     const panel = page.locator('[data-testid="evidence-branch-panel"]');
     await expect(panel).toBeVisible({ timeout: 30_000 });
@@ -607,16 +612,17 @@ test.describe("Golden journey", () => {
     ).toHaveCount(0);
 
     // The custody surface itself agrees: canonical is back to 88 of 96.
-    await page.locator('[data-testid="incident-tab-custody"]').click();
-    await expect(page.locator('[data-testid="custody-headline"]')).toContainText("96 cases traced");
-    await expect(page.locator("main")).toContainText("8 unconfirmed");
+    await page.locator('[data-testid="stage-custody"]').click();
+    await expect(page.locator('[data-testid="custody-headline"]')).toContainText(
+      "96 affected cases traced",
+    );
+    await expect(page.locator("main")).toContainText("8 awaiting confirmation");
 
     await expectNoHorizontalOverflow(page);
     await shot(page, "11-canonical-return");
 
     // Capture the canonical-return frame BEFORE progression resumes, then
     // prove the runtime's own feed and the rail came back unchanged.
-    await page.locator('[data-testid="incident-tab-evidence"]').click();
     expect(await feedOf(page, sid), "canonical feed restored exactly").toEqual(canonicalFeed);
     const restoredOrdinals = (await railOrdinals(page)).filter((o) => !o.startsWith("b"));
     expect(restoredOrdinals, "canonical rail restored exactly").toEqual(canonicalOrdinals);
@@ -669,7 +675,7 @@ test.describe("Golden journey", () => {
   // called it is to CAUSE a condition, never to stand in for the check.
   // ===================================================================
 
-  test("incident tabs preserve exact cursor equality and never advance time", async ({ page }) => {
+  test("reviewing completed stages preserves exact cursor equality", async ({ page }) => {
     await page.goto("/");
     await expect(page.locator('[data-testid="clock"]')).toBeVisible({ timeout: 30_000 });
     const sid = await sessionIdOf(page);
@@ -687,10 +693,13 @@ test.describe("Golden journey", () => {
     const before = await cursor(page);
     const clockBefore = await page.locator('[data-testid="clock"]').textContent();
 
-    for (const tab of ["intake", "custody", "recovery", "evidence", "custody", "intake"]) {
-      await page.locator(`[data-testid="incident-tab-${tab}"]`).click();
-      expect(await cursor(page), `tab ${tab} is NAVIGATION_ONLY`).toBe(before);
+    for (const stage of ["detect", "scope", "custody", "recover", "closure", "custody", "detect"]) {
+      await page.locator(`[data-testid="stage-${stage}"]`).click();
+      expect(await cursor(page), `stage ${stage} is NAVIGATION_ONLY`).toBe(before);
     }
+    // Returning to the live stage is navigation too.
+    await page.locator('[data-testid="stage-unpin"]').click();
+    expect(await cursor(page), "unpinning is NAVIGATION_ONLY").toBe(before);
     // Left-nav view changes are navigation too. History and back is a
     // pure view change; Today -> Incidents is deliberately excluded here
     // because that transition legitimately releases the event-11 hold.
@@ -812,7 +821,6 @@ test.describe("Golden journey", () => {
     await page.request.post(`${RUNTIME}/api/v1/replay/sessions/${sid}/pause`).catch(() => {});
     const settled = await settleCursor(page);
     await page.locator('[data-testid="nav-incident"]').click();
-    await page.locator('[data-testid="incident-tab-recovery"]').click();
     await expect(page.locator('[data-testid="recovery-committed"]')).toHaveCount(0);
 
     // The Saturday toggle lives on Today, so check it there.
@@ -865,6 +873,13 @@ test.describe("Golden journey", () => {
     ).toHaveCount(0);
     await expect(page.locator("[data-testid^='beat-'], [data-testid^='moment-']")).toHaveCount(0);
     await expect(page.locator("[data-testid='replay-controls']")).toHaveCount(0);
+    await expect(page.locator("[data-testid='debug-advance']")).toHaveCount(0);
+    await expect(page.locator("[data-testid='debug-cursor']")).toHaveCount(0);
+    // Proof selection must not exist outside debug mode.
+    await expect(page.locator('[data-testid="branch-enter-vague"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="branch-enter-complete"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="branch-exit"]')).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /vague evidence|complete evidence|return to canonical/i })).toHaveCount(0);
   });
 
   test("a missing Maps key produces the truthful schematic fallback", async ({ page }) => {
@@ -953,6 +968,421 @@ test.describe("Golden journey", () => {
     await expect(page.locator('[data-testid="clock"]')).toHaveText(clockBefore ?? "");
     // Evidence surfaces carry no mutation-styled control.
     await expect(drawer.getByRole("button", { name: /approve|activate|commit/i })).toHaveCount(0);
+  });
+
+  // ===================================================================
+  // v8 restructuring — presenter mode, route semantics, incident
+  // progression, agent truth, Saturday discovery.
+  // ===================================================================
+
+  test("presenter mode starts paused and shows no transport controls", async ({ page }) => {
+    await page.goto("/?presenter=1");
+    await expect(page.locator('[data-testid="clock"]')).toBeVisible({ timeout: 30_000 });
+
+    // Starts PAUSED at the opening event and stays there on its own.
+    expect(await cursor(page), "presenter opens at event 5").toBe(5);
+    await page.waitForTimeout(4_000);
+    expect(await cursor(page), "presenter mode does not autoplay").toBe(5);
+
+    // The filmed frame carries NO transport of any kind.
+    for (const id of ["replay-controls", "debug-advance", "debug-play", "debug-reset", "debug-cursor"]) {
+      await expect(page.locator(`[data-testid="${id}"]`), `${id} must not render`).toHaveCount(0);
+    }
+    await expect(
+      page.getByRole("button", { name: /^(play|pause|resume|advance|step|next event|reset|replay)$/i }),
+    ).toHaveCount(0);
+    await expect(page.locator("input[type='range']"), "no speed slider").toHaveCount(0);
+    await expect(page.locator('[data-testid="branch-enter-vague"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="branch-enter-complete"]')).toHaveCount(0);
+
+    await expectNoHorizontalOverflow(page);
+  });
+
+  test("ArrowRight advances exactly one canonical event in presenter mode", async ({ page }) => {
+    await page.goto("/?presenter=1");
+    await expect(page.locator('[data-testid="clock"]')).toBeVisible({ timeout: 30_000 });
+    const before = await cursor(page);
+
+    await page.keyboard.press("ArrowRight");
+    await expect.poll(() => cursor(page), { timeout: 20_000 }).toBe(before + 1);
+
+    // Exactly one: it does not run on.
+    await page.waitForTimeout(3_000);
+    expect(await cursor(page), "one keypress commits exactly one event").toBe(before + 1);
+  });
+
+  test("no keyboard action bypasses the human approval gate", async ({ page }) => {
+    await page.goto("/?presenter=1");
+    await expect(page.locator('[data-testid="clock"]')).toBeVisible({ timeout: 30_000 });
+
+    // Walk to the gate with the keyboard alone.
+    for (let i = 0; i < 3; i++) await page.keyboard.press("ArrowRight");
+    await expect.poll(() => cursor(page), { timeout: 30_000 }).toBe(8);
+
+    // Hammer every shortcut. None may commit event 9.
+    for (let i = 0; i < 6; i++) {
+      await page.keyboard.press("ArrowRight");
+      await page.keyboard.press("Space");
+    }
+    await page.waitForTimeout(3_000);
+    expect(await cursor(page), "the gate holds against the keyboard").toBe(8);
+    await expect(page.locator('[data-testid="auth-rev"]')).toHaveText("rev07");
+
+    // Only the visible human action moves it.
+    await page.locator('[data-testid="approve-update"]').click();
+    await expect.poll(() => cursor(page), { timeout: 30_000 }).toBeGreaterThanOrEqual(9);
+  });
+
+  test("opening Incidents does not resume progression in presenter mode", async ({ page }) => {
+    await page.goto("/?presenter=1");
+    await expect(page.locator('[data-testid="clock"]')).toBeVisible({ timeout: 30_000 });
+    const sid = await sessionIdOf(page);
+
+    await driveTo(page, sid, 12);
+    await page.request.post(`${RUNTIME}/api/v1/replay/sessions/${sid}/pause`).catch(() => {});
+    const held = await settleCursor(page);
+
+    await page.locator('[data-testid="nav-incident"]').click();
+    await page.waitForTimeout(4_000);
+    expect(await cursor(page), "navigation alone never resumes a filmed take").toBe(held);
+  });
+
+  test("Friday routes carry distinct truck identities and return to the hub", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.locator('[data-testid="clock"]')).toBeVisible({ timeout: 30_000 });
+    const sid = await sessionIdOf(page);
+    await page.request.post(`${RUNTIME}/api/v1/replay/sessions/${sid}/pause`).catch(() => {});
+
+    // Truck 1 and Truck 2 are legended as separate identities, and the
+    // partner colour is never reused for Truck 1.
+    await expect(page.locator('[data-testid="map-legend-truck_1"]')).toBeVisible({ timeout: 20_000 });
+    await expect(page.locator('[data-testid="map-legend-truck_2"]')).toBeVisible();
+
+    // Every committed leg begins and ends at the hub.
+    const closed = await page.evaluate(async () => {
+      const mod = await import("/src/data/contract/routeGeometry.ts");
+      const keys = ["T1_REV07", "T2_REV07", "T2_REV08", "PARTNER_REV08", "T2_SATURDAY"];
+      return keys.map((k) => {
+        const path = mod.routePath(k);
+        const [a, b] = [path[0], path[path.length - 1]];
+        return { k, n: path.length, closed: a[0] === b[0] && a[1] === b[1] };
+      });
+    });
+    for (const r of closed) {
+      expect(r.n, `${r.k} has road geometry`).toBeGreaterThan(20);
+      expect(r.closed, `${r.k} returns to the hub`).toBe(true);
+    }
+
+    // Truck 1 and partner fulfilment must not share a colour.
+    const colors = await page.evaluate(async () => {
+      const mod = await import("/src/data/contract/routeGeometry.ts");
+      return mod.ROUTE_COLORS;
+    });
+    expect(colors.TRUCK_1).not.toBe(colors.PARTNER);
+    expect(colors.TRUCK_1).not.toBe(colors.TRUCK_2);
+    expect(colors.PARTNER).not.toBe(colors.TRUCK_2);
+  });
+
+  test("rev08 visibly changes the map and the manifests", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.locator('[data-testid="clock"]')).toBeVisible({ timeout: 30_000 });
+    const sid = await sessionIdOf(page);
+
+    // Before: Truck 1 holds O202 and O203, and they read as impacted.
+    await driveTo(page, sid, 7);
+    const manifests = page.locator('[data-testid="truck-manifests"]');
+    await expect(manifests).toContainText("O202", { timeout: 30_000 });
+    await expect(manifests).toContainText("O203");
+    await expect(manifests, "the failure names both affected orders").toContainText(/impacted/i);
+    await expect(page.locator('[data-testid="map-legend-unavailable"]')).toBeVisible();
+
+    // After: Truck 2 absorbs O202 and East Oakland becomes partner work.
+    await driveTo(page, sid, 10);
+    await expect(page.locator('[data-testid="auth-rev"]')).toHaveText("rev08", { timeout: 30_000 });
+    await expect(manifests).toContainText("58 cases");
+    await expect(manifests).toContainText("Partner fulfillment");
+    await expect(manifests).toContainText("Tri-City Cold Storage");
+    // The partner leg is legended separately from Truck 2.
+    await expect(page.locator('[data-testid="map-legend-partner"]')).toBeVisible();
+    // Truck 1 stays visible as unavailable rather than disappearing.
+    await expect(page.locator("main")).toContainText(/truck 1/i);
+
+    await expectNoHorizontalOverflow(page);
+  });
+
+  test("the resolved truck alarm clears the page-level alert", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.locator('[data-testid="clock"]')).toBeVisible({ timeout: 30_000 });
+    const sid = await sessionIdOf(page);
+
+    await driveTo(page, sid, 6);
+    await expect(page.locator('[data-testid="truck-failure-alert"]')).toBeVisible({ timeout: 30_000 });
+
+    // Once rev08 is committed the incident is resolved: the page-level
+    // red banner goes, while Truck 1 remains truthfully unavailable.
+    await driveTo(page, sid, 10);
+    await expect(page.locator('[data-testid="auth-rev"]')).toHaveText("rev08", { timeout: 30_000 });
+    await expect(page.locator('[data-testid="truck-failure-alert"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="truck-manifests"]')).toContainText(/truck 1/i);
+  });
+
+  test("Fleet Activity is newest-first and readable at 1600x900", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.locator('[data-testid="clock"]')).toBeVisible({ timeout: 30_000 });
+    const sid = await sessionIdOf(page);
+    await driveTo(page, sid, 12);
+    await page.request.post(`${RUNTIME}/api/v1/replay/sessions/${sid}/pause`).catch(() => {});
+    await settleCursor(page);
+
+    // Newest committed event is first in the DOM and marked current.
+    const ordinals = (await railOrdinals(page)).filter((o) => !o.startsWith("b")).map(Number);
+    expect(ordinals.length).toBeGreaterThan(2);
+    const descending = [...ordinals].sort((a, b) => b - a);
+    expect(ordinals, "rail is newest-first").toEqual(descending);
+    await expect(
+      page.locator('[data-testid="activity-entry"]').first(),
+    ).toHaveAttribute("data-current", "true");
+
+    // The newest card is visible without scrolling the rail.
+    const first = page.locator('[data-testid="activity-entry"]').first();
+    const box = await first.boundingBox();
+    expect(box!.y, "newest entry is on-screen").toBeGreaterThanOrEqual(0);
+    expect(box!.y, "newest entry is above the fold").toBeLessThan(900);
+
+    // Body text is legible on film: ~14px or larger for the current card.
+    const detailSize = await first.evaluate((el) => {
+      const d = el.querySelectorAll("div");
+      return parseFloat(getComputedStyle(d[d.length - 2] ?? d[0]).fontSize);
+    });
+    expect(detailSize, "rail body text is filmable").toBeGreaterThanOrEqual(13);
+
+    // Each event offers a receipt into the Execution Record.
+    await first.locator('[data-testid="activity-view-receipt"]').click();
+    await expect(page.locator('[data-testid="execution-record-drawer"]')).toBeVisible();
+  });
+
+  test("incident stages advance without tab navigation and agents follow events", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.locator('[data-testid="clock"]')).toBeVisible({ timeout: 30_000 });
+    const sid = await sessionIdOf(page);
+
+    // The tabs are gone entirely.
+    for (const tab of ["intake", "custody", "recovery", "evidence"]) {
+      await expect(page.locator(`[data-testid="incident-tab-${tab}"]`)).toHaveCount(0);
+    }
+
+    await driveTo(page, sid, 13);
+    await page.locator('[data-testid="nav-incident"]').click();
+    const workspace = page.locator('[data-testid="incident-workspace"]');
+    await expect(workspace).toBeVisible({ timeout: 30_000 });
+
+    // Later stages are visibly pending, not populated.
+    await expect(page.locator('[data-testid="stage-custody"]')).toHaveAttribute("data-state", "pending");
+    await expect(page.locator('[data-testid="stage-custody-summary"]')).toHaveText("pending");
+    await expect(page.locator('[data-testid="stage-recover"]')).toHaveAttribute("data-reached", "false");
+
+    // Custody arrives on its own at event 18 — no tab, no click.
+    await driveTo(page, sid, 18);
+    await expect(workspace).toHaveAttribute("data-live-stage", "custody", { timeout: 30_000 });
+    await expect(page.locator('[data-testid="custody-network"]')).toBeVisible();
+    // The responsible agent is highlighted with it.
+    await expect(page.locator('[data-testid="agent-network-custody"]')).toHaveAttribute(
+      "data-agent-state",
+      "current",
+    );
+    // Completed stages keep a one-line summary rather than emptying.
+    await expect(page.locator('[data-testid="stage-detect"]')).toHaveAttribute("data-state", "done");
+    await expect(page.locator('[data-testid="stage-detect-summary"]')).not.toHaveText("pending");
+
+    // At closure the Incident Lead reads as a recorded refusal.
+    await driveTo(page, sid, 22);
+    await expect(page.locator('[data-testid="agent-incident-lead"]')).toHaveAttribute(
+      "data-agent-state",
+      "refused",
+      { timeout: 30_000 },
+    );
+    await expect(page.locator('[data-testid="agent-incident-lead"]')).toContainText("REFUSED BY POLICY");
+    // "WORKING NOW" is never shown.
+    expect(await page.locator("body").innerText()).not.toMatch(/WORKING NOW/i);
+
+    await expectNoHorizontalOverflow(page);
+  });
+
+  test("custody 96/88/8 is visible and unclipped above the fold", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.locator('[data-testid="clock"]')).toBeVisible({ timeout: 30_000 });
+    const sid = await sessionIdOf(page);
+
+    await driveTo(page, sid, 18);
+    await page.locator('[data-testid="nav-incident"]').click();
+
+    await expect(page.locator('[data-testid="custody-traced"]')).toHaveText("96", { timeout: 30_000 });
+    await expect(page.locator('[data-testid="custody-confirmed"]')).toHaveText("88");
+    await expect(page.locator('[data-testid="custody-unconfirmed"]')).toHaveText("8");
+
+    // The whole result is inside the 900px fold, not clipped.
+    const net = page.locator('[data-testid="custody-network"]');
+    const box = await net.boundingBox();
+    expect(box!.y, "custody starts on-screen").toBeGreaterThanOrEqual(0);
+    const headline = await page.locator('[data-testid="custody-headline"]').boundingBox();
+    expect(headline!.y + headline!.height, "the 96/88/8 headline is above fold").toBeLessThanOrEqual(900);
+
+    // The eight unconfirmed cases are named at their site.
+    await expect(net).toContainText("East Bay Distribution Annex");
+    await expectNoHorizontalOverflow(page);
+  });
+
+  test("events 19, 20, 21 and 22 are materially distinct", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.locator('[data-testid="clock"]')).toBeVisible({ timeout: 30_000 });
+    const sid = await sessionIdOf(page);
+
+    // 19 — proposed, nothing committed.
+    await driveTo(page, sid, 19);
+    await page.locator('[data-testid="nav-incident"]').click();
+    await expect(page.locator('[data-testid="recovery-proposed"]')).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator('[data-testid="recovery-proposed"]')).toHaveAttribute(
+      "data-mutation-applied",
+      "false",
+    );
+    await expect(page.locator('[data-testid="recovery-committed"]')).toHaveCount(0);
+
+    // 20 — committed, and the shortfall is still truthfully 20.
+    await driveTo(page, sid, 20);
+    await expect(page.locator('[data-testid="recovery-committed"]')).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator('[data-testid="recovery-proposed"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="recovery-committed-shortfall"]')).toContainText("20");
+
+    // 21/22 — closure refused, and the terminal state is amber, not red.
+    await driveTo(page, sid, 22);
+    await expect(page.locator('[data-testid="incident-status"]')).toHaveText("PARTIALLY_CONTAINED", {
+      timeout: 30_000,
+    });
+    const main = page.locator("main");
+    // The refusal is the headline; zero mutations only supports it.
+    await expect(main).toContainText("Closure refused — 8 cases remain unconfirmed");
+    await expect(main).toContainText(/0\s*MUTATIONS/i);
+    // Places are named, never shown as bare identifiers.
+    await expect(main).not.toContainText(/\bSite 01\b/);
+    await expect(main).not.toContainText(/\bAgency 0\d\b/);
+    // Unresolved work stays prominent at the terminal state.
+    await expect(page.locator('[data-testid="work-to-do"]')).toBeVisible();
+    const items = await page.locator('[data-testid="work-item"]').allInnerTexts();
+    expect(items.join(" ")).toContain("East Bay Distribution Annex");
+    expect(items.join(" ")).toMatch(/movement barrier/i);
+    expect(items.join(" ")).toMatch(/shortfall/i);
+    expect(items.join(" ")).toMatch(/before closure/i);
+  });
+
+  test("Saturday is discoverable, uses the real map, and never routes Truck 1", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.locator('[data-testid="clock"]')).toBeVisible({ timeout: 30_000 });
+    const sid = await sessionIdOf(page);
+
+    await driveTo(page, sid, 24);
+    // Discovery: the operator is told the draft is ready.
+    const cta = page.locator('[data-testid="saturday-ready-cta"]');
+    await expect(cta).toBeVisible({ timeout: 30_000 });
+    await expect(cta).toContainText("Saturday draft ready");
+    await cta.click();
+
+    // One map surface: the real basemap, or the truthful fallback.
+    await expect
+      .poll(
+        async () =>
+          (await page.locator('[data-testid="planned-dispatch-map"]').count()) +
+          (await page.locator('[data-testid="dispatch-svg-schematic"]').count()),
+        { timeout: 20_000 },
+      )
+      .toBe(1);
+
+    await expect(page.locator('[data-testid="saturday-primary-message"]')).toContainText(
+      "40 cases assigned",
+    );
+    await expect(page.locator('[data-testid="saturday-primary-message"]')).toContainText(
+      "20 cases still unassigned",
+    );
+
+    // Fleet availability, with no invented return time for Truck 1.
+    await expect(page.locator('[data-testid="fleet-truck-1"]')).toContainText("unavailable");
+    await expect(page.locator('[data-testid="fleet-truck-1"]')).toContainText(
+      "Return time not confirmed",
+    );
+    await expect(page.locator('[data-testid="fleet-truck-2"]')).toContainText("60-case capacity");
+
+    // The event-11 hold banner must not still be on screen at Saturday.
+    await expect(page.locator('[data-testid="recall-pause-banner"]')).toHaveCount(0);
+    // Carry-forwards name their facilities.
+    await expect(page.locator("main")).not.toContainText(/\bAgency 0\d\b/);
+    await expect(page.locator("main")).not.toContainText(/\bSite 01\b/);
+
+    // East Oakland is visible as demand and is NOT on the route.
+    const demand = page.locator('[data-testid="unassigned-demand"]');
+    await expect(demand).toContainText("East Oakland Community Pantry");
+    await expect(demand).toContainText("20");
+    const stops = await page.locator('[data-testid="saturday-candidate-stop"]').allInnerTexts();
+    expect(stops.join(" "), "East Oakland is not a routed stop").not.toContain("East Oakland");
+
+    // Truck 1 is never routed on Saturday.
+    const t1Routed = await page.evaluate(async () => {
+      const mod = await import("/src/data/contract/routeGeometry.ts");
+      return mod.saturdayRoute().role;
+    });
+    expect(t1Routed, "Saturday routes Truck 2 only").toBe("TRUCK_2");
+
+    await expectNoHorizontalOverflow(page);
+  });
+
+  test("day totals partition 96 cases into delivered and remaining", async ({ page }) => {
+    await page.goto("/?presenter=1");
+    await expect(page.locator('[data-testid="clock"]')).toBeVisible({ timeout: 30_000 });
+    const sid = await sessionIdOf(page);
+
+    const totals = async () => ({
+      total: Number((await page.locator('[data-testid="total-cases"]').innerText()).replace(/\D+/g, "")),
+      delivered: Number((await page.locator('[data-testid="delivered-cases"]').innerText()).replace(/\D+/g, "")),
+      remaining: Number((await page.locator('[data-testid="remaining-cases"]').innerText()).replace(/\D+/g, "")),
+    });
+
+    // Event 5 — O201's 18 cases are already delivered.
+    const open = await totals();
+    expect(open.total, "the day is 96 cases").toBe(96);
+    expect(open.delivered, "18 delivered").toBe(18);
+    expect(open.remaining, "78 remaining").toBe(78);
+    expect(open.delivered + open.remaining, "delivered + remaining = total").toBe(open.total);
+
+    // Still exactly 96 after rev08 rearranges who carries what: a
+    // superseded revision must never re-add an intermediate subtotal.
+    await driveTo(page, sid, 10);
+    await expect(page.locator('[data-testid="auth-rev"]')).toHaveText("rev08", { timeout: 30_000 });
+    const after = await totals();
+    expect(after.total, "rev08 does not change the day's case count").toBe(96);
+    expect(after.delivered, "O201 stays delivered under rev08").toBe(18);
+    expect(after.remaining, "78 remain across Truck 2 and the partner").toBe(78);
+  });
+
+  test("place names are consistent and demo chrome is gone", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.locator('[data-testid="clock"]')).toBeVisible({ timeout: 30_000 });
+    const sid = await sessionIdOf(page);
+    await driveTo(page, sid, 22);
+
+    const body = await page.locator("body").innerText();
+    // Defensive demo chrome must not appear on the operating surfaces.
+    for (const chrome of [
+      /DETERMINISTIC TEST MODE/i,
+      /SYNTHETIC TEST BANNER/i,
+      /not derived from position/i,
+      /no positions or bearings/i,
+    ]) {
+      expect(body, `demo chrome ${chrome} must be gone`).not.toMatch(chrome);
+    }
+
+    // The single disclosure lives in the Execution Record.
+    await page.locator('[data-testid="open-execution-record"]').click();
+    await expect(page.locator('[data-testid="synthetic-replay-disclosure"]')).toContainText(
+      "Synthetic replay using configured facilities and planned reference routes.",
+    );
   });
 });
 
