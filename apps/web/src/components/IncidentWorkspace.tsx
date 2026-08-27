@@ -16,6 +16,7 @@
 // in the contract, so none can be shown.
 // =====================================================================
 
+import { useState } from "react";
 import { css } from "../styles/css";
 import type { FullShelfProjection } from "../types/fullShelf";
 import { facilityName } from "../data/contract/facilityNames";
@@ -102,12 +103,15 @@ export function IncidentWorkspace({
   pinnedStage,
   onPinStage,
   onOpenEvidence,
+  branchResolved = false,
 }: {
   p: FullShelfProjection;
   cursor: number;
   pinnedStage: StageKey | null;
   onPinStage: (key: StageKey | null) => void;
   onOpenEvidence: () => void;
+  /** Set only inside an isolated proof branch (debug-only). */
+  branchResolved?: boolean;
 }) {
   const recall = p.incidentSummary.incidents.find((i) => i.type === "FOOD_SAFETY_RECALL");
   const liveIndex = currentStageIndex(cursor);
@@ -280,8 +284,12 @@ export function IncidentWorkspace({
         })}
       </div>
 
-      {/* ---- dominant current work + persistent work-to-do ----------- */}
-      <div style={css("display:grid;grid-template-columns:minmax(0,1fr) 290px;gap:12px;min-width:0")}>
+      {/* ---- dominant current work, then a compact Open work strip ---
+          The primary stage result gets the full width and is rendered
+          FIRST, so at events 21-22 the refusal headline, the blockers and
+          the DENIED verdict all precede any obligations summary. Open
+          work supports the takeaway; it never covers it. */}
+      <div style={css("display:flex;flex-direction:column;gap:10px;min-width:0")}>
         <div
           data-testid="dominant-section"
           data-stage={viewStage?.key ?? "none"}
@@ -324,7 +332,7 @@ export function IncidentWorkspace({
             )}
           </div>
 
-          <div style={css("padding:14px 15px;min-width:0")}>
+          <div style={css("padding:12px 15px;min-width:0;max-height:496px;overflow:auto")}>
             {viewStage?.key === "detect" ? <DetectStage p={p} onOpenEvidence={onOpenEvidence} /> : null}
             {viewStage?.key === "scope" ? <ScopeStage p={p} cursor={cursor} /> : null}
             {viewStage?.key === "custody" ? (
@@ -344,7 +352,13 @@ export function IncidentWorkspace({
               )
             ) : null}
             {viewStage?.key === "closure" ? (
-              p.governance ? (
+              // Inside an isolated proof where the outstanding cases DID
+              // resolve, the canonical refusal headline would contradict
+              // the branch's own result, so the branch outcome is shown
+              // instead. Canonical state is untouched and restored on exit.
+              branchResolved ? (
+                <BranchResolvedClosure />
+              ) : p.governance ? (
                 <GovernanceRefusal governance={p.governance} onOpenEvidence={onOpenEvidence} />
               ) : (
                 <Pending text="No closure decision has been committed at this boundary." />
@@ -356,79 +370,95 @@ export function IncidentWorkspace({
           </div>
         </div>
 
-        {/* ---- persistent Work to do -------------------------------- */}
-        <div
-          data-testid="work-to-do"
-          style={css(
-            "min-width:0;background:#16323b;border-radius:11px;padding:12px 13px;color:#dce7e9;" +
-              "display:flex;flex-direction:column;gap:9px;align-self:start",
-          )}
-        >
-          <div style={css("display:flex;align-items:baseline;gap:8px")}>
-            <span
-              className="mono"
-              style={css("font-size:9.5px;letter-spacing:.07em;color:#9fb4ba;font-weight:700")}
-            >
-              WORK TO DO
-            </span>
-            <span
-              className="mono"
-              data-testid="work-to-do-count"
-              style={css("font-size:9px;color:#9fb4ba;margin-left:auto")}
-            >
-              {workItems.length ? `${workItems.length} OPEN` : ""}
-            </span>
-          </div>
-          {workItems.length === 0 ? (
-            <div style={css("font-size:11px;color:#a9c0c6;line-height:1.5")}>
-              No open work items yet. Items open as containment proceeds.
-            </div>
-          ) : null}
-          {workItems.map((item) => (
-            <div
-              key={item.title}
-              data-testid="work-item"
-              style={css(
-                `background:#1b3a43;border:1px solid #24454f;border-left:3px solid ${item.bar};` +
-                  "border-radius:8px;padding:9px 11px",
-              )}
-            >
-              <div style={css("display:flex;align-items:center;gap:7px")}>
-                <span
-                  className="mono"
-                  style={css(
-                    `font-size:7.5px;font-weight:700;letter-spacing:.04em;color:${item.tagFg};` +
-                      `background:${item.tagBg};border-radius:4px;padding:2px 6px`,
-                  )}
-                >
-                  {item.tag}
-                </span>
-                <span
-                  className="mono"
-                  style={css(`font-size:7.5px;font-weight:700;color:${item.tagFg};margin-left:auto`)}
-                >
-                  {item.state}
-                </span>
-              </div>
-              <div style={css("font-size:11.5px;font-weight:600;color:#eef4f4;margin-top:6px;line-height:1.35")}>
-                {item.title}
-              </div>
-              <div style={css("font-size:10px;color:#a9c0c6;margin-top:3px;line-height:1.4")}>
-                {item.body}
-              </div>
-            </div>
-          ))}
-          <div
-            className="mono"
-            style={css(
-              "font-size:8.5px;color:#8ea4ab;border-top:1px solid #24454f;padding-top:8px;line-height:1.5",
-            )}
-          >
-            Held open until each is resolved. Closure stays refused while confirmation work remains.
-          </div>
-        </div>
+        {/* ---- compact Open work summary ---------------------------- */}
+        <OpenWork items={workItems} />
       </div>
     </section>
+  );
+}
+
+/**
+ * Bounded obligations summary.
+ *
+ * One line per obligation, collapsed by default and capped in height, so
+ * it can never compete with — or overlay — the stage conclusion above it.
+ */
+function OpenWork({ items }: { items: ReturnType<typeof workToDo> }) {
+  const [open, setOpen] = useState(false);
+  if (!items.length) return null;
+
+  return (
+    <div
+      data-testid="work-to-do"
+      data-open-count={String(items.length)}
+      style={css(
+        "min-width:0;background:#16323b;border-radius:10px;color:#dce7e9;" +
+          `padding:8px 12px;max-height:${open ? "240px" : "112px"};overflow:auto`,
+      )}
+    >
+      <button
+        type="button"
+        data-testid="work-to-do-toggle"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        style={css(
+          "width:100%;display:flex;align-items:center;gap:8px;background:none;border:none;" +
+            "padding:0;cursor:pointer;color:inherit;text-align:left",
+        )}
+      >
+        <span
+          className="mono"
+          data-testid="work-to-do-count"
+          style={css("font-size:10px;letter-spacing:.06em;color:#9fb4ba;font-weight:700")}
+        >
+          OPEN WORK · {items.length}
+        </span>
+        <span className="mono" style={css("font-size:9px;color:#9fd4ea;margin-left:auto")}>
+          {open ? "Hide details" : "Show details"}
+        </span>
+      </button>
+
+      <div style={css("display:flex;flex-direction:column;gap:3px;margin-top:6px")}>
+        {items.map((item) => (
+          <div
+            key={item.title}
+            data-testid="work-item"
+            style={css("display:flex;align-items:baseline;gap:8px;min-width:0")}
+          >
+            <span
+              className="mono"
+              style={css(
+                `font-size:7.5px;font-weight:700;letter-spacing:.04em;color:${item.tagFg};` +
+                  `background:${item.tagBg};border-radius:4px;padding:2px 6px;flex:none`,
+              )}
+            >
+              {item.tag}
+            </span>
+            <div style={css("min-width:0;flex:1")}>
+              <div
+                style={css(
+                  "font-size:11px;color:#eef4f4;line-height:1.3;" +
+                    "white-space:nowrap;overflow:hidden;text-overflow:ellipsis",
+                )}
+              >
+                {item.title}
+              </div>
+              {open ? (
+                <div style={css("font-size:10px;color:#a9c0c6;margin-top:2px;line-height:1.4")}>
+                  {item.body}
+                </div>
+              ) : null}
+            </div>
+            <span
+              className="mono"
+              style={css(`font-size:7.5px;font-weight:700;color:${item.tagFg};flex:none`)}
+            >
+              {item.state}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -515,6 +545,38 @@ function workToDo(cursor: number, p: FullShelfProjection) {
     });
   }
   return items;
+}
+
+/**
+ * Closure as it reads inside a proof branch whose evidence resolved the
+ * outstanding cases. Clearly labelled isolated: it is what WOULD follow,
+ * never a canonical outcome.
+ */
+function BranchResolvedClosure() {
+  return (
+    <div
+      data-testid="branch-resolved-closure"
+      style={css(
+        "background:#f7f5fb;border:1px solid #c3b7dd;border-left:4px solid #6f5da0;" +
+          "border-radius:11px;padding:14px 16px",
+      )}
+    >
+      <div
+        className="mono"
+        style={css("font-size:9.5px;letter-spacing:.07em;font-weight:700;color:#4c3f73")}
+      >
+        ISOLATED PROOF · CLOSURE BLOCKERS CLEARED
+      </div>
+      <div style={css("font-size:15px;font-weight:700;color:#16262c;margin-top:7px;line-height:1.3")}>
+        All affected cases confirmed in this isolated proof
+      </div>
+      <div style={css("font-size:11.5px;color:#3a4a50;margin-top:7px;line-height:1.5")}>
+        With a sufficient partner response applied, custody reaches 96 / 96 and the confirmation
+        blocker clears. This is an isolated evaluation: canonical custody remains 88 / 96 and the
+        incident stays PARTIALLY_CONTAINED until real evidence arrives.
+      </div>
+    </div>
+  );
 }
 
 function Pending({ text }: { text: string }) {

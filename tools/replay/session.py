@@ -157,10 +157,32 @@ def filter_projection(body, cursor):
         body["carry_forward_obligations"] = []
 
     if cursor < events.TERMINAL_SEQUENCE:
+        # The terminal state is established by event 22. Event 21 legitimately
+        # carries the closure REFUSAL, so the refusal projection backs it, but
+        # every trace of the later terminal state must still be withheld:
+        # the incident status, the terminal_state field, the carry-forward
+        # obligations that record it, and the status receipt in history.
         if isinstance(current, dict) and isinstance(current.get("incidents"), list):
             for incident in current["incidents"]:
                 if incident.get("status") == "PARTIALLY_CONTAINED":
                     incident["status"] = "CONTAINMENT_IN_PROGRESS"
+                if incident.get("terminal_state") == "PARTIALLY_CONTAINED":
+                    incident["terminal_state"] = "NONE"
+
+        obligations = body.get("carry_forward_obligations")
+        if isinstance(obligations, list):
+            for obligation in obligations:
+                if (isinstance(obligation, dict)
+                        and obligation.get("terminal_state") == "PARTIALLY_CONTAINED"):
+                    obligation["terminal_state"] = "NONE"
+
+        evidence = body.get("execution_evidence_as_of")
+        if isinstance(evidence, dict) and isinstance(evidence.get("history"), list):
+            evidence["history"] = [
+                entry for entry in evidence["history"]
+                if not (isinstance(entry, dict)
+                        and "PARTIALLY_CONTAINED" in str(entry.get("receipt_id", "")))
+            ]
 
     if cursor < events.SATURDAY_SEQUENCE:
         body.pop("next_day_draft", None)

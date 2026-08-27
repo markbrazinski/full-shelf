@@ -28,8 +28,6 @@ interface Props {
   routes: PlannedRoute[];
   /** The runtime's six configured reference locations. */
   locations: MapLocation[];
-  /** The runtime's own disclosure, rendered verbatim. */
-  locationDisclosure?: string;
 }
 
 /** Match a stop to a configured location on projected identity only. */
@@ -53,12 +51,13 @@ const TONE = {
   recall: { accent: "#a23b2b", bg: "#f5e8e4", fg: "#8a2f22" },
 } as const;
 
-export function TodayMapWorkspace({ currentDay, dispatch, fleet, mapsApiKey, plannedStops, routes, locations, locationDisclosure }: Props) {
+export function TodayMapWorkspace({ currentDay, dispatch, fleet, mapsApiKey, plannedStops, routes, locations }: Props) {
   const [mapFailed, setMapFailed] = useState(false);
   const onMapFailure = useCallback(() => setMapFailed(true), []);
   const showGoogleMap = !!mapsApiKey && locations.length > 0 && !mapFailed;
-  const googleMapLabel = "GOOGLE MAPS · CONFIGURED REFERENCE LOCATIONS · NOT LIVE GPS";
-  const fallbackLabel = "DETERMINISTIC SCHEMATIC · CONFIGURED REFERENCE LOCATIONS · NOT LIVE GPS";
+  // The map heading says what the map shows. Provider identity is carried
+  // by Google's own watermark, which is never covered or replaced.
+  const mapLabel = "Planned routes";
   const manifests = useMemo(() => {
     const grouped = new Map<string, DispatchStop[]>();
     for (const stop of Object.values(dispatch.stops)) {
@@ -122,9 +121,9 @@ export function TodayMapWorkspace({ currentDay, dispatch, fleet, mapsApiKey, pla
           <div style={css("height:48px;padding:0 14px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #e6e9e4") }>
             <div>
               <div style={css("font-size:13px;font-weight:700;color:#20353c")}>Planned dispatch</div>
-              <div className="mono" style={css("font-size:9px;color:#7d8d92;margin-top:2px")}>CONFIGURED FACILITIES · COMMITTED ASSIGNMENTS</div>
+              <div className="mono" style={css("font-size:9px;color:#7d8d92;margin-top:2px")}>COMMITTED ASSIGNMENTS</div>
             </div>
-            <span data-testid="map-mode-label" className="mono" style={css("font-size:9px;font-weight:700;color:#8a5a12;background:#f8eedc;border:1px solid #ead3a9;border-radius:5px;padding:5px 8px")}>{showGoogleMap ? googleMapLabel : fallbackLabel}</span>
+            <span data-testid="map-mode-label" className="mono" style={css("font-size:9px;font-weight:700;color:#8a5a12;background:#f8eedc;border:1px solid #ead3a9;border-radius:5px;padding:5px 8px")}>{mapLabel}</span>
           </div>
           <div style={css("padding:10px;background:#f5f6f2") }>
             {showGoogleMap ? (
@@ -132,8 +131,7 @@ export function TodayMapWorkspace({ currentDay, dispatch, fleet, mapsApiKey, pla
                 stops={plannedStops}
                 routes={routes}
                 locations={locations}
-                disclosure={locationDisclosure}
-                label={googleMapLabel}
+                label={mapLabel}
                 apiKey={mapsApiKey!}
                 onFailure={onMapFailure}
               />
@@ -142,8 +140,6 @@ export function TodayMapWorkspace({ currentDay, dispatch, fleet, mapsApiKey, pla
                 stops={Object.values(dispatch.stops)}
                 routes={routes}
                 locations={locations}
-                disclosure={locationDisclosure}
-                provenance={fallbackLabel}
               />
             )}
           </div>
@@ -241,14 +237,10 @@ function RouteSchematic({
   stops,
   routes,
   locations,
-  disclosure,
-  provenance,
 }: {
   stops: DispatchStop[];
   routes: PlannedRoute[];
   locations: MapLocation[];
-  disclosure?: string;
-  provenance: string;
 }) {
   const points = schematicPoints(locations);
   const hub = locations.find((l) => l.role === "HUB");
@@ -319,16 +311,16 @@ function RouteSchematic({
     <div style={css("display:flex;align-items:center;gap:13px;flex-wrap:wrap;margin-top:8px") }>
       {legendRoles.map((role) => (
         <span key={role} data-testid={`map-legend-${role.toLowerCase()}`} style={css("display:flex;align-items:center;gap:6px;font-size:11px;color:#43555c")}>
-          <span style={css(`width:16px;height:3px;border-radius:2px;background:${ROUTE_COLORS[role]}`)} />
+          <span data-legend-color={ROUTE_COLORS[role]} style={css(`width:16px;height:3px;border-radius:2px;background:${ROUTE_COLORS[role]}`)} />
           {ROUTE_LABELS[role]}
         </span>
       ))}
       <span className="mono" data-testid="schematic-provenance-label" style={css("margin-left:auto;font-size:9px;color:#75878c;letter-spacing:.02em")}>
-        {provenance}
+        Planned routes
       </span>
     </div>
     <div className="mono" data-testid="map-location-disclosure" style={css("font-size:9.5px;color:#7d8d92;margin:4px 2px 0;letter-spacing:.02em;line-height:1.5")}>
-      {locations.length} configured reference locations · no live GPS{disclosure ? ` — ${disclosure}` : ""} · {ROUTE_ATTRIBUTION}
+      {ROUTE_ATTRIBUTION}
     </div>
   </div>;
 }

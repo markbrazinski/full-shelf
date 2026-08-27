@@ -173,9 +173,9 @@ test.describe("Golden journey", () => {
     await expect(page.locator('[data-testid="auth-rev"]')).toHaveText("rev07");
     expect(await cursor(page)).toBe(5);
 
-    // The map surfaces all six configured reference locations and says so.
+    // The map footer carries the OSM route attribution, and nothing else.
     await expect(page.locator('[data-testid="map-location-disclosure"]')).toContainText(
-      "6 configured reference locations · no live GPS",
+      "Route geometry © OpenStreetMap contributors",
     );
     // Presenter transport controls must not exist on the film canvas.
     await expect(page.getByRole("button", { name: /^(play|pause|advance|step|next event)$/i })).toHaveCount(0);
@@ -367,23 +367,20 @@ test.describe("Golden journey", () => {
       );
       expect(tiles, "Google basemap painted real tiles").toBeGreaterThan(0);
       await expect(page.locator('[data-testid="map-provenance-label"]')).toContainText(
-        "GOOGLE MAPS · CONFIGURED REFERENCE LOCATIONS · NOT LIVE GPS",
+        "Planned routes",
       );
     } else {
       // Truthful fallback: only legitimate when no authorized key painted.
       await expect(schematic).toBeVisible();
       await expect(page.locator('[data-testid="schematic-provenance-label"]')).toContainText(
-        "CONFIGURED REFERENCE LOCATIONS · NOT LIVE GPS",
+        "Planned routes",
       );
       console.log(`map fallback rendered (key configured: ${keyConfigured})`);
     }
 
-    // Both paths carry the runtime's own disclosure for all six sites.
+    // Both paths carry the required OpenStreetMap route attribution.
     await expect(page.locator('[data-testid="map-location-disclosure"]')).toContainText(
-      "6 configured reference locations · no live GPS",
-    );
-    await expect(page.locator('[data-testid="map-location-disclosure"]')).toContainText(
-      "No live GPS or operational affiliation is claimed",
+      "Route geometry © OpenStreetMap contributors",
     );
 
     // Nothing may CLAIM a moving truck, a driven route, or a live fix.
@@ -601,6 +598,14 @@ test.describe("Golden journey", () => {
     await expectNoHorizontalOverflow(page);
     await shot(page, "10-complete-evidence");
 
+    // A branch that resolves the cases must not simultaneously headline
+    // the canonical "8 cases remain unconfirmed" refusal.
+    await page.locator('[data-testid="stage-closure"]').click();
+    await expect(page.locator('[data-testid="branch-resolved-closure"]')).toBeVisible();
+    await expect(page.locator("main")).not.toContainText(
+      "Closure refused — 8 cases remain unconfirmed",
+    );
+
     // ---- exit restores canonical 88/96 and PARTIALLY_CONTAINED ------
     await page.locator('[data-testid="branch-exit"]').click();
     await expect(panel).toHaveAttribute("data-branch", "canonical", { timeout: 30_000 });
@@ -628,7 +633,10 @@ test.describe("Golden journey", () => {
     expect(restoredOrdinals, "canonical rail restored exactly").toEqual(canonicalOrdinals);
 
     // Only after returning to canonical may progression resume through 23-25.
-    await waitForCursor(page, 25, 60_000);
+    // Event 24 is a deliberate indefinite hold (the Saturday draft is meant
+    // to be reviewed, not raced past), so the last step is driven.
+    await waitForCursor(page, 24, 60_000);
+    await driveTo(page, sid, 25);
     await expect(page.locator('[data-testid="fleet-activity-rail"]')).toContainText(
       "Obligations carried forward",
     );
@@ -895,11 +903,9 @@ test.describe("Golden journey", () => {
     // No Google surface, no blank panel — the labelled schematic instead.
     await expect(page.locator('[data-testid="planned-dispatch-map"]')).toHaveCount(0);
     await expect(page.locator('[data-testid="dispatch-svg-schematic"]')).toBeVisible();
-    await expect(page.locator('[data-testid="map-mode-label"]')).toContainText(
-      "DETERMINISTIC SCHEMATIC · CONFIGURED REFERENCE LOCATIONS · NOT LIVE GPS",
-    );
+    await expect(page.locator('[data-testid="map-mode-label"]')).toContainText("Planned routes");
     await expect(page.locator('[data-testid="map-location-disclosure"]')).toContainText(
-      "6 configured reference locations · no live GPS",
+      "Route geometry © OpenStreetMap contributors",
     );
     // A fallback must never leave a loading surface stranded on screen.
     await expect(page.locator('[data-testid="map-loading"]')).toHaveCount(0);
@@ -922,13 +928,11 @@ test.describe("Golden journey", () => {
       timeout: 30_000,
     });
     await expect(page.locator('[data-testid="planned-dispatch-map"]')).toHaveCount(0);
-    await expect(page.locator('[data-testid="map-mode-label"]')).toContainText(
-      "DETERMINISTIC SCHEMATIC",
-    );
+    await expect(page.locator('[data-testid="map-mode-label"]')).toContainText("Planned routes");
     // Bounded: it degraded rather than hanging behind a spinner.
     await expect(page.locator('[data-testid="map-loading"]')).toHaveCount(0);
     await expect(page.locator('[data-testid="map-location-disclosure"]')).toContainText(
-      "no live GPS",
+      "Route geometry © OpenStreetMap contributors",
     );
 
     await expectNoHorizontalOverflow(page);
@@ -1384,6 +1388,341 @@ test.describe("Golden journey", () => {
       "Synthetic replay using configured facilities and planned reference routes.",
     );
   });
+
+  // ===================================================================
+  // v8 final filmability repair.
+  // ===================================================================
+
+  /** Marker badges currently drawn on the Google map, in DOM order. */
+  async function markerBadges(page: Page): Promise<string[]> {
+    return await page.evaluate(() => {
+      const out: string[] = [];
+      document.querySelectorAll('[data-testid="planned-dispatch-map"] [title]').forEach((a) => {
+        const t = (a as HTMLElement).title || "";
+        const m = /^((?:T1|T2|P)-\d+)/.exec(t);
+        if (m) out.push(m[1]);
+      });
+      return out;
+    });
+  }
+
+  test("event 5 markers match the two manifests exactly", async ({ page }) => {
+    await page.goto("/?presenter=1");
+    await expect(page.locator('[data-testid="clock"]')).toBeVisible({ timeout: 30_000 });
+    expect(await cursor(page)).toBe(5);
+    await expectMapSettled(page);
+
+    const google = page.locator('[data-testid="planned-dispatch-map"]');
+    if ((await google.count()) === 0) {
+      test.skip(true, "no Maps key configured; marker identity is a Google-surface assertion");
+    }
+
+    // Ownership is the runtime's vehicle_id, so Truck 1 keeps all three
+    // of its stops (including the delivered one) and Truck 2 keeps two.
+    const badges = await markerBadges(page);
+    expect([...badges].sort(), "T1-1..3 and T2-1..2, no duplicates").toEqual([
+      "T1-1", "T1-2", "T1-3", "T2-1", "T2-2",
+    ]);
+    expect(new Set(badges).size, "no duplicate markers").toBe(badges.length);
+  });
+
+  test("delivered O201 keeps a marker after rev08, and partner reads P-1", async ({ page }) => {
+    await page.goto("/?presenter=1");
+    await expect(page.locator('[data-testid="clock"]')).toBeVisible({ timeout: 30_000 });
+    const sid = await sessionIdOf(page);
+    await driveTo(page, sid, 10);
+    await expect(page.locator('[data-testid="auth-rev"]')).toHaveText("rev08", { timeout: 30_000 });
+    await expectMapSettled(page);
+
+    const google = page.locator('[data-testid="planned-dispatch-map"]');
+    if ((await google.count()) === 0) {
+      test.skip(true, "no Maps key configured; marker identity is a Google-surface assertion");
+    }
+
+    const titles = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('[data-testid="planned-dispatch-map"] [title]')).map(
+        (a) => (a as HTMLElement).title || "",
+      ),
+    );
+    // Berkeley's delivered commitment is still on the map and still named.
+    expect(titles.join(" | "), "delivered O201 stays visible").toContain("O201");
+    expect(titles.join(" | ")).toContain("Berkeley Community Pantry");
+    // Partner fulfillment is numbered, never a bare "P-".
+    expect(titles.some((t) => /^P-1\b/.test(t)), "partner marker reads P-1").toBe(true);
+    expect(titles.some((t) => /^P-\s/.test(t) || /^P-$/.test(t)), "no bare P- marker").toBe(false);
+  });
+
+  test("event 21 renders the closure refusal, not a pending placeholder", async ({ page }) => {
+    await page.goto("/?presenter=1");
+    await expect(page.locator('[data-testid="clock"]')).toBeVisible({ timeout: 30_000 });
+    const sid = await sessionIdOf(page);
+    await driveTo(page, sid, 21);
+    await page.locator('[data-testid="nav-incident"]').click();
+
+    const main = page.locator("main");
+    await expect(main).toContainText("Closure refused — 8 cases remain unconfirmed", {
+      timeout: 30_000,
+    });
+    await expect(page.locator('[data-testid="stage-pending"]')).toHaveCount(0);
+    // Event 21 is the refusal; the terminal state belongs to event 22.
+    await expect(page.locator('[data-testid="incident-status"]')).not.toHaveText(
+      "PARTIALLY_CONTAINED",
+    );
+  });
+
+  test("event 22 keeps the DENIED verdict above the fold and clear of Open work", async ({ page }) => {
+    await page.goto("/?presenter=1");
+    await expect(page.locator('[data-testid="clock"]')).toBeVisible({ timeout: 30_000 });
+    const sid = await sessionIdOf(page);
+    await driveTo(page, sid, 22);
+    await page.locator('[data-testid="nav-incident"]').click();
+
+    const verdict = page.locator('[data-testid="refusal-verdict"]');
+    await expect(verdict).toBeVisible({ timeout: 30_000 });
+    await expect(verdict).toContainText("DENIED");
+    await expect(verdict).toContainText("0");
+
+    const v = (await verdict.boundingBox())!;
+    expect(v.y, "verdict starts on screen").toBeGreaterThanOrEqual(0);
+    expect(v.y + v.height, "the whole verdict tile is above y=900").toBeLessThanOrEqual(900);
+
+    // The refusal headline remains the primary takeaway, above the verdict.
+    const headline = (await page.locator("main h1").first().boundingBox())!;
+    expect(headline.y, "headline precedes the verdict").toBeLessThan(v.y);
+
+    // Open work must not overlap the verdict or the primary outcome.
+    // Re-read the verdict box here so both rectangles are measured after
+    // the same layout pass rather than comparing against a stale one.
+    const v2 = (await verdict.boundingBox())!;
+    const work = (await page.locator('[data-testid="work-to-do"]').boundingBox())!;
+    expect(work.height, "Open work stays a compact strip").toBeLessThanOrEqual(180);
+    // 1px tolerance: sub-pixel layout rounding, not a visible overflow.
+    expect(work.y + work.height, "Open work stays inside the film frame").toBeLessThanOrEqual(901);
+    // All four obligations are legible without scrolling.
+    const aboveFold = await page.evaluate(
+      () =>
+        Array.from(document.querySelectorAll('[data-testid="work-item"]')).filter(
+          (e) => e.getBoundingClientRect().bottom <= 900,
+        ).length,
+    );
+    expect(aboveFold, "four obligations visible above fold").toBe(4);
+    const overlaps = (a: typeof v, b: typeof v) =>
+      a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+    expect(overlaps(work, v2), "Open work does not overlap the verdict").toBe(false);
+    expect(overlaps(work, headline), "Open work does not overlap the headline").toBe(false);
+
+    await expectNoHorizontalOverflow(page);
+  });
+
+  test("Fleet Activity stays a supporting column and keeps approval above fold", async ({ page }) => {
+    await page.goto("/?presenter=1");
+    await expect(page.locator('[data-testid="clock"]')).toBeVisible({ timeout: 30_000 });
+    const sid = await sessionIdOf(page);
+
+    const rail = page.locator('[data-testid="fleet-activity-rail"]');
+    const railBox = (await rail.boundingBox())!;
+    expect(railBox.width, "rail is at most ~380px").toBeLessThanOrEqual(380);
+    expect(railBox.width / 1600, "rail is under 25% of the viewport").toBeLessThan(0.25);
+
+    // Bounded recent set, with the rest one click away.
+    await driveTo(page, sid, 18);
+    const shown = await page.locator('[data-testid="activity-entry"]').count();
+    expect(shown, "only a bounded recent set is listed").toBeLessThanOrEqual(6);
+    await expect(page.locator('[data-testid="view-earlier-activity"]')).toBeVisible();
+    await page.locator('[data-testid="view-earlier-activity"]').click();
+    expect(
+      await page.locator('[data-testid="activity-entry"]').count(),
+      "earlier activity expands",
+    ).toBeGreaterThan(shown);
+
+    // The approval action is still above fold at the gate.
+    await page.goto("/?presenter=1");
+    await expect(page.locator('[data-testid="clock"]')).toBeVisible({ timeout: 30_000 });
+    const sid2 = await sessionIdOf(page);
+    await driveTo(page, sid2, 8);
+    const approve = page.locator('[data-testid="approve-update"]');
+    await expect(approve).toBeVisible({ timeout: 30_000 });
+    const box = (await approve.boundingBox())!;
+    expect(box.y + box.height, "approval is above fold at 900px").toBeLessThanOrEqual(900);
+  });
+
+  test("the Incidents badge tracks real open incidents", async ({ page }) => {
+    await page.goto("/?presenter=1");
+    await expect(page.locator('[data-testid="clock"]')).toBeVisible({ timeout: 30_000 });
+    const sid = await sessionIdOf(page);
+    const badge = page.locator('[data-testid="incident-badge"]');
+
+    // Before the failure there is nothing to badge.
+    await expect(badge).toHaveCount(0);
+
+    // 6-9: the truck failure is open.
+    await driveTo(page, sid, 6);
+    await expect(badge).toHaveText("1", { timeout: 30_000 });
+    await driveTo(page, sid, 8);
+    await expect(badge).toHaveText("1");
+
+    // 10: rev08 resolves INC-2210, so the badge clears.
+    await driveTo(page, sid, 10);
+    await expect(badge, "resolved incident clears the badge").toHaveCount(0, { timeout: 30_000 });
+
+    // 11 onward: the recall is open.
+    await driveTo(page, sid, 11);
+    await expect(badge).toHaveText("1", { timeout: 30_000 });
+
+    // Partially contained is unresolved, so it keeps the badge. The
+    // status itself lives inside the workspace, so confirm it there and
+    // then come back to Today where the badge is rendered.
+    await driveTo(page, sid, 22);
+    await page.locator('[data-testid="nav-incident"]').click();
+    await expect(page.locator('[data-testid="incident-status"]')).toHaveText("PARTIALLY_CONTAINED", {
+      timeout: 30_000,
+    });
+    await page.locator('[data-testid="nav-today"]').click();
+    await expect(badge).toHaveText("1");
+  });
+
+  test("defensive map language is gone and provider attribution is intact", async ({ page }) => {
+    await page.goto("/?presenter=1");
+    await expect(page.locator('[data-testid="clock"]')).toBeVisible({ timeout: 30_000 });
+    await expectMapSettled(page);
+
+    // Application-authored defensive copy must not appear.
+    const body = await page.locator("body").innerText();
+    for (const gone of [
+      /NOT LIVE GPS/i,
+      /CONFIGURED REFERENCE LOCATIONS/i,
+      /CONFIGURED_REFERENCE/i,
+      /configured reference locations/i,
+      /not derived from position/i,
+      /no positions or bearings/i,
+    ]) {
+      expect(body, `defensive copy ${gone} must be gone`).not.toMatch(gone);
+    }
+
+    // The OSM route attribution appears exactly once.
+    const osm = (body.match(/Route geometry © OpenStreetMap contributors/g) ?? []).length;
+    expect(osm, "OSM attribution appears once").toBe(1);
+
+    // Google's own attribution must remain untouched where the map renders.
+    if ((await page.locator('[data-testid="planned-dispatch-map"]').count()) === 1) {
+      const google = await page.evaluate(() => {
+        const host = document.querySelector('[data-testid="planned-dispatch-map"]');
+        if (!host) return { terms: 0, watermark: 0 };
+        return {
+          terms: host.querySelectorAll('a[href*="google.com/intl"], a[href*="maps.google.com"]').length,
+          watermark: host.querySelectorAll('img[src*="google"], a[title*="Google"]').length,
+        };
+      });
+      expect(google.terms + google.watermark, "Google attribution is present").toBeGreaterThan(0);
+    }
+  });
+
+  test("partner fulfillment uses one amber legend treatment", async ({ page }) => {
+    await page.goto("/?presenter=1");
+    await expect(page.locator('[data-testid="clock"]')).toBeVisible({ timeout: 30_000 });
+    const sid = await sessionIdOf(page);
+    await driveTo(page, sid, 10);
+    await expectMapSettled(page);
+
+    const partner = page.locator('[data-testid="map-legend-partner"]');
+    await expect(partner).toBeVisible({ timeout: 30_000 });
+
+    // One solid colour, and no segmented/two-tone swatch.
+    const swatch = await partner.locator("span").first().evaluate((el) => {
+      const cs = getComputedStyle(el);
+      return { bg: cs.backgroundColor, image: cs.backgroundImage };
+    });
+    expect(swatch.image, "no gradient/segmented partner swatch").toBe("none");
+
+    // Distinct from both truck identities.
+    const colors = await page.evaluate(async () => {
+      const m = await import("/src/data/contract/routeGeometry.ts");
+      return m.ROUTE_COLORS;
+    });
+    expect(colors.PARTNER).not.toBe(colors.TRUCK_1);
+    expect(colors.PARTNER).not.toBe(colors.TRUCK_2);
+  });
+
+  test("Saturday drops the rejected headline and its footer does not overlap", async ({ page }) => {
+    await page.goto("/?presenter=1");
+    await expect(page.locator('[data-testid="clock"]')).toBeVisible({ timeout: 30_000 });
+    const sid = await sessionIdOf(page);
+    await driveTo(page, sid, 24);
+    await page.locator('[data-testid="saturday-ready-cta"]').click();
+    await expectMapSettled(page);
+
+    const main = page.locator("main");
+    await expect(main).not.toContainText(/FRIDAY UNRESOLVED CARRIES FORWARD/i);
+    await expect(main).not.toContainText(/no activation supported/i);
+    await expect(page.locator('[data-testid="saturday-primary-message"]')).toContainText(
+      "40 cases assigned",
+    );
+    await expect(page.locator('[data-testid="saturday-primary-message"]')).toContainText(
+      "20 cases still unassigned",
+    );
+
+    // All four inherited obligations remain visible.
+    for (const ref of ["BARRIER-4471", "SF-A03", "WORK-SITE01", "INC-2231"]) {
+      await expect(main, `obligation ${ref} remains visible`).toContainText(ref);
+    }
+
+    // The footer sits in normal flow, above the fold, clear of the map.
+    const footer = page.locator('[data-testid="map-location-disclosure"]').first();
+    await expect(footer).toBeVisible();
+    const f = (await footer.boundingBox())!;
+    expect(f.y + f.height, "footer text is above the fold").toBeLessThanOrEqual(900);
+
+    const mapBox = await page
+      .locator('[data-testid="planned-dispatch-map"], [data-testid="dispatch-svg-schematic"]')
+      .first()
+      .boundingBox();
+    if (mapBox) {
+      expect(f.y, "footer sits below the map, not over it").toBeGreaterThanOrEqual(
+        mapBox.y + mapBox.height - 2,
+      );
+    }
+
+    await expectNoHorizontalOverflow(page);
+  });
+
+  test("autoplay dwells deliberately and ArrowRight cancels it", async ({ page }) => {
+    // Public autoplay: the opening event must hold for several seconds
+    // rather than flicking past.
+    await page.goto("/");
+    await expect(page.locator('[data-testid="clock"]')).toBeVisible({ timeout: 30_000 });
+    expect(await cursor(page)).toBe(5);
+
+    const started = Date.now();
+    await expect.poll(() => cursor(page), { timeout: 20_000 }).toBeGreaterThan(5);
+    const dwell = Date.now() - started;
+    expect(dwell, "event 5 dwells about 5s before advancing").toBeGreaterThanOrEqual(4_000);
+
+    // ArrowRight is deterministic: it cancels the pending tick, pauses,
+    // and commits exactly one event.
+    await page.goto("/?presenter=1");
+    await expect(page.locator('[data-testid="clock"]')).toBeVisible({ timeout: 30_000 });
+    const before = await cursor(page);
+    await page.keyboard.press("ArrowRight");
+    await expect.poll(() => cursor(page), { timeout: 20_000 }).toBe(before + 1);
+    await page.waitForTimeout(4_000);
+    expect(await cursor(page), "autoplay does not race the keypress").toBe(before + 1);
+  });
+
+  test("bare R does not reset; Shift+R is the reset gesture", async ({ page }) => {
+    await page.goto("/?presenter=1");
+    await expect(page.locator('[data-testid="clock"]')).toBeVisible({ timeout: 30_000 });
+    const sid = await sessionIdOf(page);
+    await driveTo(page, sid, 12);
+    const held = await settleCursor(page);
+
+    // A stray "r" during a rehearsal must not wipe the take.
+    await page.keyboard.press("KeyR");
+    await page.waitForTimeout(1_500);
+    expect(await cursor(page), "bare R is inert").toBe(held);
+    // No visible reset control exists in presenter mode.
+    await expect(page.locator('[data-testid="debug-reset"]')).toHaveCount(0);
+  });
+
 });
 
 // ---------------------------------------------------------------------

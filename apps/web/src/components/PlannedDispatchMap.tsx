@@ -39,6 +39,8 @@ export interface PlannedStop {
   /** 1-based position in the planned sequence for this vehicle. */
   sequence: number;
   kind: "ORIGINAL" | "REVISED" | "PARTNER";
+  /** The runtime's own vehicle assignment. Null for partner fulfillment. */
+  vehicleId: string | null;
 }
 
 export interface PlannedDispatchMapProps {
@@ -47,19 +49,25 @@ export interface PlannedDispatchMapProps {
   routes: PlannedRoute[];
   /** The runtime's six configured reference locations. */
   locations: MapLocation[];
-  /** The runtime's own disclosure text, rendered verbatim. */
-  disclosure?: string;
   label: string;
   apiKey: string;
   onFailure: () => void;
 }
 
-/** A stop's plan classification maps to exactly one visual identity. */
-const ROLE_FOR_KIND: Record<PlannedStop["kind"], RouteRole> = {
-  ORIGINAL: "TRUCK_1",
-  REVISED: "TRUCK_2",
-  PARTNER: "PARTNER",
-};
+/**
+ * Which vehicle owns a stop's marker.
+ *
+ * Ownership is the runtime's own `vehicle_id`, NOT the delivery status:
+ * a delivered stop still belongs to the truck that carried it, and a
+ * still-planned stop on a failed truck still belongs to that truck. A
+ * stop with no vehicle is partner fulfillment.
+ */
+function roleForStop(stop: PlannedStop): RouteRole {
+  if (stop.kind === "PARTNER" || !stop.vehicleId) return "PARTNER";
+  if (stop.vehicleId === "TRUCK-01") return "TRUCK_1";
+  if (stop.vehicleId === "TRUCK-02") return "TRUCK_2";
+  return "TRUCK_2";
+}
 
 /** Marker badges carry truck identity and stop order: T1-1, T2-1, P-1. */
 const STOP_PREFIX: Record<RouteRole, string> = {
@@ -154,7 +162,6 @@ export function PlannedDispatchMap({
   stops,
   routes,
   locations,
-  disclosure,
   label,
   apiKey,
   onFailure,
@@ -208,7 +215,7 @@ export function PlannedDispatchMap({
           new maps.Marker({
             map,
             position: { lat: loc.lat, lng: loc.lon },
-            title: `${loc.name}${loc.address ? ` · ${loc.address}` : ""} · configured reference location`,
+            title: `${loc.name}${loc.address ? ` · ${loc.address}` : ""}`,
             label: isHub
               ? { text: "H", color: "#ffffff", fontSize: "12px", fontWeight: "700" }
               : undefined,
@@ -264,10 +271,15 @@ export function PlannedDispatchMap({
           const loc = locationForStop(stop, locations);
           if (!loc) continue;
 
-          const role = ROLE_FOR_KIND[stop.kind];
+          const role = roleForStop(stop);
           const color = ROUTE_COLORS[role];
           const pos = { lat: loc.lat, lng: loc.lon };
-          const badge = `${STOP_PREFIX[role]}${stop.sequence || ""}`;
+          // Partner fulfillment holds no manifest position of its own, so
+          // it is numbered from 1 rather than rendering a bare "P-".
+          const badge =
+            role === "PARTNER"
+              ? `${STOP_PREFIX[role]}${stop.sequence > 0 ? stop.sequence : 1}`
+              : `${STOP_PREFIX[role]}${stop.sequence || 1}`;
 
           new maps.Marker({
             map,
@@ -406,13 +418,12 @@ export function PlannedDispatchMap({
             data-testid={`map-legend-${role.toLowerCase()}`}
             style={css("display:flex;align-items:center;gap:6px;font-size:11px;color:#43555c")}
           >
+            {/* One solid colour per identity. A segmented or two-tone
+                swatch read as a mixed-ownership route, so partner
+                fulfillment is a single amber bar. */}
             <span
-              style={css(
-                `width:16px;height:3px;border-radius:2px;background:${ROUTE_COLORS[role]}` +
-                  (role === "PARTNER" || role === "UNAVAILABLE"
-                    ? ";background-image:linear-gradient(90deg,currentColor 60%,transparent 0)"
-                    : ""),
-              )}
+              data-legend-color={ROUTE_COLORS[role]}
+              style={css(`width:16px;height:3px;border-radius:2px;background:${ROUTE_COLORS[role]}`)}
             />
             {ROUTE_LABELS[role]}
           </span>
@@ -430,8 +441,7 @@ export function PlannedDispatchMap({
         data-testid="map-location-disclosure"
         style={css("font-size:10px;color:#7d8d92;margin-top:5px;letter-spacing:.02em;line-height:1.5")}
       >
-        {locations.length} configured reference locations · no live GPS
-        {disclosure ? ` — ${disclosure}` : ""} · {ROUTE_ATTRIBUTION}
+        {ROUTE_ATTRIBUTION}
       </div>
     </div>
   );

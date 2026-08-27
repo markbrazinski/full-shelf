@@ -85,18 +85,15 @@ function CandidateMap({
   view,
   locations,
   mapsApiKey,
-  disclosure,
 }: {
   view: TomorrowView;
   locations: MapLocation[];
   mapsApiKey?: string;
-  disclosure?: string;
 }) {
   const [mapFailed, setMapFailed] = useState(false);
   const onFailure = useCallback(() => setMapFailed(true), []);
   const showGoogleMap = !!mapsApiKey && locations.length > 0 && !mapFailed;
-  const googleLabel = "GOOGLE MAPS · CONFIGURED REFERENCE LOCATIONS · NOT LIVE GPS";
-  const fallbackLabel = "DETERMINISTIC SCHEMATIC · CONFIGURED REFERENCE LOCATIONS · NOT LIVE GPS";
+  const mapLabel = "Candidate route";
 
   const stops = view.candidateVehicles.flatMap((v) =>
     v.stops.map((s) => ({ ...s, vehicleId: v.vehicleId })),
@@ -110,6 +107,7 @@ function CandidateMap({
     cases: s.cases,
     sequence: s.sequence,
     kind: "REVISED",
+    vehicleId: s.vehicleId ?? "TRUCK-02",
   }));
 
   const route = saturdayRoute();
@@ -125,7 +123,7 @@ function CandidateMap({
           data-testid="saturday-map-provenance"
           style={css("font-size:8px;letter-spacing:.04em;color:#7e939c;text-align:right")}
         >
-          {showGoogleMap ? googleLabel : fallbackLabel}
+          {mapLabel}
         </span>
       </div>
 
@@ -135,8 +133,7 @@ function CandidateMap({
             stops={plannedStops}
             routes={[route]}
             locations={locations}
-            disclosure={disclosure}
-            label={googleLabel}
+            label={mapLabel}
             apiKey={mapsApiKey!}
             onFailure={onFailure}
           />
@@ -145,8 +142,6 @@ function CandidateMap({
             stops={plannedStops}
             route={route}
             locations={locations}
-            disclosure={disclosure}
-            provenance={fallbackLabel}
           />
         )}
       </div>
@@ -163,14 +158,10 @@ function SaturdaySchematic({
   stops,
   route,
   locations,
-  disclosure,
-  provenance,
 }: {
   stops: PlannedStop[];
   route: PlannedRoute;
   locations: MapLocation[];
-  disclosure?: string;
-  provenance: string;
 }) {
   const points = schematicPoints(locations);
   const hub = locations.find((l) => l.role === "HUB");
@@ -264,8 +255,7 @@ function SaturdaySchematic({
         data-testid="map-location-disclosure"
         style={css("font-size:9.5px;color:#7d8d92;margin:6px 2px 0;letter-spacing:.02em;line-height:1.5")}
       >
-        {provenance} · {locations.length} configured reference locations · no live GPS
-        {disclosure ? ` — ${disclosure}` : ""} · {ROUTE_ATTRIBUTION}
+        {ROUTE_ATTRIBUTION}
       </div>
     </div>
   );
@@ -275,13 +265,11 @@ export function SaturdayCandidatePlan({
   view,
   locations = [],
   mapsApiKey,
-  locationDisclosure,
 }: {
   view: TomorrowView;
   /** The runtime's six configured reference locations. */
   locations?: MapLocation[];
   mapsApiKey?: string;
-  locationDisclosure?: string;
 }) {
   const assignedCases = view.candidateVehicles.reduce(
     (n, v) => n + (v.candidateLoadCases ?? 0),
@@ -291,21 +279,13 @@ export function SaturdayCandidatePlan({
 
   return (
     <div style={css("flex:1;min-height:0;display:flex;flex-direction:column;margin-top:12px")} data-enter="">
-      <div style={css("background:#f9f4f0;border:1px solid #e3c3ba;border-left:4px solid #a23b2b;border-radius:10px;padding:14px 16px;margin-bottom:14px")}>
-        <div className="mono" style={css("font-size:10px;letter-spacing:.08em;color:#8a2f22;font-weight:600;line-height:1.4")}>
-          FRIDAY UNRESOLVED CARRIES FORWARD
-          <br />
-          {facilityName("AGENCY-03")} short 20 · {facilityName("SITE-01")} custody confirmation
-          open · LTC-4471 excluded
-        </div>
-      </div>
       <div style={css("flex:none;display:flex;align-items:center;justify-content:space-between;gap:16px")}>
         <div>
           <h1 style={css("font-size:20px;font-weight:600;letter-spacing:-.01em;color:#16262c")}>
             Saturday’s candidate schedule
           </h1>
           <div style={css("font-size:12px;color:#5c6b71;margin-top:5px")}>
-            Draft with constraints — no activation supported
+            Draft with constraints
           </div>
         </div>
         <span
@@ -374,7 +354,7 @@ export function SaturdayCandidatePlan({
         )}
       >
         {view.available ? (
-          <CandidateMap view={view} locations={locations} mapsApiKey={mapsApiKey} disclosure={locationDisclosure} />
+          <CandidateMap view={view} locations={locations} mapsApiKey={mapsApiKey} />
         ) : (
           <UnavailablePanel reason={view.unavailableReason} />
         )}

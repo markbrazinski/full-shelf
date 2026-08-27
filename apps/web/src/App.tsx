@@ -43,7 +43,37 @@ import { EvidenceBranchPanel, type BranchKind } from "./components/EvidenceBranc
 import { FleetActivityRail, type ActivityRailEntry } from "./components/FleetActivityRail";
 
 const MAPS_API_KEY = googleMapsApiKey();
-const AUTOPLAY_MS = 900;
+
+/**
+ * Deliberate dwell time, in milliseconds, BEFORE leaving each event.
+ *
+ * The day is meant to be read, not raced: a viewer must be able to take
+ * in what changed before the next commit lands. Pacing is presentation
+ * only — it never changes scenario time, which advances solely when the
+ * next accepted event commits.
+ *
+ * Two boundaries hold indefinitely rather than timing out:
+ *   11  the recall — held until the operator opens Incidents
+ *   24  the Saturday draft — held so the plan can actually be reviewed
+ */
+const DWELL_MS: Record<number, number> = {
+  5: 5_000,   // opening
+  6: 5_000,   // truck failure
+  10: 5_000,  // rev08 activation
+  13: 4_000,  // recall extraction
+  14: 4_000,  // scoping
+  18: 5_000,  // custody reconciliation
+  19: 5_000,  // recovery proposed
+  20: 5_000,  // recovery committed
+  21: 6_000,  // closure refusal
+  22: 6_000,  // partially contained
+};
+/** Every other committed event. */
+const DWELL_DEFAULT_MS = 3_000;
+/** Boundaries that wait for a human rather than a timer. */
+const HOLD_EVENTS = new Set([11, 24]);
+
+const dwellFor = (cursor: number): number => DWELL_MS[cursor] ?? DWELL_DEFAULT_MS;
 const DEBUG_CONTROLS = debugReplayControlsEnabled();
 const PRESENTER = presenterModeEnabled();
 
@@ -75,6 +105,8 @@ export default function App() {
   const [recallPaused, setRecallPaused] = useState(false);
   // Presenter mode opens paused; Space toggles progression.
   const [paused, setPaused] = useState(PRESENTER);
+  // Frontend-paced autoplay. `playing` drives the dwell ticker below.
+  const [playing, setPlaying] = useState(false);
   const [branch, setBranch] = useState<BranchKind | null>(null);
   const [branchBusy, setBranchBusy] = useState(false);
 
@@ -176,10 +208,12 @@ export default function App() {
           },
         );
 
-        // Presenter mode is a filming surface: it starts PAUSED and is
-        // advanced by hand, so a take is deterministic. Normal product
-        // mode autoplays the day.
-        if (!PRESENTER) await backend.start(snap.session_id, AUTOPLAY_MS);
+        // Pacing is driven HERE, one committed event per dwell interval,
+        // rather than by the runtime's fixed-interval loop — that is what
+        // lets each event hold for as long as it needs to be read, and
+        // lets ArrowRight cancel a pending tick deterministically.
+        // Presenter mode is a filming surface and starts PAUSED.
+        if (!disposed && !PRESENTER) setPlaying(true);
       } catch (e) {
         if (!disposed) {
           setError(e instanceof Error ? e.message : String(e));
@@ -204,11 +238,41 @@ export default function App() {
       setRecallPaused(false);
       return;
     }
-    (async () => {
-      await backend.start(sessionId.current, AUTOPLAY_MS).catch(() => {});
-      setRecallPaused(false);
-    })();
-  }, [view, recallPaused, paused, backend]);
+    setRecallPaused(false);
+    setPlaying(true);
+  }, [view, recallPaused, paused]);
+
+  // ---- frontend-paced autoplay --------------------------------------
+  // One committed event per dwell interval. The timer id is held in a ref
+  // so ArrowRight (or a pause) can cancel a PENDING tick outright — that
+  // is what stops a keypress from appearing to do nothing while an
+  // autoplay advance is already in flight.
+  const tick = useRef<number | null>(null);
+
+  const cancelTick = useCallback(() => {
+    if (tick.current !== null) {
+      window.clearTimeout(tick.current);
+      tick.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    cancelTick();
+    if (!playing || paused || branch || !sessionId.current) return;
+    // The gate and the two human-held boundaries are not timed: they wait.
+    if (gatePaused || cursor === 8) return;
+    if (HOLD_EVENTS.has(cursor)) return;
+    if (cursor >= 25) return;
+
+    tick.current = window.setTimeout(() => {
+      tick.current = null;
+      // The runtime remains the authority: it refuses at the gate (409)
+      // and this never approves anything on its own.
+      backend.advance(sessionId.current).catch(() => {});
+    }, dwellFor(cursor));
+
+    return cancelTick;
+  }, [playing, paused, branch, cursor, gatePaused, backend, cancelTick]);
 
   const reconnect = useCallback(async () => {
     if (!sessionId.current) return;
@@ -281,7 +345,7 @@ export default function App() {
       // Canonical returns byte-identical: 88/96 and PARTIALLY_CONTAINED.
       setProjection(await backend.getProjection(sessionId.current, cursor));
       // Only now may canonical progression resume, through events 23-25.
-      await backend.start(sessionId.current, AUTOPLAY_MS).catch(() => {});
+      if (!PRESENTER) setPlaying(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -305,32 +369,50 @@ export default function App() {
 
       if (e.code === "Space") {
         e.preventDefault();
-        // Pause / resume progression.
+        // Toggle the paced autoplay sequence.
         if (paused) {
-          backend.start(sessionId.current, AUTOPLAY_MS).catch(() => {});
           setPaused(false);
           setRecallPaused(false);
+          setPlaying(true);
         } else {
-          backend.pause(sessionId.current).catch(() => {});
+          cancelTick();
           setPaused(true);
+          setPlaying(false);
         }
       } else if (e.code === "ArrowRight") {
         e.preventDefault();
-        // Exactly one canonical event. Refused at the gate by the runtime.
+        // Deterministic single step: cancel any pending autoplay tick,
+        // stop the sequence, then commit exactly one event. Without the
+        // cancel, a tick already in flight could land on top of this
+        // keypress and make it look like nothing (or too much) happened.
+        cancelTick();
+        setPlaying(false);
+        setPaused(true);
+        // The runtime still refuses at the human gate; this cannot bypass it.
         backend.advance(sessionId.current).catch(() => {});
-      } else if (e.code === "KeyR") {
+      } else if (e.code === "KeyR" && e.shiftKey) {
         e.preventDefault();
+        // Shift+R, so a stray "r" during a rehearsal cannot wipe the take.
         // Resets only this disposable replay session.
         window.location.reload();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [paused, execOpen, backend]);
+  }, [paused, execOpen, backend, cancelTick]);
 
   const p = projection;
   const activeIncidents = p?.incidentSummary.activeCount ?? 0;
-  const plannedStops = useMemo(() => (p?.dispatch ? plannedStopsFrom(p.dispatch) : []), [p?.dispatch]);
+  // Delivered work from a superseded revision stays on the map: the
+  // delivery happened, and a plan change does not undo it.
+  const deliveredCommitments = useMemo(
+    () => (p?.currentDay.commitments ?? []).filter((c) => c.stateTone === "delivered"),
+    [p?.currentDay.commitments],
+  );
+  const plannedStops = useMemo(
+    () => (p?.dispatch ? plannedStopsFrom(p.dispatch, deliveredCommitments) : []),
+    [p?.dispatch, deliveredCommitments],
+  );
   // Which routes apply is decided by committed state: the vehicle alarm
   // the runtime reports, and the active plan revision it publishes.
   const truck1Failed = !!p?.fleet?.some((v) => v.alarm.active);
@@ -525,6 +607,7 @@ export default function App() {
                     pinnedStage={pinnedStage}
                     onPinStage={setPinnedStage}
                     onOpenEvidence={() => setExecOpen(true)}
+                    branchResolved={!!branch && branchCustody?.unconfirmed === 0}
                   />
                   {/* Proof branches are DEBUG-ONLY. In product and
                       presenter modes no selection control renders; a
@@ -563,7 +646,9 @@ export default function App() {
         {!loading && p ? (
           <aside
             style={css(
-              "flex:none;width:376px;background:#16323b;color:#eef4f4;display:flex;flex-direction:column;" +
+              // 360px is 22.5% of the 1600px acceptance viewport, so the
+              // rail stays supporting evidence rather than the subject.
+              "flex:none;width:360px;background:#16323b;color:#eef4f4;display:flex;flex-direction:column;" +
                 "overflow:hidden;border-left:1px solid #0f1f23",
             )}
           >
@@ -611,12 +696,13 @@ export default function App() {
             onClick={() => {
               if (!sessionId.current) return;
               if (paused) {
-                backend.start(sessionId.current, AUTOPLAY_MS).catch(() => {});
                 setPaused(false);
                 setRecallPaused(false);
+                setPlaying(true);
               } else {
-                backend.pause(sessionId.current).catch(() => {});
+                cancelTick();
                 setPaused(true);
+                setPlaying(false);
               }
             }}
             style={css(
@@ -629,7 +715,13 @@ export default function App() {
           <button
             type="button"
             data-testid="debug-advance"
-            onClick={() => sessionId.current && backend.advance(sessionId.current).catch(() => {})}
+            onClick={() => {
+              if (!sessionId.current) return;
+              cancelTick();
+              setPlaying(false);
+              setPaused(true);
+              backend.advance(sessionId.current).catch(() => {});
+            }}
             style={css(
               "background:#1f3d47;border:1px solid #2b4c56;color:#cfe0e4;border-radius:6px;" +
                 "padding:6px 12px;font-size:11.5px;font-weight:600;cursor:pointer",
@@ -814,7 +906,6 @@ function TodayView({
           view={p.tomorrow}
           locations={locations}
           mapsApiKey={MAPS_API_KEY}
-          locationDisclosure={p.locationDisclosure}
         />
       ) : (
         <TodayMapWorkspace
@@ -838,7 +929,6 @@ function TodayView({
           plannedStops={plannedStops}
           routes={routes}
           locations={locations}
-          locationDisclosure={p.locationDisclosure}
         />
       )}
     </>

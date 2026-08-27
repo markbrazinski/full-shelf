@@ -18,7 +18,11 @@
 // event can never read as canonical history.
 // =====================================================================
 
+import { useEffect, useState } from "react";
 import { css } from "../styles/css";
+
+/** How many of the newest committed events the rail shows by default. */
+const RECENT_LIMIT = 6;
 
 export interface ActivityRailEntry {
   /** Canonical sequence integer, or a `b`-prefixed branch ordinal. */
@@ -51,6 +55,19 @@ export function FleetActivityRail({
   // stay after canonical ones within the same isolated view.
   const ordered = [...entries].reverse();
 
+  // Only a bounded recent set is shown, so the rail stays a supporting
+  // column rather than an endless scroll. Everything older is one click
+  // away and nothing is discarded.
+  const [showAll, setShowAll] = useState(false);
+  const visible = showAll ? ordered : ordered.slice(0, RECENT_LIMIT);
+  const hidden = ordered.length - visible.length;
+
+  // A newly committed event should bring the rail back to the top of the
+  // recent set rather than leaving the operator deep in history.
+  useEffect(() => {
+    setShowAll(false);
+  }, [entries.length]);
+
   return (
     <div
       data-testid="fleet-activity-rail"
@@ -78,7 +95,7 @@ export function FleetActivityRail({
           </div>
         ) : null}
 
-        {ordered.map((e, index) => {
+        {visible.map((e, index) => {
           const sev = SEV[e.severity] ?? SEV.INFO;
           const isolated = e.authority === "ISOLATED";
           const current = index === 0;
@@ -115,15 +132,28 @@ export function FleetActivityRail({
                 </span>
               </div>
 
+              {/* Only the current event carries its full detail. Older
+                  entries stay one compact line so the newest result is
+                  what the eye lands on. */}
               <div
                 style={css(
-                  `font-size:${current ? "14px" : "13px"};color:#cfdee2;margin-top:5px;line-height:1.5`,
+                  `font-size:${current ? "14px" : "12px"};color:${current ? "#cfdee2" : "#a8bfc6"};` +
+                    "margin-top:5px;line-height:1.45" +
+                    (current
+                      ? ""
+                      : ";display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden"),
                 )}
               >
                 {e.detail}
               </div>
 
-              <div style={css("display:flex;align-items:center;gap:7px;margin-top:7px;flex-wrap:wrap")}>
+              <div
+                style={css(
+                  "display:flex;align-items:center;gap:7px;margin-top:" +
+                    (current ? "7px" : "5px") +
+                    ";flex-wrap:wrap",
+                )}
+              >
                 <span
                   className="mono"
                   style={css(`font-size:9.5px;letter-spacing:.05em;color:${sev.fg};font-weight:700`)}
@@ -174,6 +204,19 @@ export function FleetActivityRail({
             </div>
           );
         })}
+        {hidden > 0 ? (
+          <button
+            type="button"
+            data-testid="view-earlier-activity"
+            onClick={() => setShowAll(true)}
+            style={css(
+              "width:100%;background:#173139;border:1px solid #2b4c56;color:#9fd4ea;border-radius:8px;" +
+                "padding:8px 10px;font-size:12px;font-weight:600;cursor:pointer;margin-top:2px",
+            )}
+          >
+            View earlier activity ({hidden})
+          </button>
+        ) : null}
       </div>
     </div>
   );

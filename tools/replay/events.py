@@ -220,7 +220,8 @@ CANONICAL_EVENTS = (
         T(10, 12), "AUTONOMOUS_CHAINED", POLICY, RECALL_INC,
         _a("REFUSAL", "Closure refused",
            "Eight cases remain unconfirmed. False containment refused with "
-           "zero prohibited domain mutations.")),
+           "zero prohibited domain mutations."),
+        fixture_key="refusal"),
     CanonicalEvent(
         22, "FS-E022-PARTIALLY-CONTAINED", "PARTIALLY_CONTAINED",
         T(10, 13), "AUTONOMOUS_CHAINED", LEDGER, RECALL_INC,
