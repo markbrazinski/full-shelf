@@ -1708,6 +1708,250 @@ test.describe("Golden journey", () => {
     expect(await cursor(page), "autoplay does not race the keypress").toBe(before + 1);
   });
 
+  // -----------------------------------------------------------------
+  // Single-flight transition control.
+  // ---------------------------------------------------------------
+  // Every frontend advancement path shares one controller. These tests
+  // drive the REAL runtime and manipulate only network TIMING — no
+  // canonical event, dwell interval, or application behaviour is
+  // altered, and no test-only flag exists in the product.
+  // -----------------------------------------------------------------
+
+  /**
+   * Hold `/advance` responses until released.
+   *
+   * Returns a handle that counts how many advance requests the page
+   * actually opened — the direct measurement of "single flight" — and a
+   * release for the first held response.
+   */
+  async function holdFirstAdvance(page: Page) {
+    const handle = {
+      opened: 0,
+      concurrentPeak: 0,
+      inFlight: 0,
+      release: null as null | (() => void),
+      released: false,
+      /**
+       * Release any still-held request and stop intercepting.
+       *
+       * A held request occupies a runtime handler thread, and an
+       * interceptor left armed outlives the assertions it was for. Both
+       * are released unconditionally so a failing assertion cannot leak
+       * either into the next test.
+       */
+      async dispose() {
+        handle.release?.();
+        handle.released = true;
+        await page.unroute("**/advance").catch(() => {});
+      },
+    };
+    await page.route("**/advance", async (route) => {
+      handle.opened += 1;
+      handle.inFlight += 1;
+      handle.concurrentPeak = Math.max(handle.concurrentPeak, handle.inFlight);
+      if (!handle.released && handle.release === null) {
+        await new Promise<void>((resolve) => {
+          handle.release = () => {
+            handle.released = true;
+            resolve();
+          };
+        });
+      }
+      try {
+        await route.continue();
+      } catch {
+        // The page navigated or closed under this request; nothing to do.
+      } finally {
+        handle.inFlight -= 1;
+      }
+    });
+    return handle;
+  }
+
+  test("ArrowRight during an in-flight autoplay advance commits exactly one event", async ({
+    page,
+  }) => {
+    const advance = await holdFirstAdvance(page);
+
+    // Default autoplay — the ordinary product path, at the real dwell.
+    await page.goto("/");
+    await expect(page.locator('[data-testid="clock"]')).toBeVisible({ timeout: 30_000 });
+    expect(await cursor(page), "opens at event 5").toBe(5);
+
+    // Wait until the autoplay advance is genuinely in flight.
+    await expect
+      .poll(() => advance.opened, { timeout: 20_000, message: "autoplay opened /advance" })
+      .toBe(1);
+
+    const before = await cursor(page);
+    expect(before, "the cursor has not moved yet: the request is still held").toBe(5);
+
+    // The operator presses ArrowRight while that request is unresolved.
+    await page.keyboard.press("ArrowRight");
+    await page.waitForTimeout(500);
+
+    // No second request was opened: the keypress joined the one in flight.
+    expect(advance.opened, "ArrowRight must not open a second /advance").toBe(1);
+    expect(advance.concurrentPeak, "never more than one /advance in flight").toBe(1);
+
+    advance.release?.();
+
+    // Exactly one event, and it stays exactly one well beyond the next
+    // dwell boundary — the longest dwell in the schedule is 6s.
+    await expect.poll(() => cursor(page), { timeout: 20_000 }).toBe(before + 1);
+    await page.waitForTimeout(8_000);
+    expect(await cursor(page), "ArrowRight advances exactly once and stays paused").toBe(
+      before + 1,
+    );
+    expect(advance.opened, "no further advance is dispatched while paused").toBe(1);
+    await advance.dispose();
+  });
+
+  test("hammering ArrowRight and Space during a held advance never overlaps or skips", async ({
+    page,
+  }) => {
+    const advance = await holdFirstAdvance(page);
+
+    await page.goto("/");
+    await expect(page.locator('[data-testid="clock"]')).toBeVisible({ timeout: 30_000 });
+    const before = await cursor(page);
+    await expect.poll(() => advance.opened, { timeout: 20_000 }).toBe(1);
+
+    // Hammer both transports while the request is unresolved.
+    for (let i = 0; i < 8; i++) {
+      await page.keyboard.press("ArrowRight");
+      await page.keyboard.press("Space");
+    }
+    expect(advance.concurrentPeak, "no concurrent /advance under key hammering").toBe(1);
+
+    advance.release?.();
+    await page.waitForTimeout(6_000);
+
+    // The runtime's own feed is the authority on what was committed. It
+    // must be a gapless, strictly increasing canonical sequence: nothing
+    // skipped, nothing duplicated, nothing reordered.
+    const sid = await sessionIdOf(page);
+    const feed = await feedOf(page, sid);
+    const canonical = feed.filter((n) => Number.isFinite(n));
+    for (let i = 1; i < canonical.length; i++) {
+      expect(canonical[i], "committed events are strictly increasing and gapless").toBe(
+        canonical[i - 1] + 1,
+      );
+    }
+    expect(new Set(canonical).size, "no event is committed twice").toBe(canonical.length);
+
+    // And the rendered cursor agrees with the runtime, having moved only
+    // as far as the events actually committed.
+    const rendered = await cursor(page);
+    expect(rendered, "the rail never runs ahead of committed truth").toBe(
+      canonical[canonical.length - 1],
+    );
+    expect(rendered, "hammering cannot skip events").toBeLessThanOrEqual(before + advance.opened);
+    expect(advance.concurrentPeak).toBe(1);
+    await advance.dispose();
+  });
+
+  test("a projection read that resolves out of order never overwrites newer state", async ({
+    page,
+  }) => {
+    // The projection endpoint answers with the runtime's state at read
+    // time. Holding one read and answering it with a genuinely older body
+    // reproduces a real out-of-order resolution without changing the
+    // runtime, the events, or the dwell schedule.
+    // The opening-event body is captured once through the page's own
+    // request context, so no intercepted response is held across the
+    // hold — a disposed response would fail the interceptor itself.
+    let openingBody: string | null = null;
+    let release: null | (() => void) = null;
+    let index = 0;
+
+    await page.route("**/projection", async (route) => {
+      const i = index++;
+      if (i === 0) {
+        // Record the opening state, then pass it through untouched.
+        const response = await route.fetch();
+        openingBody = await response.text();
+        return route.fulfill({ status: 200, contentType: "application/json", body: openingBody });
+      }
+      if (i === 1) {
+        // The read belonging to the first committed event. Hold it, then
+        // answer it with the opening-event body: an older read landing
+        // after newer ones have already rendered.
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: openingBody ?? "{}",
+        });
+      }
+      return route.continue();
+    });
+
+    await page.goto("/");
+    await expect(page.locator('[data-testid="clock"]')).toBeVisible({ timeout: 30_000 });
+    await expect
+      .poll(() => release !== null, { timeout: 30_000, message: "a projection read is held" })
+      .toBe(true);
+
+    // The precondition this test needs is that NEWER projection reads have
+    // already rendered while the older one is still held. Wait for that
+    // condition rather than for a fixed interval, so a slow runtime makes
+    // the test wait rather than assert against a state that never formed.
+    await expect
+      .poll(() => cursor(page), {
+        timeout: 60_000,
+        message: "progression rendered newer reads while an older one is held",
+      })
+      .toBeGreaterThan(6);
+
+    // Pause through the supported path so the stale response is the LAST
+    // write attempted against the rendered projection.
+    await page.keyboard.press("Space");
+    const heldCursor = await settleCursor(page, 1_000);
+    const clockBefore = await page.locator('[data-testid="clock"]').innerText();
+    const revBefore = await page.locator('[data-testid="auth-rev"]').innerText();
+    expect(heldCursor, "progression moved past the held read").toBeGreaterThan(5);
+    expect(clockBefore, "a real clock rendered before the stale read lands").not.toBe("—");
+
+    release!();
+    await page.waitForTimeout(2_500);
+    // Stop intercepting before asserting, so the assertions read a page
+    // served by the real runtime and no interceptor outlives this test.
+    await page.unroute("**/projection").catch(() => {});
+
+    // The stale body is dropped: nothing regresses, and nothing jumps.
+    expect(await page.locator('[data-testid="clock"]').innerText(), "a stale read never regresses the clock").toBe(clockBefore);
+    expect(await page.locator('[data-testid="auth-rev"]').innerText(), "a stale read never regresses the revision").toBe(revBefore);
+    expect(await cursor(page), "a stale read never moves the cursor").toBe(heldCursor);
+    await expectNoFutureCanonical(page, heldCursor);
+  });
+
+  test("pausing default autoplay holds the cursor beyond the longest dwell", async ({ page }) => {
+    // The supported application path: default autoplay, paused with the
+    // product's own Space transport. No API pause, no injected flag.
+    await page.goto("/");
+    await expect(page.locator('[data-testid="clock"]')).toBeVisible({ timeout: 30_000 });
+    expect(await cursor(page)).toBe(5);
+
+    await page.keyboard.press("Space");
+    const held = await settleCursor(page, 1_000);
+
+    // The longest dwell in the schedule is 6s; wait well past it. A timer
+    // that had already fired must still refuse to dispatch.
+    await page.waitForTimeout(12_000);
+    expect(await cursor(page), "a paused session commits nothing past any dwell boundary").toBe(
+      held,
+    );
+
+    // Resume arms exactly one chain, and the session moves again.
+    await page.keyboard.press("Space");
+    await expect
+      .poll(() => cursor(page), { timeout: 20_000, message: "resume restarts progression" })
+      .toBeGreaterThan(held);
+  });
+
   test("bare R does not reset; Shift+R is the reset gesture", async ({ page }) => {
     await page.goto("/?presenter=1");
     await expect(page.locator('[data-testid="clock"]')).toBeVisible({ timeout: 30_000 });

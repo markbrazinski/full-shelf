@@ -29,6 +29,15 @@ export interface EventEnvelope {
 
 export interface AdvanceResult {
   ok: boolean;
+  /**
+   * The sequence the runtime actually committed, when it committed one.
+   *
+   * The runtime already returns the committed frame; reading it is what
+   * lets a caller tell "this request moved the cursor" from "this request
+   * was refused", without inferring it from a second read that could
+   * itself race.
+   */
+  sequence?: number;
   status?: number;
   message?: string; // "HUMAN_APPROVAL_REQUIRED", "REPLAY_COMPLETE", "CANONICAL_ADVANCE_BLOCKED_IN_BRANCH"
 }
@@ -180,7 +189,11 @@ export class GoldenRuntimeDataSource {
     );
 
     if (res.ok) {
-      return { ok: true };
+      // The committed frame, verbatim. A non-numeric sequence is not a
+      // canonical commit and is reported as no movement.
+      const frame = (await res.json().catch(() => ({}))) as { sequence?: number | string };
+      const seq = Number(frame?.sequence);
+      return Number.isFinite(seq) ? { ok: true, sequence: seq } : { ok: true };
     }
 
     if (res.status === 409) {

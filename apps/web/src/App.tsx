@@ -29,7 +29,11 @@ import {
   presenterModeEnabled,
 } from "./env";
 import { routesForBoundary } from "./data/contract/routeGeometry";
-import { GoldenRuntimeDataSource, type EventEnvelope } from "./data/GoldenRuntimeDataSource";
+import {
+  GoldenRuntimeDataSource,
+  type AdvanceResult,
+  type EventEnvelope,
+} from "./data/GoldenRuntimeDataSource";
 import type { FullShelfProjection } from "./types/fullShelf";
 
 import { TodayMapWorkspace } from "./components/TodayMapWorkspace";
@@ -121,6 +125,49 @@ export default function App() {
   viewRef.current = view;
   const branchRef = useRef<BranchKind | null>(null);
   branchRef.current = branch;
+  // The visible cursor, readable synchronously. `cursor` state is only
+  // current as of the last render; a keypress needs the value the
+  // operator is looking at right now.
+  const cursorRef = useRef(cursor);
+  cursorRef.current = cursor;
+  /**
+   * Live pause state — the authority for "may anything dispatch now?".
+   *
+   * Deliberately NOT re-synced from `paused` on every render. An
+   * unrelated re-render (a committed event moving the cursor, say) can
+   * happen between `setPaused(true)` and React processing it, and
+   * re-syncing here would resurrect the stale `false` and let an armed
+   * timer through. Every transition that changes pause writes this ref
+   * first and the state second, so the ref is never behind.
+   */
+  const pausedRef = useRef(paused);
+
+  /**
+   * Monotonic revision for projection writes.
+   *
+   * The runtime's projection endpoint answers with its state at the
+   * moment it is read; it takes no cursor. Two reads issued for two
+   * different events can therefore resolve in either order, and the
+   * later-issued one is the more current. Each read claims a revision
+   * before it is issued, and a resolved read may only be rendered if no
+   * newer read has already landed. A stale response is dropped, never
+   * rendered.
+   */
+  const projectionRevision = useRef(0);
+  const renderedRevision = useRef(0);
+
+  /** Read the projection and apply it only if nothing newer has landed. */
+  const applyProjection = useCallback(
+    async (sid: string, observedCursor: number, aborted?: () => boolean): Promise<void> => {
+      const revision = ++projectionRevision.current;
+      const next = await backend.getProjection(sid, observedCursor);
+      if (aborted?.()) return;
+      if (revision <= renderedRevision.current) return; // a newer read won
+      renderedRevision.current = revision;
+      setProjection(next);
+    },
+    [backend],
+  );
 
   const railEntry = (
     env: EventEnvelope,
@@ -158,9 +205,8 @@ export default function App() {
         (window as unknown as { __FS_SESSION_ID?: string }).__FS_SESSION_ID = snap.session_id;
         setCursor(snap.cursor);
 
-        const proj = await backend.getProjection(snap.session_id, snap.cursor);
+        await applyProjection(snap.session_id, snap.cursor, () => disposed);
         if (disposed) return;
-        setProjection(proj);
         setLoading(false);
 
         // Subscribe BEFORE autoplay so no committed frame is missed.
@@ -200,8 +246,9 @@ export default function App() {
             // Never while inside a branch: that would overwrite isolated
             // state with canonical.
             if (branchRef.current) return;
-            const updated = await backend.getProjection(snap.session_id, seq);
-            if (!disposed) setProjection(updated);
+            // Revision-guarded: two frames read concurrently may resolve
+            // in either order, and only the newer read may render.
+            await applyProjection(snap.session_id, seq, () => disposed || branchRef.current !== null);
           },
           (err) => {
             if (!disposed) setError(err instanceof Error ? err.message : String(err));
@@ -226,7 +273,7 @@ export default function App() {
       disposed = true;
       unsubscribe.current?.();
     };
-  }, [backend, appendCanonical]);
+  }, [backend, appendCanonical, applyProjection]);
 
   // ---- clicking Incidents releases the event-11 hold -----------------
   // In PRESENTER mode opening Incidents changes the view and nothing
@@ -242,20 +289,98 @@ export default function App() {
     setPlaying(true);
   }, [view, recallPaused, paused]);
 
-  // ---- frontend-paced autoplay --------------------------------------
-  // One committed event per dwell interval. The timer id is held in a ref
-  // so ArrowRight (or a pause) can cancel a PENDING tick outright — that
-  // is what stops a keypress from appearing to do nothing while an
-  // autoplay advance is already in flight.
+  // ---- the single-flight transition controller -----------------------
+  // EVERY frontend advancement path goes through here, and nothing else
+  // may call `backend.advance` directly: the autoplay timer, ArrowRight,
+  // the debug step, and Space, whose resume re-arms the timer chain
+  // rather than dispatching. The approval continuation needs no client
+  // advance at all — approving commits event 9 in the runtime and the
+  // frame arrives over SSE — so the gate stays runtime-enforced and no
+  // path here can approve anything on its own.
+  //
+  // Two invariants, and the whole controller exists for them:
+  //
+  //   1. At most ONE `/advance` is ever in flight. A second caller does
+  //      not dispatch: it joins the request already running and reads
+  //      what that request committed. That is what makes ArrowRight
+  //      during an in-flight autoplay advance commit exactly one event
+  //      instead of two.
+  //
+  //   2. Every scheduled timer carries the generation it was armed in.
+  //      Pausing, stepping, or dispatching bumps the generation, so a
+  //      timer whose callback is already queued finds itself stale and
+  //      dispatches nothing. Cancelling a timeout alone cannot do this:
+  //      a fired-but-not-yet-run callback is past cancellation.
   const tick = useRef<number | null>(null);
+  /** Bumped by anything that invalidates scheduled work. */
+  const generation = useRef(0);
+  /** The `/advance` currently in flight, shared by every joining caller. */
+  const inFlight = useRef<Promise<AdvanceResult> | null>(null);
 
+  /**
+   * Invalidate all scheduled work.
+   *
+   * Clears a pending timeout AND bumps the generation, so a timer that
+   * has already fired — whose callback is sitting on the task queue and
+   * can no longer be cleared — still refuses to dispatch when it runs.
+   */
   const cancelTick = useCallback(() => {
+    generation.current += 1;
     if (tick.current !== null) {
       window.clearTimeout(tick.current);
       tick.current = null;
     }
   }, []);
 
+  /**
+   * Dispatch one `/advance`, or join the one already in flight.
+   *
+   * Returns the runtime's own result, so a caller can tell whether the
+   * cursor actually moved. Refusals (409 at the human gate, in-branch,
+   * replay complete) resolve rather than throw: they are legitimate
+   * runtime answers, not transport failures.
+   */
+  const requestAdvance = useCallback((options?: { manual?: boolean }): Promise<AdvanceResult> => {
+    if (!sessionId.current) return Promise.resolve({ ok: false });
+    // The pause is enforced HERE, at the one place a request can be
+    // opened, not only where timers are scheduled. `paused` is state, so
+    // the autoplay effect that unschedules a timer cannot run until the
+    // next render; on a starved main thread an already-armed timer can
+    // fire before that render happens. A manual step is the operator
+    // asking to move while paused, and is the one permitted exception.
+    if (pausedRef.current && !options?.manual) return Promise.resolve({ ok: false });
+    // Single flight. A concurrent caller shares this exact promise and
+    // never opens a second request.
+    if (inFlight.current) return inFlight.current;
+
+    const run = backend
+      .advance(sessionId.current)
+      .catch((): AdvanceResult => ({ ok: false }))
+      .finally(() => {
+        inFlight.current = null;
+      });
+    inFlight.current = run;
+    return run;
+  }, [backend]);
+
+  /**
+   * Serializes manual steps behind one another.
+   *
+   * Requirement pull in two directions, and this is the seam between
+   * them. A keypress may CONSUME an autoplay advance already in flight —
+   * the operator asked to move on by one, and the timer is delivering
+   * exactly that. A keypress may NOT consume another keypress's advance:
+   * three presses are three deliberate steps and must commit three
+   * events. Chaining each step onto the previous one keeps both true
+   * without ever putting two requests on the wire at once.
+   */
+  const stepChain = useRef<Promise<unknown>>(Promise.resolve());
+  /** The in-flight autoplay advance a queued step has already claimed. */
+  const pendingClaim = useRef<Promise<AdvanceResult> | null>(null);
+
+  // ---- frontend-paced autoplay --------------------------------------
+  // One committed event per dwell interval, armed against the generation
+  // live when it was scheduled.
   useEffect(() => {
     cancelTick();
     if (!playing || paused || branch || !sessionId.current) return;
@@ -264,25 +389,74 @@ export default function App() {
     if (HOLD_EVENTS.has(cursor)) return;
     if (cursor >= 25) return;
 
+    const armed = generation.current;
     tick.current = window.setTimeout(() => {
       tick.current = null;
+      // A pause or a keypress that landed after this timer fired has
+      // already moved the generation on. A stale timer commits nothing.
+      if (generation.current !== armed) return;
       // The runtime remains the authority: it refuses at the gate (409)
       // and this never approves anything on its own.
-      backend.advance(sessionId.current).catch(() => {});
+      void requestAdvance();
     }, dwellFor(cursor));
 
     return cancelTick;
-  }, [playing, paused, branch, cursor, gatePaused, backend, cancelTick]);
+  }, [playing, paused, branch, cursor, gatePaused, cancelTick, requestAdvance]);
+
+  /**
+   * The manual single step, shared by ArrowRight and the debug control.
+   *
+   * Order matters. It cancels scheduled autoplay and pauses FIRST, so
+   * nothing new can be armed while it works. It records the cursor the
+   * operator can actually see, then — if an autoplay advance is already
+   * in flight — waits for that request instead of racing it. If that
+   * request moved the cursor, the operator's step is already satisfied
+   * and no second event is committed. Otherwise exactly one advance is
+   * dispatched. Either way the session remains paused afterwards.
+   */
+  const stepOnce = useCallback((): Promise<void> => {
+    if (!sessionId.current) return Promise.resolve();
+    // Pause synchronously, before this step queues, so a timer can never
+    // arm behind a press that is still waiting its turn. The ref is the
+    // dispatch authority and is set here rather than by each caller.
+    cancelTick();
+    pausedRef.current = true;
+    setPlaying(false);
+    setPaused(true);
+
+    // An advance in flight RIGHT NOW belongs to the autoplay timer, and
+    // exactly one step may consume it. Claimed here, at press time,
+    // rather than inside the queued body: by the time the body runs, an
+    // earlier press may already have started a request of its own, which
+    // this press must never mistake for the timer's.
+    const consumable = pendingClaim.current === null ? inFlight.current : null;
+    if (consumable) pendingClaim.current = consumable;
+
+    const step = stepChain.current.then(async () => {
+      const from = cursorRef.current;
+      if (consumable) {
+        const settled = await consumable;
+        if (pendingClaim.current === consumable) pendingClaim.current = null;
+        // The autoplay request already delivered this operator's step.
+        if (settled.ok && settled.sequence !== undefined && settled.sequence > from) return;
+      }
+      await requestAdvance({ manual: true });
+    });
+
+    // A failed step must not wedge the chain for every later press.
+    stepChain.current = step.catch(() => {});
+    return step;
+  }, [cancelTick, requestAdvance]);
 
   const reconnect = useCallback(async () => {
     if (!sessionId.current) return;
     try {
       setError(null);
-      setProjection(await backend.getProjection(sessionId.current, cursor));
+      await applyProjection(sessionId.current, cursor);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
-  }, [backend, cursor]);
+  }, [cursor, applyProjection]);
 
   // ---- the only human mutation gate ---------------------------------
   const approveRepair = useCallback(async () => {
@@ -322,15 +496,17 @@ export default function App() {
         setBranchActivity(result.events.map((env) => railEntry(env, "ISOLATED")));
 
         // Entering a proof must not move the canonical cursor: re-read at
-        // the cursor already held rather than adopting a new one.
-        setProjection(await backend.getProjection(sessionId.current, cursor));
+        // the cursor already held rather than adopting a new one. The
+        // revision guard makes this read win over any canonical read
+        // still in flight when the proof opened.
+        await applyProjection(sessionId.current, cursor);
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       } finally {
         setBranchBusy(false);
       }
     },
-    [backend, cursor],
+    [backend, cursor, applyProjection],
   );
 
   const exitBranch = useCallback(async () => {
@@ -343,7 +519,7 @@ export default function App() {
       // A proof leaves no trace: every isolated entry is removed.
       setBranchActivity([]);
       // Canonical returns byte-identical: 88/96 and PARTIALLY_CONTAINED.
-      setProjection(await backend.getProjection(sessionId.current, cursor));
+      await applyProjection(sessionId.current, cursor);
       // Only now may canonical progression resume, through events 23-25.
       if (!PRESENTER) setPlaying(true);
     } catch (e) {
@@ -351,7 +527,7 @@ export default function App() {
     } finally {
       setBranchBusy(false);
     }
-  }, [backend, cursor]);
+  }, [backend, cursor, applyProjection]);
 
   // ---- presenter keyboard (no visible transport in film mode) -------
   // Shortcuts are ignored while focus is in an input or inside a dialog
@@ -369,27 +545,33 @@ export default function App() {
 
       if (e.code === "Space") {
         e.preventDefault();
-        // Toggle the paced autoplay sequence.
-        if (paused) {
+        // Toggle the paced autoplay sequence. The live value is read from
+        // a ref, not the render closure: two Space presses inside one
+        // render would otherwise both see the same stale `paused` and
+        // resolve to the same direction instead of toggling.
+        if (pausedRef.current) {
+          pausedRef.current = false;
           setPaused(false);
           setRecallPaused(false);
+          // Resuming arms exactly one timer chain: the autoplay effect
+          // cancels whatever was scheduled before scheduling again, so a
+          // repeated resume cannot stack a second chain.
           setPlaying(true);
         } else {
+          // Pausing invalidates scheduled work, including a timer that
+          // has already fired and is waiting to run.
           cancelTick();
+          pausedRef.current = true;
           setPaused(true);
           setPlaying(false);
         }
       } else if (e.code === "ArrowRight") {
         e.preventDefault();
-        // Deterministic single step: cancel any pending autoplay tick,
-        // stop the sequence, then commit exactly one event. Without the
-        // cancel, a tick already in flight could land on top of this
-        // keypress and make it look like nothing (or too much) happened.
-        cancelTick();
-        setPlaying(false);
-        setPaused(true);
+        // The shared single-flight step. It cancels scheduled autoplay,
+        // pauses, joins any advance already in flight rather than racing
+        // it, and commits exactly one event in total.
         // The runtime still refuses at the human gate; this cannot bypass it.
-        backend.advance(sessionId.current).catch(() => {});
+        void stepOnce();
       } else if (e.code === "KeyR" && e.shiftKey) {
         e.preventDefault();
         // Shift+R, so a stray "r" during a rehearsal cannot wipe the take.
@@ -399,7 +581,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [paused, execOpen, backend, cancelTick]);
+  }, [execOpen, cancelTick, stepOnce]);
 
   const p = projection;
   const activeIncidents = p?.incidentSummary.activeCount ?? 0;
@@ -696,11 +878,13 @@ export default function App() {
             onClick={() => {
               if (!sessionId.current) return;
               if (paused) {
+                pausedRef.current = false;
                 setPaused(false);
                 setRecallPaused(false);
                 setPlaying(true);
               } else {
                 cancelTick();
+                pausedRef.current = true;
                 setPaused(true);
                 setPlaying(false);
               }
@@ -716,11 +900,9 @@ export default function App() {
             type="button"
             data-testid="debug-advance"
             onClick={() => {
-              if (!sessionId.current) return;
-              cancelTick();
-              setPlaying(false);
-              setPaused(true);
-              backend.advance(sessionId.current).catch(() => {});
+              // The same single-flight step the keyboard uses. A debug
+              // control may not open a second advancement path.
+              void stepOnce();
             }}
             style={css(
               "background:#1f3d47;border:1px solid #2b4c56;color:#cfe0e4;border-radius:6px;" +
