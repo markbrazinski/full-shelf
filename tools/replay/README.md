@@ -87,6 +87,30 @@ after event 8, event 10 cannot precede event 9's receipt, a proof branch cannot
 open before event 22, and no field belonging to a later event crosses the
 boundary early.
 
+## Canonical partner reply
+
+Every canonical beat is projected against one committed partner-evidence row:
+the `10:11` reply from East Bay Distribution Annex, quoted in
+`GOLDEN_DEMO_EVENT_CONTRACT.md` section 2. It is why the eight cases stay
+unconfirmed and closure is refused at `10:12`, so it is canonical Friday
+history rather than an isolated proof.
+
+Two details in `generate_fixtures.py` matter if you change it:
+
+- **The receipt is time-gated.** `PROCESS_PARTNER_EVIDENCE` is a custody-table
+  mutator, so supplying its receipt to a beat earlier than `10:11` makes the
+  handler correctly withhold the custody graph as not-safe-at-boundary — and
+  event 18 silently loses its `96 / 88 / 8` reconstruction. `canonical_database()`
+  adds the receipt only at or after `10:11`.
+- **The parity test shares that builder.** `test_replay_contract.py` imports
+  `canonical_database()` so it drives the handler with the same rows the
+  fixtures were generated from. Building the snapshot separately would make the
+  parity check compare a fixture against a projection of different data.
+
+The evidence row itself carries no domain mutation: one evidence mutation,
+zero domain mutations, custody `88/96` before and after, WorkItem `OPEN` to
+`OPEN`. The isolated `partner_vague` proof at `10:15` remains separate.
+
 ## Beats (legacy selector)
 
 `server.py` remains a fixture **selector**, kept for contract-shape parity and

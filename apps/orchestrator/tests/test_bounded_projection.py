@@ -404,6 +404,19 @@ VAGUE_EVIDENCE_ROW = _partner_evidence_row(
              "MISSING_LOCATION_EVIDENCE", "MISSING_DISPOSITION_EVIDENCE"],
     proposal=VAGUE_PROPOSAL, domain_mutations=0,
 )
+# The canonical Friday reply, committed at 10:11 — BEFORE the closure
+# decision at 10:12. It is why the eight cases stay unconfirmed, so it is
+# canonical history rather than an isolated proof: the refusal at event 21
+# cannot be explained without it. Identical in substance to the vague proof
+# row; only the source event and its time differ.
+CANONICAL_PARTNER_REPLY_ROW = _partner_evidence_row(
+    source_event_id="fixture-partner-canonical-vague",
+    source_text="We pulled the remaining lettuce. Should be all good.",
+    occurred_at=T(10, 11), committed_at=T(10, 11), decision="DENIED",
+    reasons=["MISSING_LOT_EVIDENCE", "MISSING_QUANTITY_EVIDENCE",
+             "MISSING_LOCATION_EVIDENCE", "MISSING_DISPOSITION_EVIDENCE"],
+    proposal=VAGUE_PROPOSAL, domain_mutations=0,
+)
 COMPLETE_EVIDENCE_ROW = _partner_evidence_row(
     source_event_id="fixture-partner-complete",
     source_text=("LTC-4471 · 8 cases · ISOLATED_IN_QUARANTINE at Site 01 · "

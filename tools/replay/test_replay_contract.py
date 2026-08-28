@@ -19,6 +19,7 @@ os.environ.setdefault("SPANNER_DATABASE_ID", "full-shelf-audit-wp6-20260813")
 
 import test_bounded_projection as scenario  # noqa: E402
 import server as replay  # noqa: E402
+import generate_fixtures  # noqa: E402
 
 FIXTURES = pathlib.Path(__file__).resolve().parent / "fixtures"
 INDEX = json.loads((FIXTURES / "index.json").read_text())
@@ -41,8 +42,15 @@ def test_fixture_matches_production_contract_shape(beat):
     """Every fixture must have the shape the production handler emits."""
     entry = next(b for b in INDEX["beats"] if b["beat"] == beat)
     as_of = scenario.datetime.fromisoformat(entry["as_of"])
+    # Driven through the SAME snapshot builder the fixtures were generated
+    # from, so a difference here means real contract drift rather than the
+    # two sides simply having been given different rows.
     live = scenario.project(
-        as_of, include_next_day=entry["include_next_day_draft"]).json()
+        as_of,
+        db=generate_fixtures.canonical_database(
+            as_of, include_next_day=entry["include_next_day_draft"]),
+        include_next_day=entry["include_next_day_draft"],
+    ).json()
     fixture = json.loads((FIXTURES / entry["fixture"]).read_text())
     fixture.pop("replay_notice", None)
     live.pop("replay_notice", None)
@@ -222,3 +230,99 @@ def test_no_live_evidence_classification_appears_in_any_fixture():
         for banned in ("OBSERVED_LIVE", "RECORDED_LIVE", "MEASURED",
                        "STRUCTURALLY_VERIFIED"):
             assert banned not in blob, (entry["beat"], banned)
+
+
+# --- canonical partner reply (why the eight cases stay unconfirmed) --------
+#
+# The reply is canonical Friday history, not an isolated proof: closure is
+# refused at 10:12 BECAUSE of what this 10:11 reply failed to establish.
+
+
+def _canonical_reply(beat):
+    entries = json.loads((FIXTURES / f"{beat}.json").read_text())["partner_evidence_as_of"]
+    assert len(entries) == 1, f"{beat}: expected exactly one canonical reply"
+    return entries[0]
+
+
+def test_the_partner_reply_is_visible_by_the_closure_beat():
+    reply = _canonical_reply("refusal")
+    assert reply["original_response"] == "We pulled the remaining lettuce. Should be all good."
+    assert reply["committed_at"].endswith("10:11:00+00:00")
+
+
+@pytest.mark.parametrize("beat", ["healthy", "truckfail", "review", "rev08",
+                                  "recall_received", "processing", "custody",
+                                  "recovery"])
+def test_the_partner_reply_is_absent_before_it_is_committed(beat):
+    """No beat before 10:11 may expose the reply."""
+    body = json.loads((FIXTURES / f"{beat}.json").read_text())
+    assert body["partner_evidence_as_of"] == []
+
+
+def test_all_five_required_evidence_fields_are_missing():
+    claims = _canonical_reply("refusal")["claim_verification"]
+    assert set(claims) == {"lot", "quantity", "location", "disposition",
+                           "confirmation_time"}
+    assert all(c["state"] == "MISSING" for c in claims.values())
+
+
+def test_partner_operations_reads_intent_but_does_not_decide_policy():
+    reply = _canonical_reply("refusal")
+    # The agent proposed; deterministic policy denied. The agent holds no
+    # mutation authority and its confidence is advisory only.
+    assert reply["agent"]["agent_id"].startswith("full-shelf.partner-operations")
+    assert reply["proposal"]["requested_mutation"] == "CONFIRM_CUSTODY"
+    assert reply["decision"] == "DENIED"
+    assert reply["receipt"]["status"] == "DENIED"
+
+
+def test_the_reply_is_recorded_as_evidence_with_no_domain_mutation():
+    receipt = _canonical_reply("refusal")["receipt"]
+    assert receipt["evidence_mutations_applied"] == 1
+    assert receipt["domain_mutations_applied"] == 0
+
+
+def test_custody_and_the_acknowledgment_are_unchanged_by_the_reply():
+    reply = _canonical_reply("refusal")
+    assert reply["custody"]["total_cases"] == 96
+    assert reply["custody"]["confirmed_cases_before"] == 88
+    assert reply["custody"]["confirmed_cases_after"] == 88
+    work = reply["before_after"]["work_item"]
+    assert work["before"] == "OPEN" and work["after"] == "OPEN"
+    assert reply["before_after"]["custody"]["after"] == "UNCONFIRMED"
+
+
+def test_closure_remains_blocked_with_zero_prohibited_mutations():
+    body = json.loads((FIXTURES / "refusal.json").read_text())
+    incident = next(i for i in body["current_day"]["incidents"]
+                    if i["incident_type"] == "FOOD_SAFETY_RECALL")
+    assert incident["terminal_state"] == "PARTIALLY_CONTAINED"
+    assert incident["refusal"]["decision"] == "DENIED"
+    assert incident["refusal"]["mutations_applied"] == 0
+
+
+def test_the_canonical_custody_reconstruction_is_untouched():
+    graph = json.loads(
+        (FIXTURES / "refusal.json").read_text())["execution_evidence_as_of"]["custody_graph"]
+    assert (graph["unique_current_cases"], graph["confirmed_cases"],
+            graph["unconfirmed_cases"]) == (96, 88, 8)
+
+
+def test_saturday_still_carries_the_east_bay_obligation():
+    body = json.loads((FIXTURES / "tomorrow.json").read_text())
+    obligations = body["carry_forward_obligations"]
+    assert {o["kind"] for o in obligations} == {
+        "ACKNOWLEDGMENT_OBLIGATION", "MOVEMENT_BARRIER",
+        "RECOVERY_SHORTFALL", "UNRESOLVED_INCIDENT"}
+    # The East Bay acknowledgment specifically must survive the reply.
+    ack = next(o for o in obligations if o["kind"] == "ACKNOWLEDGMENT_OBLIGATION")
+    assert ack["reference_id"] == "WORK-SITE01"
+    assert ack["incident_id"] == "INC-2231"
+
+
+def test_event_numbering_and_holds_are_unchanged():
+    import events
+    assert len(events.CANONICAL_EVENTS) == 25
+    assert events.FIRST_SEQUENCE == 1 and events.LAST_SEQUENCE == 25
+    assert events.BY_SEQUENCE[21].event_id == "FS-E021-CLOSURE-REFUSED"
+    assert events.BY_SEQUENCE[22].event_id == "FS-E022-PARTIALLY-CONTAINED"

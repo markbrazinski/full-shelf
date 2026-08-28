@@ -335,7 +335,9 @@ export function normalize(raw: RawProjection, beatId: BeatId): FullShelfProjecti
         adkSessionId: entry.agent.adk_session_id,
         adkInvocationId: entry.agent.adk_invocation_id,
         adkEventId: entry.agent.adk_event_id,
-        isolatedProof: true,
+        // Canonical by default. Only the session layer knows a branch is
+        // open, so it re-stamps these entries; see SessionNormalizer.
+        isolatedProof: false,
       };
     });
   }

@@ -510,11 +510,6 @@ export function SaturdayCandidatePlan({
             </div>
           )}
 
-          <div style={css("flex:none;background:#fff;border:1px solid #d5d8d2;border-radius:10px;padding:14px 16px;margin-top:12px")}>
-            <div className="mono" style={css("font-size:11px;letter-spacing:.08em;color:#5c6b71;font-weight:600;line-height:1.6")}>
-              Tomorrow starts with yesterday's truth.
-            </div>
-          </div>
         </div>
       </div>
     </div>

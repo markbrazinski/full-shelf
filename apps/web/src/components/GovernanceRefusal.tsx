@@ -1,16 +1,30 @@
 import { css } from "../styles/css";
 import { facilityName } from "../data/contract/facilityNames";
 import { TONE } from "../styles/tokens";
-import type { GovernanceView } from "../types/fullShelf";
+import { PartnerResponseEvidence } from "./PartnerResponseEvidence";
+import type { GovernanceView, PartnerEvidenceProofView } from "../types/fullShelf";
 
-export function GovernanceRefusal({ governance, onOpenEvidence }: { governance: GovernanceView; onOpenEvidence: () => void }) {
+export function GovernanceRefusal({
+  governance,
+  partnerEvidence,
+  onOpenEvidence,
+}: {
+  governance: GovernanceView;
+  /** The canonical reply that failed to confirm custody, if one committed. */
+  partnerEvidence?: PartnerEvidenceProofView;
+  onOpenEvidence: () => void;
+}) {
   const r = governance.refusal;
   return (
     <>
       <div style={css("margin-bottom:10px")}>
         <div className="mono" style={css("font-size:11px;letter-spacing:.12em;color:#74848a;font-weight:600")}>CLOSURE BLOCKED</div>
         <h1 style={css("font-size:22px;font-weight:600;letter-spacing:-.01em;margin-top:4px;color:#16323b")}>{"Closure refused — 8 cases remain unconfirmed"}</h1>
-        <div style={css("font-size:13px;color:#5c6b71;margin-top:5px;line-height:1.5")}>Full containment cannot be asserted without custody confirmation. The refusal is not a rejection — it is the necessary consequence of incomplete information.</div>
+        <div style={css("font-size:13px;color:#5c6b71;margin-top:5px;line-height:1.5")}>
+          {partnerEvidence
+            ? `Eight cases at ${facilityName("SITE-01")} remain unconfirmed because the partner response does not satisfy the custody evidence requirement.`
+            : "Full containment cannot be asserted without custody confirmation. The refusal is not a rejection — it is the necessary consequence of incomplete information."}
+        </div>
       </div>
       <div style={css("display:grid;grid-template-columns:1fr 340px;gap:14px;align-items:start")}>
         <div style={css("display:flex;flex-direction:column;gap:8px")}>
@@ -27,6 +41,9 @@ export function GovernanceRefusal({ governance, onOpenEvidence }: { governance: 
             <div style={css("font-size:12.5px;color:#2b3b41;line-height:1.45;margin-bottom:6px")}>{r.body}</div>
             <div style={css("font-size:12px;color:#74848a;line-height:1.5")}>{governance.policyNote}</div>
           </div>
+          {/* Why those eight cases are still unconfirmed. Adjacent to the
+              refusal so the reason needs no second surface. */}
+          {partnerEvidence ? <PartnerResponseEvidence evidence={partnerEvidence} /> : null}
         </div>
         <div style={css("display:flex;flex-direction:column;gap:12px")}>
         <div style={css("background:#fff;border:1px solid #d5d8d2;border-radius:10px;overflow:hidden")}>

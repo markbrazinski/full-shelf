@@ -546,7 +546,13 @@ export interface PartnerEvidenceProofView {
   adkSessionId: string | null;
   adkInvocationId: string | null;
   adkEventId: string | null;
-  isolatedProof: true;
+  /**
+   * Whether this entry belongs to an isolated proof branch rather than to
+   * canonical Friday history. The canonical partner reply at 10:11 is
+   * ordinary history — it is why closure is refused — so this can no
+   * longer be asserted true for every entry.
+   */
+  isolatedProof: boolean;
 }
 
 /**

@@ -359,7 +359,14 @@ export function IncidentWorkspace({
               branchResolved ? (
                 <BranchResolvedClosure />
               ) : p.governance ? (
-                <GovernanceRefusal governance={p.governance} onOpenEvidence={onOpenEvidence} />
+                <GovernanceRefusal
+                  governance={p.governance}
+                  // Canonical history only. A branch's own evidence is its
+                  // isolated proof and must never explain the canonical
+                  // refusal, so isolated entries are excluded here.
+                  partnerEvidence={p.partnerEvidence?.find((e) => !e.isolatedProof)}
+                  onOpenEvidence={onOpenEvidence}
+                />
               ) : (
                 <Pending text="No closure decision has been committed at this boundary." />
               )

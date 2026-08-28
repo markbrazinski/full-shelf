@@ -696,10 +696,119 @@
         "status": "SUCCESS"
       }
     ],
-    "receipts_committed": 10
+    "receipts_committed": 11
   },
   "operating_day": "2026-08-14",
-  "partner_evidence_as_of": [],
+  "partner_evidence_as_of": [
+    {
+      "agent": {
+        "adk_event_id": "fixture-event-fixture-partner-canonical-vague",
+        "adk_framework": "google-adk/2.6.1",
+        "adk_invocation_id": "fixture-invocation-fixture-partner-canonical-vague",
+        "adk_session_id": "fixture-session-fixture-partner-canonical-vague",
+        "agent_id": "full-shelf.partner-operations.v1",
+        "model_id": "gemini-3.5-flash"
+      },
+      "authoritative_partner_id": "PARTNER-AGENCY-01",
+      "before_after": {
+        "custody": {
+          "after": "UNCONFIRMED",
+          "before": "UNCONFIRMED",
+          "cases": 8,
+          "name": "Site 01",
+          "node_id": "N-ST01"
+        },
+        "work_item": {
+          "after": "OPEN",
+          "before": "OPEN",
+          "work_item_id": "WORK-PCF-FIXTURE"
+        }
+      },
+      "callback_principal": {
+        "audience": "https://orchestrator.example.run.app/partner-evidence",
+        "email": "partner-callback@example.com",
+        "issuer": "https://accounts.google.com",
+        "provenance": "AUTHENTICATED_PARTNER_CALLBACK",
+        "subject": "fixture-partner-subject"
+      },
+      "claim_verification": {
+        "confirmation_time": {
+          "reason": "OPTIONAL_CLAIM_NOT_PRESENT",
+          "state": "MISSING"
+        },
+        "disposition": {
+          "reason": "CLAIM_NOT_PRESENT",
+          "state": "MISSING"
+        },
+        "location": {
+          "reason": "CLAIM_NOT_PRESENT",
+          "state": "MISSING"
+        },
+        "lot": {
+          "reason": "CLAIM_NOT_PRESENT",
+          "state": "MISSING"
+        },
+        "quantity": {
+          "reason": "CLAIM_NOT_PRESENT",
+          "state": "MISSING"
+        }
+      },
+      "committed_at": "2026-08-14T10:11:00+00:00",
+      "custody": {
+        "confirmed_cases_after": 88,
+        "confirmed_cases_before": 88,
+        "total_cases": 96
+      },
+      "decision": "DENIED",
+      "event_type": "PARTNER_CUSTODY_EVIDENCE_RECEIVED",
+      "incident_id": "INC-2231",
+      "model_armor": {
+        "correlation_id": "fixture-trace",
+        "managed_operation": "sanitizeUserPrompt",
+        "safety_verdict": "PASSED",
+        "status": "APPROVED"
+      },
+      "original_response": "We pulled the remaining lettuce. Should be all good.",
+      "policy_reasons": [
+        "MISSING_LOT_EVIDENCE",
+        "MISSING_QUANTITY_EVIDENCE",
+        "MISSING_LOCATION_EVIDENCE",
+        "MISSING_DISPOSITION_EVIDENCE"
+      ],
+      "proposal": {
+        "confidence": 0.72,
+        "confirmation_time": null,
+        "custody_node_id": "N-ST01",
+        "disposition": null,
+        "expected_acknowledgment_status": "UNCONFIRMED",
+        "incident_id": "INC-2231",
+        "location": null,
+        "lot": null,
+        "partner_id": "PARTNER-AGENCY-01",
+        "quantity": null,
+        "rationale": "The response intends completion but omits required custody facts.",
+        "requested_acknowledgment_status": "CONFIRMED",
+        "requested_mutation": "CONFIRM_CUSTODY",
+        "site_id": "SITE-01",
+        "work_item_id": "WORK-PCF-FIXTURE"
+      },
+      "receipt": {
+        "action_id": "fixture-CMD-fixture-partner-canonical-vague",
+        "action_type": "PROCESS_PARTNER_EVIDENCE",
+        "committed_at": "2026-08-14T10:11:00+00:00",
+        "domain_mutations_applied": 0,
+        "evidence_mutations_applied": 1,
+        "receipt_id": "fixture-RCT-fixture-partner-canonical-vague",
+        "status": "DENIED"
+      },
+      "received_at": "2026-08-14T10:11:00+00:00",
+      "requested_mutation": {
+        "type": "CONFIRM_CUSTODY"
+      },
+      "source_event_id": "fixture-partner-canonical-vague",
+      "source_occurred_at": "2026-08-14T10:11:00+00:00"
+    }
+  ],
   "projection_boundary": {
     "as_of": "2026-08-14T10:13:00+00:00",
     "mode": "EXPLICIT_AS_OF",

@@ -44,6 +44,27 @@ Truck 2, refrigerated, capacity 60:
 - O203 becomes refrigerated partner pickup because the additional 20 cases do not fit;
 - activation requires one verified-human approval bound to the exact diff.
 
+### Canonical partner reply
+
+A single authenticated partner callback is committed at `10:11`, before the
+closure decision at `10:12`:
+
+> "We pulled the remaining lettuce. Should be all good."
+
+- source: East Bay Distribution Annex (`SITE-01`), authenticated partner callback;
+- Partner Operations reads likely containment intent but holds no policy authority;
+- required evidence absent: lot ID, quantity, confirmed location, qualifying
+  disposition, and confirmation time — all five `MISSING`;
+- deterministic evidence policy returns `DENIED`;
+- one evidence mutation, zero domain mutations;
+- custody stays `88/96`, the acknowledgment WorkItem stays `OPEN`, and the
+  incident stays open.
+
+This is canonical Friday history, not an isolated proof: it is the reason the
+eight cases remain unconfirmed and closure is refused. It is distinct from the
+isolated vague branch in section 6.1, which is a separate `10:15` proof that
+never advances the canonical cursor.
+
 ### Recalled-lot positions
 
 | Position | Cases |
@@ -135,7 +156,7 @@ SSE may transmit the envelope, cursor, and bounded projection signal. It must no
 | 18 | `FS-E018-CUSTODY-RECONCILED` | 10:10 | `AUTONOMOUS_CHAINED` | Network & Custody | Establishes 96 unique, 88 confirmed, and eight unconfirmed at Site 01. | Graph assessment stored; custody nodes remain unchanged; connected graph and exact gap appear. |
 | 19 | `FS-E019-SAFE-RECOVERY-PROPOSED` | 10:10 | `AUTONOMOUS_CHAINED` | Fulfillment Planning & Recovery | Selects the safe candidate allocating 18 to Agency 01 and 22 to Agency 02, with Agency 03 short 20. | Advisory recovery proposal validated; no hidden stock invented. |
 | 20 | `FS-E020-SAFE-RECOVERY-COMMITTED` | 10:10 | `AUTONOMOUS_CHAINED` | Deterministic policy / ledger | Exactly 40 safe replacements and one 20-case shortfall commit atomically. | Recovery allocations and `SF-A03` stored; projection shows 40/20 truth. |
-| 21 | `FS-E021-CLOSURE-REFUSED` | 10:12 | `AUTONOMOUS_CHAINED` | Deterministic closure policy | Eight cases remain unconfirmed, so false containment is refused. | Refusal receipt; zero prohibited domain mutations; governance refusal appended. There is no Closure Judge agent. |
+| 21 | `FS-E021-CLOSURE-REFUSED` | 10:12 | `AUTONOMOUS_CHAINED` | Deterministic closure policy | Eight cases remain unconfirmed because the `10:11` partner reply does not satisfy the custody evidence requirement, so false containment is refused. | Refusal receipt; zero prohibited domain mutations; governance refusal appended. The canonical partner reply and its five missing evidence fields are visible on `5 Decide closure`. There is no Closure Judge agent. |
 | 22 | `FS-E022-PARTIALLY-CONTAINED` | 10:13 | `AUTONOMOUS_CHAINED` | Private ledger | Terminal canonical Friday state is established. | `INC-2231` = `PARTIALLY_CONTAINED`; canonical custody remains 88/96. |
 | 23 | `FS-E023-DAY-OUTCOME-PUBLISHED` | 16:30 | `AUTONOMOUS_SCHEDULED` | Projection | Read-only Friday outcome becomes available. | No mutation: 88/96, 40 recovered, 20 short, Site 01 open. |
 | 24 | `FS-E024-SATURDAY-DRAFT-PROPOSED` | 17:00 | `AUTONOMOUS_SCHEDULED` | Fulfillment Planning & Recovery | Selects a feasible next-day candidate under inherited constraints. | Saturday rev01 stored `DRAFT_WITH_CONSTRAINTS`; no activation control. |
@@ -252,6 +273,10 @@ Required experience behavior:
 7. Canonical custody remains `88/96`; complete proof is branch-only `96/96`.
 8. Safe recovery is exactly 40 and Agency 03 shortfall is exactly 20.
 9. Closure refusal remains deterministic and records zero prohibited domain mutations.
+9a. The canonical `10:11` partner reply is visible by event 21 with all five
+    required evidence fields shown missing, one evidence mutation, zero domain
+    mutations, custody unchanged at `88/96`, and the acknowledgment still open.
+    It is not visible at any boundary before `10:11`.
 10. Vague partner evidence records one evidence mutation and zero domain mutations.
 11. Complete evidence applies exactly two domain mutations and one evidence mutation inside isolated authority.
 12. Saturday inherits all four unresolved obligations from canonical Friday state.

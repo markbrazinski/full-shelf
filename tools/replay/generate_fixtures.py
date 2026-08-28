@@ -39,6 +39,38 @@ BEATS = [
     ("tomorrow", scenario.T(17, 0), True),
 ]
 
+# The canonical partner reply's commit instant, 10:11 — after custody
+# reconciliation at 10:10 and before the closure decision at 10:12.
+PARTNER_REPLY_AT = scenario.T(10, 11)
+
+
+def canonical_database(as_of, *, include_next_day=False):
+    """The Spanner snapshot every canonical beat is projected against.
+
+    Shared with `test_replay_contract.py` so the parity test drives the
+    handler with the SAME inputs the fixtures were generated from. If the
+    two built their own snapshots, the parity check would compare a
+    fixture against a projection of different data and fail for reasons
+    that have nothing to do with contract drift.
+
+    The partner receipt is supplied only at or after 10:11, because
+    PROCESS_PARTNER_EVIDENCE is a custody-table mutator: handing it to an
+    earlier beat makes the handler correctly withhold the custody graph
+    as not-safe-at-boundary, and event 18 loses its 96/88/8
+    reconstruction.
+    """
+    receipts = list(scenario.ALL_RECEIPTS)
+    if as_of >= PARTNER_REPLY_AT:
+        receipts.append(scenario.partner_receipt(
+            "fixture-partner-canonical-vague", PARTNER_REPLY_AT, "DENIED", 0,
+        ))
+    return scenario._database(
+        include_next_day=include_next_day,
+        partner_evidence_rows=[scenario.CANONICAL_PARTNER_REPLY_ROW],
+        receipts=receipts,
+    )
+
+
 PROOFS = [
     ("partner_vague", scenario.T(10, 16), scenario.VAGUE_EVIDENCE_ROW,
      "fixture-partner-vague", "DENIED", 0, False),
@@ -64,7 +96,13 @@ def main():
     index = []
     proof_index = []
     for name, as_of, include_next_day in BEATS:
-        response = scenario.project(as_of, include_next_day=include_next_day)
+        # The canonical partner reply is committed at 10:11 and is ordinary
+        # Friday history, not an isolated proof: the closure refusal at 10:12
+        # cannot be explained without it. It is supplied to EVERY beat and the
+        # handler's own as-of predicate decides where it becomes visible, so
+        # no beat before 10:11 can show it.
+        db = canonical_database(as_of, include_next_day=include_next_day)
+        response = scenario.project(as_of, db=db, include_next_day=include_next_day)
         if response.status_code != 200:
             raise SystemExit(f"{name}: handler returned {response.status_code}")
         body = response.json()

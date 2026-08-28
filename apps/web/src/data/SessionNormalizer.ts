@@ -192,6 +192,15 @@ export function normalize(raw: RawProjection, observedCursor?: number): FullShel
       ? { authority: "ISOLATED" as const, proofLabel: rt.proof_label ?? "ISOLATED SELECTED PROOF" }
       : undefined;
 
+  // Partner evidence is canonical history by default — the 10:11 reply is
+  // why closure is refused. Inside a branch the SAME shape carries isolated
+  // authority instead, and only this layer knows which is open, so the flag
+  // is stamped here rather than asserted in the contract normalizer.
+  const partnerEvidence = base.partnerEvidence?.map((entry) => ({
+    ...entry,
+    isolatedProof: branchState !== undefined,
+  }));
+
   return {
     ...base,
     cursor,
@@ -200,6 +209,7 @@ export function normalize(raw: RawProjection, observedCursor?: number): FullShel
     referenceLocations,
     locationDisclosure,
     fleet,
+    partnerEvidence,
     branchState,
   };
 }
