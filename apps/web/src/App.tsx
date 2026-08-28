@@ -300,10 +300,19 @@ export default function App() {
             appendCanonical(env);
             setCursor(seq);
 
-            // Event 11 — the recall arrives. If the operator is still on
-            // Today, progression HOLDS until they open Incidents. This is
-            // a presentation pause: it moves no cursor and mutates nothing.
-            if (seq === 11 && viewRef.current === "today") {
+            // Event 11 — the recall arrives and progression HOLDS,
+            // whatever the operator is looking at. The recall response is
+            // theirs to start: it begins only when they press Incidents,
+            // or select the incident on the side panel. Being ALREADY on
+            // the Incidents view is not that press, so this does not
+            // depend on the current view. A presentation pause only: it
+            // moves no cursor and mutates nothing.
+            if (seq === 11) {
+              // Invalidate scheduled work FIRST. `recallPaused` is state,
+              // so the autoplay effect that unschedules cannot run until
+              // the next render; a timer armed a moment ago would
+              // otherwise fire in between and commit event 12 anyway.
+              cancelTickRef.current();
               await backend.pause(snap.session_id).catch(() => {});
               if (!disposed) setRecallPaused(true);
             }
@@ -358,24 +367,30 @@ export default function App() {
     };
   }, [backend, appendCanonical, applyProjection]);
 
-  // ---- clicking Incidents releases the event-11 hold -----------------
-  // In PRESENTER mode opening Incidents changes the view and nothing
-  // else: progression stays exactly where the presenter left it, so a
-  // take is never disturbed by a navigation click.
-  useEffect(() => {
-    if (!recallPaused || view !== "incident" || !sessionId.current) return;
-    if (PRESENTER || paused) {
-      setRecallPaused(false);
-      return;
-    }
+  /**
+   * Start the recall response. The ONLY thing that releases the event-11
+   * hold.
+   *
+   * Called by the deliberate acts that mean "work this incident": the
+   * Incidents nav button, the alert's own open control on Today, and
+   * selecting the incident in the side panel. Merely BEING on the
+   * Incidents view is not one of them — an operator who was already
+   * standing there when the recall landed has not asked for anything, so
+   * the recall waits for them too.
+   *
+   * In PRESENTER mode this clears the hold without starting progression:
+   * the presenter keeps the keyboard, and a navigation press must never
+   * disturb a take.
+   */
+  const openIncidents = useCallback(() => {
+    setView("incident");
+    if (!recallPaused || !sessionId.current) return;
     setRecallPaused(false);
+    if (PRESENTER || pausedRef.current) return;
     // One beat between arriving on the workspace and the first stage
-    // lighting up, so the two are not the same frame. Cleared on unmount
-    // and on any navigation away, so leaving Incidents during the beat
-    // cannot start the recall behind the operator's back.
-    const entry = window.setTimeout(() => setPlaying(true), RECALL_ENTRY_DELAY_MS);
-    return () => window.clearTimeout(entry);
-  }, [view, recallPaused, paused]);
+    // lighting up, so the two are not the same frame.
+    recallEntry.current = window.setTimeout(() => setPlaying(true), RECALL_ENTRY_DELAY_MS);
+  }, [recallPaused]);
 
   // ---- the single-flight transition controller -----------------------
   // EVERY frontend advancement path goes through here, and nothing else
@@ -399,6 +414,21 @@ export default function App() {
   //      timer whose callback is already queued finds itself stale and
   //      dispatches nothing. Cancelling a timeout alone cannot do this:
   //      a fired-but-not-yet-run callback is past cancellation.
+  /**
+   * `cancelTick` by reference.
+   *
+   * The SSE handler is created in the bootstrap effect, which runs before
+   * `cancelTick` is declared. A ref lets the handler reach the live
+   * function without reordering the controller or capturing a stale one.
+   */
+  const cancelTickRef = useRef<() => void>(() => {});
+
+  /** The event-11 entry beat, cleared if the session tears down first. */
+  const recallEntry = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (recallEntry.current !== null) window.clearTimeout(recallEntry.current);
+  }, []);
+
   const tick = useRef<number | null>(null);
   /** Bumped by anything that invalidates scheduled work. */
   const generation = useRef(0);
@@ -419,6 +449,7 @@ export default function App() {
       tick.current = null;
     }
   }, []);
+  cancelTickRef.current = cancelTick;
 
   /**
    * Dispatch one `/advance`, or join the one already in flight.
@@ -472,8 +503,12 @@ export default function App() {
   useEffect(() => {
     cancelTick();
     if (!playing || paused || branch || !sessionId.current) return;
-    // The gate and the two human-held boundaries are not timed: they wait.
+    // The gate and the human-held boundaries are not timed: they wait.
     if (gatePaused || cursor === 8) return;
+    // The recall waits for the operator to start it. This guard is what
+    // makes that hold real: pausing the RUNTIME does not stop this
+    // ticker, because pacing is driven here on the frontend.
+    if (recallPaused) return;
     if (HOLD_EVENTS.has(cursor)) return;
     if (cursor >= 25) return;
 
@@ -489,7 +524,7 @@ export default function App() {
     }, dwellFor(cursor));
 
     return cancelTick;
-  }, [playing, paused, branch, cursor, gatePaused, cancelTick, requestAdvance]);
+  }, [playing, paused, branch, cursor, gatePaused, recallPaused, cancelTick, requestAdvance]);
 
   /**
    * The manual single step, shared by ArrowRight and the debug control.
@@ -804,7 +839,7 @@ export default function App() {
               <button
                 key={id}
                 type="button"
-                onClick={() => setView(id)}
+                onClick={() => (id === "incident" ? openIncidents() : setView(id))}
                 aria-current={active ? "true" : "false"}
                 data-testid={`nav-${id}`}
                 style={css(
@@ -863,7 +898,7 @@ export default function App() {
                 setDay={setDay}
                 saturdayAvailable={saturdayAvailable}
                 recallPaused={recallPaused && cursor === 11}
-                onOpenIncidents={() => setView("incident")}
+                onOpenIncidents={openIncidents}
                 plannedStops={plannedStops}
                 routes={routes}
                 locations={locations}
@@ -871,6 +906,44 @@ export default function App() {
             ) : view === "incident" ? (
               activeIncidents > 0 || p.recall ? (
                 <>
+                  {/* The recall holds wherever the operator is standing,
+                      so someone already on this view needs a way to start
+                      it too. Selecting the incident here is the same
+                      deliberate act as pressing Incidents from Today. */}
+                  {recallPaused && cursor === 11 ? (
+                    <button
+                      type="button"
+                      data-testid="start-recall-response"
+                      onClick={openIncidents}
+                      style={css(
+                        "flex:none;width:100%;text-align:left;background:#f3e5e1;border:1px solid #e3c3ba;" +
+                          "border-left:5px solid #a23b2b;border-radius:10px;padding:13px 18px;margin-bottom:12px;" +
+                          "cursor:pointer;display:flex;align-items:center;gap:14px",
+                      )}
+                    >
+                      <span className="mono" style={css("font-size:20px;color:#a23b2b;flex:none")}>■</span>
+                      <span style={css("flex:1;min-width:240px")}>
+                        <span
+                          className="mono"
+                          style={css("display:block;font-size:10px;letter-spacing:.09em;color:#8a2f22;font-weight:700")}
+                        >
+                          CRITICAL · RECALL NOTICE RECEIVED
+                        </span>
+                        <span style={css("display:block;font-size:14.5px;font-weight:600;color:#8a2f22;margin-top:3px")}>
+                          Recall INC-2231 is waiting. Select it to begin the response.
+                        </span>
+                      </span>
+                      <span
+                        className="mono"
+                        style={css(
+                          "background:#a23b2b;color:#fff;border-radius:7px;padding:9px 17px;" +
+                            "font-size:12.5px;font-weight:600;flex:none",
+                        )}
+                      >
+                        Begin response
+                      </span>
+                    </button>
+                  ) : null}
                   <IncidentWorkspace
                     p={p}
                     cursor={cursor}
