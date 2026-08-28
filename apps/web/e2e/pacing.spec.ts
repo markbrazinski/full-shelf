@@ -84,9 +84,9 @@ test("the recall holds until the operator starts it", () => {
   expect(APP).toContain('data-testid="start-recall-response"');
 });
 
-test("every recall stage takes four seconds end to end", () => {
+test("every recall stage takes eight seconds end to end", () => {
   const budget = constant("RECALL_STAGE_MS");
-  expect(budget).toBe(4_000);
+  expect(budget).toBe(8_000);
 
   const stages = stageEvents();
   expect(stages).toHaveLength(5);
@@ -105,4 +105,34 @@ test("the stage table matches the workspace's own stage boundaries", () => {
   const declared = [...WORKSPACE.matchAll(/minEvent:\s*(\d+)/g)].map((m) => Number(m[1]));
   const paced = stageEvents().map((events) => events[0]);
   expect(paced).toEqual(declared);
+});
+
+test("committed state changes are carried by motion, not hard cuts", () => {
+  const CSS = readFileSync(
+    fileURLToPath(new URL("../src/styles/global.css", import.meta.url)),
+    "utf8",
+  );
+
+  for (const cls of ["fs-stage-tween", "fs-stage-enter", "fs-entry-enter"]) {
+    expect(CSS, `${cls} must be defined`).toContain(`.${cls}`);
+  }
+
+  // Every duration must sit inside the SHORTEST dwell, or a stage could
+  // still be animating when the next event commits. Stage 2 spends the
+  // budget across five events, so that is the floor.
+  const shortest = constant("RECALL_STAGE_MS") / 5;
+  const durations = [...CSS.matchAll(/(\d+)ms/g)].map((m) => Number(m[1]));
+  expect(durations.length).toBeGreaterThan(0);
+  for (const d of durations) {
+    expect(d, `${d}ms must fit inside the ${shortest}ms dwell`).toBeLessThan(shortest);
+  }
+
+  // Motion must be reachable from the surfaces that actually change.
+  expect(WORKSPACE).toContain('className="fs-stage-tween"');
+  expect(WORKSPACE, "the stage body must remount so the enter animation fires")
+    .toContain('key={viewStage?.key ?? "none"}');
+  expect(WORKSPACE).toContain('className="fs-stage-enter"');
+
+  // And it must be defeasible.
+  expect(CSS).toContain("prefers-reduced-motion");
 });
