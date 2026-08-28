@@ -52,6 +52,12 @@ export interface PlannedDispatchMapProps {
   label: string;
   apiKey: string;
   onFailure: () => void;
+  /**
+   * Render the route attribution beneath the legend. Defaults true.
+   * A caller with its own footer disclosure passes false and owns it,
+   * so the attribution is stated exactly once.
+   */
+  showAttribution?: boolean;
 }
 
 /**
@@ -165,6 +171,7 @@ export function PlannedDispatchMap({
   label,
   apiKey,
   onFailure,
+  showAttribution = true,
 }: PlannedDispatchMapProps) {
   const ref = useRef<HTMLDivElement | null>(null);
   const painted = useRef(false);
@@ -436,13 +443,17 @@ export function PlannedDispatchMap({
           ◆ {label}
         </span>
       </div>
-      <div
-        className="mono"
-        data-testid="map-location-disclosure"
-        style={css("font-size:10px;color:#7d8d92;margin-top:5px;letter-spacing:.02em;line-height:1.5")}
-      >
-        {ROUTE_ATTRIBUTION}
-      </div>
+      {/* A caller that renders its own footer disclosure owns the
+          attribution; a second copy here would overflow its container. */}
+      {showAttribution ? (
+        <div
+          className="mono"
+          data-testid="map-location-disclosure"
+          style={css("font-size:10px;color:#7d8d92;margin-top:5px;letter-spacing:.02em;line-height:1.5")}
+        >
+          {ROUTE_ATTRIBUTION}
+        </div>
+      ) : null}
     </div>
   );
 }

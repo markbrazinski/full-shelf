@@ -136,6 +136,7 @@ function CandidateMap({
             label={mapLabel}
             apiKey={mapsApiKey!}
             onFailure={onFailure}
+            showAttribution={false}
           />
         ) : (
           <SaturdaySchematic
@@ -146,8 +147,16 @@ function CandidateMap({
         )}
       </div>
 
-      <div className="mono" style={css("flex:none;font-size:8.5px;color:#7e939c;margin-top:7px;line-height:1.45")}>
-        Constrained draft · candidate assignments are provisional and carry no delivery guarantee.
+      {/* ONE disclosure, in the panel's fixed footer. Both the map and the
+          schematic used to render the route attribution themselves, from
+          inside the flex:1 body — so it overflowed the map container and
+          printed on top of this line. */}
+      <div
+        className="mono"
+        data-testid="map-location-disclosure"
+        style={css("flex:none;font-size:8.5px;color:#7e939c;margin-top:7px;line-height:1.45")}
+      >
+        {`Constrained draft · candidate assignments are provisional and carry no delivery guarantee. ${ROUTE_ATTRIBUTION}.`}
       </div>
     </div>
   );
@@ -249,13 +258,6 @@ function SaturdaySchematic({
             </div>
           </div>
         ))}
-      </div>
-      <div
-        className="mono"
-        data-testid="map-location-disclosure"
-        style={css("font-size:9.5px;color:#7d8d92;margin:6px 2px 0;letter-spacing:.02em;line-height:1.5")}
-      >
-        {ROUTE_ATTRIBUTION}
       </div>
     </div>
   );
