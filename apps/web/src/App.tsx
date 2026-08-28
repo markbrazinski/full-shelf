@@ -72,6 +72,57 @@ const OPENING_HOLD_MS = 4_000;
 const TRUCK_SEQUENCE_MS = 8_000;
 
 /**
+ * The pause after the operator opens Incidents, before the recall runs.
+ *
+ * Short on purpose: it exists so arriving on the workspace and the first
+ * stage lighting up are not the same frame, not to make anyone wait.
+ */
+const RECALL_ENTRY_DELAY_MS = 1_000;
+
+/**
+ * Every recall stage takes the same time on screen, end to end.
+ *
+ * The Incident workspace shows five stages, and each is established by a
+ * span of canonical events rather than a single one — stage 2 alone
+ * covers events 13 through 17. Timing the stages therefore cannot be
+ * done by picking per-event numbers: the budget belongs to the STAGE,
+ * and its events divide it.
+ *
+ * `RECALL_STAGE_EVENTS` lists the events each stage owns, in order, and
+ * must stay in step with `STAGES[].minEvent` in IncidentWorkspace.tsx —
+ * `pacing.spec.ts` fails if the two drift apart. The stage's events, the
+ * agent card that lights up, and the Fleet activity rail all advance off
+ * the same committed cursor, so one budget paces all three.
+ */
+const RECALL_STAGE_MS = 4_000;
+
+const RECALL_STAGE_EVENTS: readonly (readonly number[])[] = [
+  [11, 12],          // 1 Detect & validate   — notice received, screened
+  [13, 14, 15, 16, 17], // 2 Scope commitments — extract, scope, barrier, containment, invalidate
+  [18],              // 3 Trace custody
+  [19, 20],          // 4 Recover service     — proposed, committed
+  [21, 22],          // 5 Decide closure      — refused, partially contained
+];
+
+/**
+ * Split one stage's budget across its events, losing no milliseconds to
+ * rounding: each event gets the floor, and the remainder is handed to
+ * the last one so the stage total is exactly RECALL_STAGE_MS.
+ */
+const recallDwells = (): Record<number, number> => {
+  const out: Record<number, number> = {};
+  for (const events of RECALL_STAGE_EVENTS) {
+    const each = Math.floor(RECALL_STAGE_MS / events.length);
+    events.forEach((event, i) => {
+      out[event] = i === events.length - 1
+        ? RECALL_STAGE_MS - each * (events.length - 1)
+        : each;
+    });
+  }
+  return out;
+};
+
+/**
  * Deliberate dwell time, in milliseconds, BEFORE leaving each event.
  *
  * The day is meant to be read, not raced: a viewer must be able to take
@@ -79,8 +130,7 @@ const TRUCK_SEQUENCE_MS = 8_000;
  * only — it never changes scenario time, which advances solely when the
  * next accepted event commits.
  *
- * Two boundaries hold indefinitely rather than timing out:
- *   11  the recall — held until the operator opens Incidents
+ * One boundary holds indefinitely rather than timing out:
  *   24  the Saturday draft — held so the plan can actually be reviewed
  */
 const DWELL_MS: Record<number, number> = {
@@ -89,18 +139,13 @@ const DWELL_MS: Record<number, number> = {
   6: Math.round(TRUCK_SEQUENCE_MS * 0.5),  // truck failure — read the alarm
   7: TRUCK_SEQUENCE_MS - Math.round(TRUCK_SEQUENCE_MS * 0.5),  // scoping → proposal
   10: 5_000,  // rev08 activation
-  13: 4_000,  // recall extraction
-  14: 4_000,  // scoping
-  18: 5_000,  // custody reconciliation
-  19: 5_000,  // recovery proposed
-  20: 5_000,  // recovery committed
-  21: 6_000,  // closure refusal
-  22: 6_000,  // partially contained
+  // 11-22 are apportioned from RECALL_STAGE_MS, one budget per stage.
+  ...recallDwells(),
 };
 /** Every other committed event. */
 const DWELL_DEFAULT_MS = 3_000;
 /** Boundaries that wait for a human rather than a timer. */
-const HOLD_EVENTS = new Set([11, 24]);
+const HOLD_EVENTS = new Set([24]);
 
 const dwellFor = (cursor: number): number => DWELL_MS[cursor] ?? DWELL_DEFAULT_MS;
 const DEBUG_CONTROLS = debugReplayControlsEnabled();
@@ -324,7 +369,12 @@ export default function App() {
       return;
     }
     setRecallPaused(false);
-    setPlaying(true);
+    // One beat between arriving on the workspace and the first stage
+    // lighting up, so the two are not the same frame. Cleared on unmount
+    // and on any navigation away, so leaving Incidents during the beat
+    // cannot start the recall behind the operator's back.
+    const entry = window.setTimeout(() => setPlaying(true), RECALL_ENTRY_DELAY_MS);
+    return () => window.clearTimeout(entry);
   }, [view, recallPaused, paused]);
 
   // ---- the single-flight transition controller -----------------------
