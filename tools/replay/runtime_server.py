@@ -27,6 +27,18 @@ LOOPBACK = "127.0.0.1"
 PORT = int(os.getenv("FULL_SHELF_RUNTIME_PORT", "8788"))
 WEB_ORIGIN = os.getenv("FULL_SHELF_WEB_ORIGIN", "http://127.0.0.1:5173")
 
+# `localhost` and `127.0.0.1` are the SAME dev server but different origins to
+# the browser, and a page served from one could not call an API allowlisted for
+# the other: every request failed CORS and the app rendered its connection
+# error. Both loopback spellings are allowed, plus the IPv6 literal, since
+# macOS browsers may resolve localhost to ::1. Still an explicit allowlist —
+# a loopback dev origin only, never a wildcard.
+_LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "[::1]")
+ALLOWED_ORIGINS = frozenset(
+    [WEB_ORIGIN] + [f"http://{host}:{port}" for host in _LOOPBACK_HOSTS
+                    for port in ("5173", "5174")]
+)
+
 # Compressed wall-clock pacing. Presentation only: it never changes scenario
 # time, which advances solely when the next accepted event commits.
 DEFAULT_INTERVAL_MS = int(os.getenv("FULL_SHELF_RUNTIME_INTERVAL_MS", "900"))
@@ -69,7 +81,12 @@ class RuntimeHandler(BaseHTTPRequestHandler):
     # -- plumbing ------------------------------------------------------------
 
     def _headers(self):
-        self.send_header("Access-Control-Allow-Origin", WEB_ORIGIN)
+        # Echo the caller's own origin when it is an allowlisted loopback
+        # dev origin; the browser rejects a response whose allow-origin
+        # does not match the request origin exactly.
+        origin = self.headers.get("Origin")
+        self.send_header("Access-Control-Allow-Origin",
+                         origin if origin in ALLOWED_ORIGINS else WEB_ORIGIN)
         self.send_header("Access-Control-Allow-Headers",
                          "Authorization, Content-Type, Last-Event-ID")
         self.send_header("Access-Control-Allow-Methods",

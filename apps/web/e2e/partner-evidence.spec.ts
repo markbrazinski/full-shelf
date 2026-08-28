@@ -176,3 +176,62 @@ test.describe("Canonical partner evidence", () => {
     await expect(page.locator('[data-testid="approve-update"]')).toBeVisible();
   });
 });
+
+// ---------------------------------------------------------------------
+// The recall holds until the operator starts it.
+//
+// This is a BEHAVIORAL test on purpose. The regression it guards was
+// invisible to source assertions: the hold flag was set, the banner
+// rendered, and the runtime was paused — while the frontend ticker,
+// which is what actually paces the day, carried the cursor from 11 to
+// 17 with nobody pressing anything. Only watching the real cursor over
+// real idle time catches that.
+// ---------------------------------------------------------------------
+
+const cursorOf = async (page: Page): Promise<number> =>
+  Number(await page.locator('[data-testid="app-root"]').getAttribute("data-cursor"));
+
+/** Autoplay to the recall notice, having crossed the approval gate. */
+async function atRecallNotice(page: Page, parkOnIncidents: boolean) {
+  await page.goto("/");
+  const approve = page.locator('[data-testid="approve-update"]');
+  await expect(approve).toBeVisible({ timeout: 60_000 });
+  await approve.click();
+  if (parkOnIncidents) {
+    await expect.poll(() => cursorOf(page), { timeout: 60_000 }).toBeGreaterThanOrEqual(10);
+    await page.locator('[data-testid="nav-incident"]').click();
+  }
+  await expect.poll(() => cursorOf(page), { timeout: 60_000 }).toBeGreaterThanOrEqual(11);
+}
+
+test.describe("The recall waits for the operator", () => {
+  test("holds at event 11 on Today until Open Incidents is pressed", async ({ page }) => {
+    await atRecallNotice(page, false);
+    expect(await cursorOf(page)).toBe(11);
+
+    // Idle far longer than any dwell. Nothing may advance on its own.
+    await page.waitForTimeout(10_000);
+    expect(await cursorOf(page), "the recall must not start itself").toBe(11);
+
+    await expect(page.locator('[data-testid="recall-pause-banner"]')).toBeVisible();
+    await page.locator('[data-testid="open-incidents-cta"]').click();
+    await expect.poll(() => cursorOf(page), { timeout: 20_000 }).toBeGreaterThan(11);
+  });
+
+  test("holds even when the operator is already on Incidents", async ({ page }) => {
+    // The regression: being on the view was treated as consent, so the
+    // recall started without anyone asking for it.
+    await atRecallNotice(page, true);
+    expect(await cursorOf(page)).toBe(11);
+
+    await page.waitForTimeout(10_000);
+    expect(await cursorOf(page), "presence on a view is not a decision").toBe(11);
+
+    // The Today banner does not render here, so the workspace carries its
+    // own start control.
+    const start = page.locator('[data-testid="start-recall-response"]');
+    await expect(start).toBeVisible();
+    await start.click();
+    await expect.poll(() => cursorOf(page), { timeout: 20_000 }).toBeGreaterThan(11);
+  });
+});

@@ -58,8 +58,30 @@ const stageEvents = (): number[][] => {
 test("opening Incidents waits one second before the recall starts", () => {
   expect(constant("RECALL_ENTRY_DELAY_MS")).toBe(1_000);
   expect(APP).toContain("setTimeout(() => setPlaying(true), RECALL_ENTRY_DELAY_MS)");
-  // The recall must no longer wait indefinitely at event 11.
-  expect(APP).toContain("const HOLD_EVENTS = new Set([24]);");
+});
+
+test("the recall holds until the operator starts it", () => {
+  // The hold is only real if the FRONTEND ticker respects it: pausing the
+  // runtime does not stop autoplay, because pacing is driven client-side.
+  expect(APP, "autoplay must not tick while the recall waits")
+    .toContain("if (recallPaused) return;");
+  expect(APP).toMatch(/\}, \[playing, paused, branch, cursor, gatePaused, recallPaused,/);
+
+  // Unconditional: an operator already on Incidents has not asked for
+  // anything, so the hold may not depend on the current view.
+  expect(APP).toContain("if (seq === 11) {");
+  expect(APP, "the hold must not be conditional on the current view")
+    .not.toContain('seq === 11 && viewRef.current === "today"');
+
+  // A timer already armed for event 11 must be invalidated before the
+  // state update, or it commits event 12 in the gap before the re-render.
+  expect(APP).toMatch(/cancelTickRef\.current\(\);[\s\S]{0,200}setRecallPaused\(true\)/);
+
+  // Release is a deliberate press, never mere presence on the view.
+  expect(APP).toContain("const openIncidents = useCallback(");
+  expect(APP).toContain('id === "incident" ? openIncidents() : setView(id)');
+  expect(APP).toContain("onOpenIncidents={openIncidents}");
+  expect(APP).toContain('data-testid="start-recall-response"');
 });
 
 test("every recall stage takes four seconds end to end", () => {
