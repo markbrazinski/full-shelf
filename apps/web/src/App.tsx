@@ -49,6 +49,29 @@ import { FleetActivityRail, type ActivityRailEntry } from "./components/FleetAct
 const MAPS_API_KEY = googleMapsApiKey();
 
 /**
+ * Dead air, in milliseconds, before the first event is allowed to leave.
+ *
+ * The opening frame is held still so a take can start cleanly: recording
+ * begins, the healthy Friday plan is legible, and only then does the day
+ * start moving. Presentation only — no cursor moves during the hold.
+ */
+const OPENING_HOLD_MS = 4_000;
+
+/**
+ * The truck-failure sequence, events 6 → 8, is budgeted as ONE beat.
+ *
+ * Failure, the agent scoping what it broke, and the repair proposal must
+ * read as a single continuous reaction, so the three dwells are split
+ * from one total rather than tuned individually. Every surface — map,
+ * incident banner, and the Fleet activity rail — is driven by the same
+ * committed cursor, so budgeting the cursor budgets all of them.
+ *
+ * Event 8 is not included: it raises the human approval gate and waits
+ * indefinitely rather than timing out.
+ */
+const TRUCK_SEQUENCE_MS = 8_000;
+
+/**
  * Deliberate dwell time, in milliseconds, BEFORE leaving each event.
  *
  * The day is meant to be read, not raced: a viewer must be able to take
@@ -62,7 +85,9 @@ const MAPS_API_KEY = googleMapsApiKey();
  */
 const DWELL_MS: Record<number, number> = {
   5: 5_000,   // opening
-  6: 5_000,   // truck failure
+  // 6 and 7 are apportioned from TRUCK_SEQUENCE_MS, below.
+  6: Math.round(TRUCK_SEQUENCE_MS * 0.5),  // truck failure — read the alarm
+  7: TRUCK_SEQUENCE_MS - Math.round(TRUCK_SEQUENCE_MS * 0.5),  // scoping → proposal
   10: 5_000,  // rev08 activation
   13: 4_000,  // recall extraction
   14: 4_000,  // scoping
@@ -194,6 +219,7 @@ export default function App() {
   // ---- session bootstrap --------------------------------------------
   useEffect(() => {
     let disposed = false;
+    let openingHold: number | null = null;
 
     (async () => {
       try {
@@ -260,7 +286,18 @@ export default function App() {
         // lets each event hold for as long as it needs to be read, and
         // lets ArrowRight cancel a pending tick deterministically.
         // Presenter mode is a filming surface and starts PAUSED.
-        if (!disposed && !PRESENTER) setPlaying(true);
+        //
+        // The first tick is held for OPENING_HOLD_MS so the page opens on
+        // a still frame. The hold arms no timer of its own beyond this
+        // one: `setPlaying` is what schedules the first dwell, so nothing
+        // can advance before it fires. A presenter keypress during the
+        // hold still works — ArrowRight is a manual step and does not
+        // depend on `playing`.
+        if (!disposed && !PRESENTER) {
+          openingHold = window.setTimeout(() => {
+            if (!disposed) setPlaying(true);
+          }, OPENING_HOLD_MS);
+        }
       } catch (e) {
         if (!disposed) {
           setError(e instanceof Error ? e.message : String(e));
@@ -271,6 +308,7 @@ export default function App() {
 
     return () => {
       disposed = true;
+      if (openingHold !== null) window.clearTimeout(openingHold);
       unsubscribe.current?.();
     };
   }, [backend, appendCanonical, applyProjection]);
