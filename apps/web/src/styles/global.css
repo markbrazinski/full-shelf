@@ -74,10 +74,54 @@ button:focus-visible {
   animation: fs-slide 0.22s ease forwards;
 }
 
+/* ---------------------------------------------------------------------
+   Stage motion.
+
+   Committed state used to hard-cut: a stage went from upcoming to
+   current between one frame and the next, and the eye had nothing to
+   follow. These carry the change instead. They are PRESENTATION only —
+   nothing here waits on an animation, and scenario time still advances
+   solely when the next accepted event commits, so a cut short by a
+   keypress simply lands on the finished state.
+
+   Durations stay well inside the shortest dwell (1.6s) so a stage can
+   never still be animating when the next event lands.
+   --------------------------------------------------------------------- */
+
+/* Colour, border and shadow changes on the stage spine and agent cards. */
+.fs-stage-tween {
+  transition:
+    background-color 420ms ease,
+    border-color 420ms ease,
+    color 420ms ease,
+    box-shadow 420ms ease;
+}
+
+/* The dominant panel when the displayed stage changes. */
+.fs-stage-enter {
+  animation: fs-rise 380ms ease both;
+}
+
+/* A newly committed activity-rail entry arriving at the top. */
+.fs-entry-enter {
+  animation: fs-rise 320ms ease both;
+}
+
+/* Numbers that recount as evidence commits. */
+.fs-value-tween {
+  transition: color 420ms ease, background-color 420ms ease;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .fs-pulse,
   .fs-spin,
-  .fs-drawer {
+  .fs-drawer,
+  .fs-stage-enter,
+  .fs-entry-enter {
     animation: none !important;
+  }
+  .fs-stage-tween,
+  .fs-value-tween {
+    transition: none !important;
   }
 }

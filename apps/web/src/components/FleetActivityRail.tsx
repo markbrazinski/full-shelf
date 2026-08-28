@@ -102,6 +102,10 @@ export function FleetActivityRail({
           return (
             <div
               key={`${e.authority}-${e.ordinal}`}
+              // Entries are keyed by ordinal, so a newly committed event
+              // mounts fresh and animates in; the ones below it are
+              // reused and stay still. Only the arrival moves.
+              className={`fs-stage-tween${current ? " fs-entry-enter" : ""}`}
               data-testid="activity-entry"
               data-ordinal={e.ordinal}
               data-severity={e.severity}

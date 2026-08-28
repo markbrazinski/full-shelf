@@ -180,6 +180,7 @@ export function IncidentWorkspace({
             <button
               key={stage.key}
               type="button"
+              className="fs-stage-tween"
               data-testid={`stage-${stage.key}`}
               data-state={state}
               data-reached={String(reached)}
@@ -239,6 +240,7 @@ export function IncidentWorkspace({
           return (
             <div
               key={agent.name}
+              className="fs-stage-tween"
               data-testid={`agent-${agent.name.replace(/[^a-z]+/gi, "-").toLowerCase()}`}
               data-agent-state={state}
               style={css(
@@ -256,7 +258,7 @@ export function IncidentWorkspace({
               </div>
               <div style={css("display:flex;align-items:center;gap:6px;margin-top:5px")}>
                 <span
-                  className="mono"
+                  className="mono fs-stage-tween"
                   data-testid="agent-state-label"
                   style={css(
                     `font-size:7.5px;font-weight:700;letter-spacing:.04em;color:${style.fg};` +
@@ -332,7 +334,15 @@ export function IncidentWorkspace({
             )}
           </div>
 
-          <div style={css("padding:12px 15px;min-width:0;max-height:496px;overflow:auto")}>
+          {/* Keyed on the displayed stage so React REMOUNTS on a change:
+              without a changing key the element is reused and the enter
+              animation never fires. Presentation only — the content is
+              the same committed projection either way. */}
+          <div
+            key={viewStage?.key ?? "none"}
+            className="fs-stage-enter"
+            style={css("padding:12px 15px;min-width:0;max-height:496px;overflow:auto")}
+          >
             {viewStage?.key === "detect" ? <DetectStage p={p} onOpenEvidence={onOpenEvidence} /> : null}
             {viewStage?.key === "scope" ? <ScopeStage p={p} cursor={cursor} /> : null}
             {viewStage?.key === "custody" ? (

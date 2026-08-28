@@ -94,7 +94,7 @@ const RECALL_ENTRY_DELAY_MS = 1_000;
  * agent card that lights up, and the Fleet activity rail all advance off
  * the same committed cursor, so one budget paces all three.
  */
-const RECALL_STAGE_MS = 4_000;
+const RECALL_STAGE_MS = 8_000;
 
 const RECALL_STAGE_EVENTS: readonly (readonly number[])[] = [
   [11, 12],          // 1 Detect & validate   — notice received, screened
