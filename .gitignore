@@ -50,3 +50,10 @@ dist/
 .env.local
 *.pem
 *.key
+
+# Playwright / test output
+test-results/
+playwright-report/
+
+# Local demo scratch
+docs/demo/
