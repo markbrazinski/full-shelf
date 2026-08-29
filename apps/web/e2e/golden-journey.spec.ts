@@ -54,7 +54,40 @@ test.beforeAll(() => {
  */
 async function shot(page: Page, name: string) {
   await expectMapSettled(page);
+  await settleMotion(page);
   await page.screenshot({ path: `${SHOTS}/${name}.png`, fullPage: false });
+}
+
+/**
+ * Hold until the stage-entrance and rail-entry motion has finished.
+ *
+ * The config asks for reducedMotion "reduce", but that emulation does not
+ * reach the page in this Chromium build — the media query reports false and
+ * the enter animations run anyway. A frame taken mid-tween catches the
+ * dominant panel part-way through fs-rise, at partial opacity, which is a
+ * capture artefact rather than any state an operator reaches. Waiting on the
+ * running animations is the honest fix and it is correct either way: with
+ * motion genuinely disabled there is nothing to await.
+ */
+async function settleMotion(page: Page) {
+  await page.evaluate(async () => {
+    // fs-pulse and fs-spin loop forever and never resolve `finished`, so
+    // only the one-shot enter animations are awaited. They are all well
+    // under the shortest dwell, but the race keeps a capture from ever
+    // hanging on an animation that will not end.
+    const finite = document
+      .getAnimations()
+      .filter((animation) => {
+        const timing = (animation.effect as KeyframeEffect | null)?.getTiming();
+        return timing !== undefined && timing.iterations !== Infinity;
+      })
+      .map((animation) => animation.finished.catch(() => undefined));
+
+    await Promise.race([
+      Promise.all(finite),
+      new Promise((resolve) => setTimeout(resolve, 2_000)),
+    ]);
+  });
 }
 
 /** The map is either a fully painted basemap or the labelled fallback. */
