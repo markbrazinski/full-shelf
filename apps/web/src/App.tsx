@@ -708,6 +708,11 @@ export default function App() {
 
   const p = projection;
   const activeIncidents = p?.incidentSummary.activeCount ?? 0;
+  // The recall the Incident workspace renders. Committed state only: the
+  // runtime withholds the recall incident entirely before event 11, so
+  // this is false at every earlier boundary without consulting a cursor.
+  const recallOpen =
+    !!p?.incidentSummary.incidents.some((i) => i.type === "FOOD_SAFETY_RECALL") && !!p?.recall;
   // Delivered work from a superseded revision stays on the map: the
   // delivery happened, and a plan change does not undo it.
   const deliveredCommitments = useMemo(
@@ -904,7 +909,18 @@ export default function App() {
                 locations={locations}
               />
             ) : view === "incident" ? (
-              activeIncidents > 0 || p.recall ? (
+              // The workspace depicts the RECALL specifically: its heading,
+              // safety-hold lot, and five stages all belong to INC-2231. It
+              // may therefore open only once the recall itself is committed,
+              // never merely because some incident is open. Between events 6
+              // and 10 the one open incident is the Truck 1 refrigeration
+              // failure, and admitting that here rendered a recall shell —
+              // "SAFETY HOLD · —", a "Recall" with no id, five pending
+              // stages — which asserts a food-safety recall that has not
+              // been received. Read from the committed projection, never
+              // from the cursor: `recall` is present only when the runtime
+              // has published both the recall incident and its intake.
+              recallOpen ? (
                 <>
                   {/* The recall holds wherever the operator is standing,
                       so someone already on this view needs a way to start
@@ -971,8 +987,16 @@ export default function App() {
                   ) : null}
                 </>
               ) : (
+                // Two genuinely different boundaries, told apart truthfully.
+                // Before event 6 nothing is open. From 6 to 10 the Truck 1
+                // refrigeration failure IS open and is being worked in the
+                // side rail, so claiming "no incident" would be false.
                 <Empty
-                  text="No incident is open at this boundary."
+                  text={
+                    activeIncidents > 0
+                      ? "The refrigeration failure is being worked on Today. No recall has been received at this boundary."
+                      : "No incident is open at this boundary."
+                  }
                   testId="incident-none"
                 />
               )
