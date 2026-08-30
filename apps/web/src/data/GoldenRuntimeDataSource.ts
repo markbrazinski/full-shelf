@@ -121,58 +121,79 @@ export class GoldenRuntimeDataSource {
     onError: (err: Error) => void
   ): () => void {
     let aborted = false;
+    // The highest canonical ordinal actually delivered. A reconnect
+    // resumes strictly after it, so no committed event is missed and
+    // none is replayed twice.
+    let resumeFrom = lastEventId;
 
     (async () => {
-      try {
-        const headers: Record<string, string> = {
-          Accept: "text/event-stream",
-        };
-        if (lastEventId) {
-          headers["Last-Event-ID"] = lastEventId;
-        }
+      // A stream can end without the replay being over: the deployed
+      // transport closes a caught-up stream after an idle period so an
+      // abandoned tab stops holding a request slot. Ending is therefore
+      // normal, and the client's job is to resume from its cursor rather
+      // than to stall — which is exactly what the runtime's
+      // `Last-Event-ID` handling already supports.
+      for (let attempt = 0; !aborted; attempt++) {
+        try {
+          const headers: Record<string, string> = {
+            Accept: "text/event-stream",
+          };
+          if (resumeFrom) {
+            headers["Last-Event-ID"] = resumeFrom;
+          }
 
-        const res = await fetch(
-          `${this.config.baseUrl}/api/v1/replay/sessions/${sessionId}/stream`,
-          { headers }
-        );
-        if (!res.ok) throw new Error(`SSE failed: ${res.status}`);
+          const res = await fetch(
+            `${this.config.baseUrl}/api/v1/replay/sessions/${sessionId}/stream`,
+            { headers }
+          );
+          if (!res.ok) throw new Error(`SSE failed: ${res.status}`);
 
-        const reader = res.body?.getReader();
-        if (!reader) throw new Error("No response body");
+          const reader = res.body?.getReader();
+          if (!reader) throw new Error("No response body");
 
-        const decoder = new TextDecoder();
-        let buffer = "";
+          const decoder = new TextDecoder();
+          let buffer = "";
 
-        while (!aborted) {
-          const { done, value } = await reader.read();
-          if (done) break;
+          while (!aborted) {
+            const { done, value } = await reader.read();
+            if (done) break;
 
-          buffer += decoder.decode(value, { stream: true });
-          const frames = buffer.split("\n\n");
-          buffer = frames.pop() || "";
+            buffer += decoder.decode(value, { stream: true });
+            const frames = buffer.split("\n\n");
+            buffer = frames.pop() || "";
 
-          for (const frame of frames) {
-            if (!frame.trim()) continue;
+            for (const frame of frames) {
+              if (!frame.trim()) continue;
 
-            let data: string | undefined;
+              let data: string | undefined;
 
-            for (const line of frame.split("\n")) {
-              if (line.startsWith("data:")) data = line.slice(5).trim();
-            }
+              for (const line of frame.split("\n")) {
+                if (line.startsWith("data:")) data = line.slice(5).trim();
+              }
 
-            if (data) {
-              try {
-                const envelope = JSON.parse(data) as EventEnvelope;
-                onEvent(envelope);
-              } catch (e) {
-                onError(new Error(`Failed to parse event: ${e}`));
+              if (data) {
+                try {
+                  const envelope = JSON.parse(data) as EventEnvelope;
+                  // Only canonical ordinals resume; branch ordinals are
+                  // `b`-prefixed and belong to an isolated namespace.
+                  const seq = Number(envelope.sequence);
+                  if (Number.isFinite(seq)) resumeFrom = String(seq);
+                  onEvent(envelope);
+                } catch (e) {
+                  onError(new Error(`Failed to parse event: ${e}`));
+                }
               }
             }
           }
-        }
-      } catch (err) {
-        if (!aborted) {
+          // A clean end is an invitation to resume, not a failure, so it
+          // is not surfaced as an error.
+          attempt = -1;
+        } catch (err) {
+          if (aborted) return;
+          // A genuine transport failure is reported once and then retried
+          // with a bounded backoff, so a blip does not strand the replay.
           onError(err instanceof Error ? err : new Error(String(err)));
+          await new Promise((r) => setTimeout(r, Math.min(1_000 * 2 ** attempt, 8_000)));
         }
       }
     })();

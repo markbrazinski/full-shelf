@@ -63,6 +63,23 @@ STORE = runtime.SessionStore()
 # instance; the oldest sessions are retired first. Retiring a session only
 # discards presentation state — there is nothing authoritative to lose.
 MAX_SESSIONS = int(os.getenv("FULL_SHELF_MAX_SESSIONS", "400"))
+
+# How long a caught-up SSE stream is held before it is closed and the
+# client is invited to resume.
+#
+# A request slot is the scarce resource here: this service runs at
+# concurrency 20 on at most 2 instances, and a replay holds its stream
+# open for the whole visit. A judge who refreshes — or simply closes the
+# tab — leaves the old stream occupying a slot until the platform reaps
+# it, and enough of those exhaust all 40 slots and the frontend starts
+# receiving `429 Rate exceeded` when it tries to open a session.
+#
+# Ending an idle stream costs nothing: every frame is already replayable
+# by ordinal, so the client reconnects with `Last-Event-ID` and resumes
+# strictly after its cursor. No event can be missed or duplicated. The
+# deterministic pacing means a genuinely active viewer commits an event
+# well inside this window, so an active stream is never cut.
+STREAM_IDLE_TIMEOUT = float(os.getenv("FULL_SHELF_STREAM_IDLE_SECONDS", "90"))
 _ORDER = []
 _ORDER_LOCK = threading.Lock()
 
@@ -283,10 +300,18 @@ class PublicHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", NO_STORE)
         self.send_header("X-Accel-Buffering", "no")
+        # An SSE body has no Content-Length, so on HTTP/1.1 the end of the
+        # stream has to be signalled by closing the connection. Without
+        # this the socket is reused and the browser's reader never reports
+        # `done`, so the idle timeout expires server-side while the client
+        # waits forever on a stream that will never speak again.
+        self.send_header("Connection", "close")
+        self.close_connection = True
         self._security_headers()
         self.end_headers()
         try:
-            for block in runtime.stream(session, last_event_id=last):
+            for block in runtime.stream(session, last_event_id=last,
+                                        idle_timeout=STREAM_IDLE_TIMEOUT):
                 self.wfile.write(block.encode("utf-8"))
                 self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError):
