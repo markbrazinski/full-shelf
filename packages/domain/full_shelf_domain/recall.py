@@ -449,11 +449,21 @@ def schedule_site01_deadline_task(
         "correlation_trace_id": correlation_trace_id,
     }
 def publish_recall_event_to_pubsub(event_payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Publishes recall event to GCP Pub/Sub topic full-shelf-incidents."""
+    """Publishes recall event to the configured GCP Pub/Sub incidents topic.
+
+    The push handler routes on the `event_type` message ATTRIBUTE, not on
+    the body, so the attribute has to be set here. Publishing without it
+    produced a message the handler acknowledged and then permanently
+    rejected as UNSUPPORTED_PUBSUB_EVENT_TYPE — delivery succeeded, the
+    fleet never ran, and nothing was written. The body keeps its own
+    `event_type` for the handler's payload validation.
+    """
     publisher = pubsub_v1.PublisherClient()
     topic_path = publisher.topic_path(PROJECT_ID, TOPIC_ID)
     data = json.dumps(event_payload).encode("utf-8")
-    future = publisher.publish(topic_path, data)
+    event_type = event_payload.get("event_type")
+    attributes = {"event_type": event_type} if isinstance(event_type, str) and event_type else {}
+    future = publisher.publish(topic_path, data, **attributes)
     message_id = future.result()
     return {
         "status": "PUBLISHED",
