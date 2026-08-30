@@ -28,8 +28,14 @@ COPY apps/web/ ./
 ENV VITE_DATA_SOURCE=deterministic_replay \
     VITE_REPLAY_API_BASE=same-origin \
     VITE_JUDGE_MODE=1
-# Explicitly empty, so a stray build-host value can never be inlined.
-ENV VITE_GOOGLE_MAPS_API_KEY=""
+# The browser Maps key is supplied at BUILD time, because Vite inlines every
+# VITE_* value into the public bundle. That is safe only because the key is
+# restricted to the Maps JavaScript API and to this service's own referrers —
+# a browser key is always visible in page source, so restriction, not secrecy,
+# is what protects it. Empty by default: an unrestricted key must never be
+# built in, and without one the map degrades to the truthful schematic.
+ARG VITE_GOOGLE_MAPS_API_KEY=""
+ENV VITE_GOOGLE_MAPS_API_KEY=$VITE_GOOGLE_MAPS_API_KEY
 RUN npm run build
 
 

@@ -213,6 +213,12 @@ export function PlannedDispatchMap({
         });
 
         const bounds = new maps.LatLngBounds();
+        // Framing follows TODAY'S WORK, not the whole configured geography.
+        // Every reference site is still drawn, but a facility nobody is
+        // serving today must not pull the viewport wide enough to bury the
+        // active stops in a corner. The hub anchors it because every route
+        // begins and ends there.
+        const operational = new maps.LatLngBounds();
 
         // Every configured reference location is drawn, whether or not a
         // stop currently references it: the six sites are the tenant's
@@ -236,6 +242,7 @@ export function PlannedDispatchMap({
             },
           });
           bounds.extend({ lat: loc.lat, lng: loc.lon });
+          if (isHub) operational.extend({ lat: loc.lat, lng: loc.lon });
         }
 
         // Committed reference routes. Each follows real roads between the
@@ -246,12 +253,28 @@ export function PlannedDispatchMap({
           if (route.path.length < 2) continue;
           const color = ROUTE_COLORS[route.role];
           const path = route.path.map(([lat, lng]) => ({ lat, lng }));
+          // A casing under every solid route. On a real basemap a flat
+          // stroke competes with the road network underneath it and reads
+          // as just another highway; a dark under-stroke separates the
+          // operational line from the map so it sits ON the geography
+          // rather than getting lost in it. Dashed routes skip the casing
+          // because the gaps would show it as a shadow.
+          if (!route.dashed) {
+            new maps.Polyline({
+              map,
+              path,
+              strokeColor: "#0b1f26",
+              strokeOpacity: route.role === "UNAVAILABLE" ? 0.25 : 0.45,
+              strokeWeight: route.role === "UNAVAILABLE" ? 6 : 8,
+              zIndex: route.role === "UNAVAILABLE" ? 0 : 1,
+            });
+          }
           new maps.Polyline({
             map,
             path,
             strokeColor: color,
-            strokeOpacity: route.dashed ? 0 : route.role === "UNAVAILABLE" ? 0.5 : 0.9,
-            strokeWeight: route.role === "UNAVAILABLE" ? 3 : 4,
+            strokeOpacity: route.dashed ? 0 : route.role === "UNAVAILABLE" ? 0.6 : 1,
+            strokeWeight: route.role === "UNAVAILABLE" ? 3.5 : 5,
             zIndex: route.role === "UNAVAILABLE" ? 1 : 2,
             icons: route.dashed
               ? [
@@ -269,7 +292,10 @@ export function PlannedDispatchMap({
                 ]
               : undefined,
           });
-          for (const point of path) bounds.extend(point);
+          for (const point of path) {
+            bounds.extend(point);
+            operational.extend(point);
+          }
         }
 
         // One marker per planned stop, over its configured site, carrying
@@ -306,9 +332,17 @@ export function PlannedDispatchMap({
             },
           });
           bounds.extend(pos);
+          operational.extend(pos);
         }
 
-                if (!bounds.isEmpty()) map.fitBounds(bounds, 56);
+        // Padding is asymmetric on purpose: the manifest panel sits to the
+        // right of the map, so a little extra room on that side keeps the
+        // easternmost stop clear of the panel edge rather than tucked
+        // against it.
+        const frame = operational.isEmpty() ? bounds : operational;
+        if (!frame.isEmpty()) {
+          map.fitBounds(frame, { top: 44, right: 60, bottom: 44, left: 44 });
+        }
 
         // ---- readiness ------------------------------------------------
         // A loaded API script proves nothing: an unauthorized key can load
