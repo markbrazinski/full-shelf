@@ -2,3 +2,7 @@
 # against Google's published keys — a hand-rolled JWT verifier is exactly
 # the wrong place to save a dependency.
 google-auth>=2.40.0
+# google.auth.transport.requests needs this explicitly: `requests` is an
+# EXTRA of google-auth, not a hard dependency, so a slim image installs
+# google-auth successfully and then fails at import time without it.
+requests>=2.32.0
