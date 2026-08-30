@@ -122,7 +122,15 @@ MAX_SESSIONS = int(os.getenv("FULL_SHELF_MAX_SESSIONS", "400"))
 # strictly after its cursor. No event can be missed or duplicated. The
 # deterministic pacing means a genuinely active viewer commits an event
 # well inside this window, so an active stream is never cut.
-STREAM_IDLE_TIMEOUT = float(os.getenv("FULL_SHELF_STREAM_IDLE_SECONDS", "90"))
+#
+# 20s was chosen empirically, not guessed. At 90s a burst of visits — ten
+# consecutive replays, or several judges arriving together — accumulated
+# abandoned streams faster than they expired and exhausted the 40 request
+# slots this service has (concurrency 20 x 2 instances); the symptom was a
+# UI stuck at the opening event while the runtime had already advanced,
+# because no stream could be opened. At 20s the same burst passes
+# repeatedly.
+STREAM_IDLE_TIMEOUT = float(os.getenv("FULL_SHELF_STREAM_IDLE_SECONDS", "20"))
 _ORDER = []
 _ORDER_LOCK = threading.Lock()
 

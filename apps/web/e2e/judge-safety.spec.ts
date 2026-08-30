@@ -103,8 +103,16 @@ async function driveTo(page: Page, sid: string, target: number) {
     if (res.status === 409) {
       const detail = (res.json as { detail?: string }).detail;
       if (detail === "HUMAN_APPROVAL_REQUIRED") {
+        // The gate is a RENDERED control, and the UI learns the cursor moved
+        // over SSE. Against a deployed service that arrives a network hop
+        // after the runtime already refused, so the control is expected only
+        // once the page has actually caught up to the gate boundary —
+        // otherwise this races the stream rather than testing the gate.
+        await expect
+          .poll(() => cursor(page), { timeout: 60_000, message: "UI reached the gate" })
+          .toBeGreaterThanOrEqual(8);
         const approve = page.locator('[data-testid="approve-update"]');
-        await expect(approve).toBeVisible({ timeout: 30_000 });
+        await expect(approve).toBeVisible({ timeout: 60_000 });
         await approve.click();
         await expect
           .poll(async () => (await runtimeState(page, sid)).cursor, { timeout: 30_000 })
@@ -116,8 +124,11 @@ async function driveTo(page: Page, sid: string, target: number) {
     }
   }
 
+  // The runtime is now at or past the target. The UI follows over SSE, which
+  // is a network hop behind against a deployed service, so it is given real
+  // time to catch up rather than being assumed instantaneous.
   await expect
-    .poll(() => cursor(page), { timeout: 60_000, message: `UI cursor >= ${target}` })
+    .poll(() => cursor(page), { timeout: 120_000, message: `UI cursor >= ${target}` })
     .toBeGreaterThanOrEqual(target);
 }
 
@@ -520,14 +531,21 @@ test.describe("Canonical event contract holds under exploration", () => {
 test.describe("Transport degradation", () => {
   test("slow API responses never produce a torn or premature state", async ({ page }) => {
     // Delay every runtime read so reads genuinely overlap committed events.
+    //
+    // The injected delay is ADDED to whatever the transport already costs.
+    // Against a deployed service that is real network time on every one of
+    // the many reads a replay makes, so the budget below is generous: what
+    // is being proven is that lag never tears the state, not how fast the
+    // replay runs under a handicap it will never actually meet.
+    const INJECTED_LAG_MS = 700;
     await page.route("**/api/v1/replay/sessions/**/projection", async (route) => {
-      await new Promise((r) => setTimeout(r, 700));
+      await new Promise((r) => setTimeout(r, INJECTED_LAG_MS));
       await route.continue();
     });
 
     await page.goto("/");
     await expect(page.locator('[data-testid="app-root"]')).toBeVisible();
-    await expect.poll(() => cursor(page), { timeout: 90_000 }).toBeGreaterThanOrEqual(6);
+    await expect.poll(() => cursor(page), { timeout: 180_000 }).toBeGreaterThanOrEqual(6);
 
     // Under lag the Incident view must still never assert a recall early.
     for (let i = 0; i < 15; i++) {
