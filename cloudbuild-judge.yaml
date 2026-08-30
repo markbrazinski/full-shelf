@@ -1,0 +1,25 @@
+# Build the judge-environment images: replicas of the orchestrator and ledger,
+# plus the judge gateway. Same source, different deployment configuration —
+# these are environment replicas, not new architectural responsibilities.
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build','--label','org.opencontainers.image.revision=${_GIT_SHA}',
+           '-t','us-central1-docker.pkg.dev/preflight-hackathon/full-shelf-repo/orchestrator:${_GIT_SHA}',
+           '-f','apps/orchestrator/Dockerfile','.']
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build','--label','org.opencontainers.image.revision=${_GIT_SHA}',
+           '-t','us-central1-docker.pkg.dev/preflight-hackathon/full-shelf-repo/plan-ledger:${_GIT_SHA}',
+           '-f','apps/plan-ledger/Dockerfile','.']
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build','--label','org.opencontainers.image.revision=${_GIT_SHA}',
+           '-t','us-central1-docker.pkg.dev/preflight-hackathon/full-shelf-repo/judge-web:${_GIT_SHA}',
+           '-f','apps/judge/Dockerfile','.']
+images:
+  - 'us-central1-docker.pkg.dev/preflight-hackathon/full-shelf-repo/orchestrator:${_GIT_SHA}'
+  - 'us-central1-docker.pkg.dev/preflight-hackathon/full-shelf-repo/plan-ledger:${_GIT_SHA}'
+  - 'us-central1-docker.pkg.dev/preflight-hackathon/full-shelf-repo/judge-web:${_GIT_SHA}'
+substitutions:
+  _GIT_SHA: 'UNBOUND'
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: 'E2_HIGHCPU_8'
