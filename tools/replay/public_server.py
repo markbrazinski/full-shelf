@@ -48,9 +48,15 @@ import session as runtime
 try:
     import google.auth.transport.requests as _google_requests
     import google.oauth2.id_token as _google_id_token
-except ImportError:  # pragma: no cover - exercised by the unauthenticated path
+except Exception as _auth_import_error:  # noqa: BLE001
+    # Report WHY rather than swallowing it. A missing dependency and a
+    # broken one look identical from the outside, and the fail-closed
+    # check below is far easier to act on when it names the cause.
     _google_requests = None
     _google_id_token = None
+    _AUTH_IMPORT_ERROR = _auth_import_error
+else:
+    _AUTH_IMPORT_ERROR = None
 
 # Cloud Run supplies PORT and requires the container to listen on it.
 PORT = int(os.getenv("PORT", "8080"))
@@ -88,7 +94,8 @@ AUTH_REQUIRED = bool(IDENTITY_PROJECT)
 
 if AUTH_REQUIRED and _google_id_token is None:
     raise RuntimeError(
-        "IDENTITY_PLATFORM_PROJECT_ID is set but google-auth is unavailable; "
+        "IDENTITY_PLATFORM_PROJECT_ID is set but google-auth is unavailable "
+        f"({type(_AUTH_IMPORT_ERROR).__name__}: {_AUTH_IMPORT_ERROR}); "
         "refusing to start unauthenticated"
     )
 
