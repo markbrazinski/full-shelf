@@ -42,10 +42,14 @@ RUN npm run build
 # ---- stage 2: runtime ------------------------------------------------
 FROM python:3.11-slim
 
-# The replay needs no third-party Python package: it is the standard
-# library plus the committed fixtures. Nothing to install means nothing
-# to audit and no supply-chain surface.
 WORKDIR /app
+
+# One dependency, and only for authentication: Google's own library
+# verifies the Identity Platform token's RS256 signature against Google's
+# published keys. The replay itself remains standard library plus the
+# committed fixtures.
+COPY tools/replay/requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
 
 COPY tools/replay/events.py       /app/events.py
 COPY tools/replay/session.py      /app/session.py

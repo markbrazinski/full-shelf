@@ -98,3 +98,16 @@ export function presenterModeEnabled(): boolean {
 export function judgeModeEnabled(): boolean {
   return import.meta.env.VITE_JUDGE_MODE === "1";
 }
+
+/**
+ * Judge authentication gate.
+ *
+ * Set at BUILD time by the deployment, so an ordinary development or
+ * filming build is unchanged and never asks for a password. When the
+ * key is present the app renders the sign-in screen until Identity
+ * Platform returns a token.
+ */
+export function judgeAuthApiKey(): string | undefined {
+  const k = import.meta.env.VITE_IDENTITY_PLATFORM_API_KEY?.trim();
+  return k ? k : undefined;
+}

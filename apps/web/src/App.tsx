@@ -28,10 +28,12 @@ import {
   debugReplayControlsEnabled,
   presenterModeEnabled,
   judgeModeEnabled,
+  judgeAuthApiKey,
 } from "./env";
 import { routesForBoundary } from "./data/contract/routeGeometry";
 import {
   GoldenRuntimeDataSource,
+  setJudgeIdToken,
   type AdvanceResult,
   type EventEnvelope,
 } from "./data/GoldenRuntimeDataSource";
@@ -46,6 +48,7 @@ import { ConnectionError } from "./components/ConnectionError";
 import { RepairProposal } from "./components/RepairProposal";
 import { EvidenceBranchPanel, type BranchKind } from "./components/EvidenceBranchPanel";
 import { FleetActivityRail, type ActivityRailEntry } from "./components/FleetActivityRail";
+import { JudgeLogin, type JudgeSession } from "./components/JudgeLogin";
 
 const MAPS_API_KEY = googleMapsApiKey();
 
@@ -152,6 +155,7 @@ const dwellFor = (cursor: number): number => DWELL_MS[cursor] ?? DWELL_DEFAULT_M
 const DEBUG_CONTROLS = debugReplayControlsEnabled();
 const PRESENTER = presenterModeEnabled();
 const JUDGE_MODE = judgeModeEnabled();
+const JUDGE_AUTH_KEY = judgeAuthApiKey();
 
 type View = "today" | "incident" | "history";
 type Day = "fri" | "sat";
@@ -159,7 +163,38 @@ type Day = "fri" | "sat";
 /** "…T10:13:00-07:00" → "10:13". Never re-derives a date. */
 const clockOf = (iso: string): string => /T(\d{2}:\d{2})/.exec(iso)?.[1] ?? iso;
 
+/**
+ * The authentication gate.
+ *
+ * A separate component wrapping `FullShelfApp`, rather than a branch
+ * inside it: the app below runs a long list of hooks, and mounting it
+ * only after sign-in keeps that hook order stable and stops it opening
+ * a replay session for a visitor who never authenticates.
+ *
+ * This is a convenience gate, not the security boundary. The server
+ * verifies the Identity Platform token on every protected request, so
+ * skipping this screen would not grant access to anything.
+ */
 export default function App() {
+  const [session, setSession] = useState<JudgeSession | null>(null);
+
+  if (JUDGE_AUTH_KEY && !session) {
+    return (
+      <JudgeLogin
+        apiKey={JUDGE_AUTH_KEY}
+        onAuthenticated={(s) => {
+          // Publish the token BEFORE the app mounts, so its very first
+          // request already carries it and cannot be refused.
+          setJudgeIdToken(s.idToken);
+          setSession(s);
+        }}
+      />
+    );
+  }
+  return <FullShelfApp />;
+}
+
+function FullShelfApp() {
   const [view, setView] = useState<View>("today");
   const [day, setDay] = useState<Day>("fri");
   // A pinned stage DISPLAYS a completed stage. It never moves the cursor.

@@ -1,0 +1,4 @@
+# Token verification only. Google's own library checks the RS256 signature
+# against Google's published keys — a hand-rolled JWT verifier is exactly
+# the wrong place to save a dependency.
+google-auth>=2.40.0

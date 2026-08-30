@@ -41,6 +41,17 @@ from urllib.parse import urlparse
 import events
 import session as runtime
 
+# Authentication is optional at import time so the module still runs in a
+# local, unauthenticated development shell. It is REQUIRED whenever the
+# deployment configures a judge project, and the server refuses to start
+# authenticated without it rather than silently serving unprotected.
+try:
+    import google.auth.transport.requests as _google_requests
+    import google.oauth2.id_token as _google_id_token
+except ImportError:  # pragma: no cover - exercised by the unauthenticated path
+    _google_requests = None
+    _google_id_token = None
+
 # Cloud Run supplies PORT and requires the container to listen on it.
 PORT = int(os.getenv("PORT", "8080"))
 # Cloud Run terminates TLS and forwards to the container, so the listener
@@ -57,6 +68,69 @@ JUDGE_MODE = os.getenv("FULL_SHELF_JUDGE_MODE", "1") == "1"
 
 # Same-origin: the frontend and the replay API are served by this one
 # process, so no cross-origin grant is needed or given.
+# ---------------------------------------------------------------------------
+# Judge authentication
+#
+# Set IDENTITY_PLATFORM_PROJECT_ID to require a signed-in judge. Unset, the
+# server behaves exactly as it always has, so local development and the
+# Playwright suite are unaffected.
+#
+# The login SCREEN is a convenience. THIS is the boundary: every replay API
+# call is checked here, so a visitor who skips the UI still cannot read or
+# drive a replay.
+# ---------------------------------------------------------------------------
+IDENTITY_PROJECT = os.getenv("IDENTITY_PLATFORM_PROJECT_ID", "").strip()
+IDENTITY_ISSUER = f"https://securetoken.google.com/{IDENTITY_PROJECT}"
+ALLOWED_JUDGE_SUBJECTS = frozenset(
+    v.strip() for v in os.getenv("ALLOWED_JUDGE_SUBJECTS", "").split(",") if v.strip()
+)
+AUTH_REQUIRED = bool(IDENTITY_PROJECT)
+
+if AUTH_REQUIRED and _google_id_token is None:
+    raise RuntimeError(
+        "IDENTITY_PLATFORM_PROJECT_ID is set but google-auth is unavailable; "
+        "refusing to start unauthenticated"
+    )
+
+
+class AuthError(Exception):
+    def __init__(self, code):
+        super().__init__(code)
+        self.code = code
+
+
+def verify_judge_token(authorization):
+    """Verify one Identity Platform ID token, or raise.
+
+    Google's library checks the RS256 signature against Google's published
+    keys and enforces the audience. Issuer and the subject allowlist are
+    checked here. No token is logged, echoed, or stored.
+    """
+    if not AUTH_REQUIRED:
+        return None
+    if not authorization:
+        raise AuthError("JUDGE_SIGN_IN_REQUIRED")
+    parts = authorization.split(None, 1)
+    if len(parts) != 2 or parts[0].lower() != "bearer" or not parts[1]:
+        raise AuthError("JUDGE_SIGN_IN_REQUIRED")
+
+    try:
+        claims = _google_id_token.verify_firebase_token(
+            parts[1], _google_requests.Request(), audience=IDENTITY_PROJECT
+        )
+    except Exception as exc:  # noqa: BLE001 - any failure is a refusal
+        raise AuthError("JUDGE_TOKEN_INVALID") from exc
+
+    if not claims or claims.get("iss") != IDENTITY_ISSUER:
+        raise AuthError("JUDGE_TOKEN_INVALID")
+    subject = claims.get("user_id") or claims.get("sub")
+    if not subject:
+        raise AuthError("JUDGE_TOKEN_INVALID")
+    if ALLOWED_JUDGE_SUBJECTS and subject not in ALLOWED_JUDGE_SUBJECTS:
+        raise AuthError("JUDGE_NOT_ALLOWED")
+    return subject
+
+
 STORE = runtime.SessionStore()
 
 
@@ -241,8 +315,14 @@ class PublicHandler(BaseHTTPRequestHandler):
                     "scenario_id": events.SCENARIO_ID,
                 })
             if parts and parts[0] == "api":
+                # The static bundle and readiness stay open so the login
+                # page can load at all; everything that reads or drives a
+                # replay is gated here, not in the UI.
+                verify_judge_token(self.headers.get("Authorization"))
                 return self._route_api_get(parts)
             return self._serve_static(parts)
+        except AuthError as exc:
+            self._json(401, {"detail": exc.code})
         except runtime.ReplayError as exc:
             self._json(exc.status, exc.body())
         except (BrokenPipeError, ConnectionResetError):
@@ -252,7 +332,10 @@ class PublicHandler(BaseHTTPRequestHandler):
         self._raw_body = None
         try:
             self._drain()
+            verify_judge_token(self.headers.get("Authorization"))
             self._route_api_post(self._segments())
+        except AuthError as exc:
+            self._json(401, {"detail": exc.code})
         except runtime.ReplayError as exc:
             self._json(exc.status, exc.body())
         except (BrokenPipeError, ConnectionResetError):
@@ -262,11 +345,14 @@ class PublicHandler(BaseHTTPRequestHandler):
         self._raw_body = None
         try:
             self._drain()
+            verify_judge_token(self.headers.get("Authorization"))
             parts = self._segments()
             if (len(parts) == 6 and parts[:4] == ["api", "v1", "replay", "sessions"]
                     and parts[5] == "branch"):
                 return self._json(200, _session(parts[4]).exit_branch())
             return self._json(404, {"detail": "NOT_A_RUNTIME_ROUTE"})
+        except AuthError as exc:
+            self._json(401, {"detail": exc.code})
         except runtime.ReplayError as exc:
             self._json(exc.status, exc.body())
 

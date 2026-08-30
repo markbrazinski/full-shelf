@@ -96,6 +96,24 @@ function recoverLostSession(): void {
   location.reload();
 }
 
+/**
+ * The signed-in judge's ID token, attached to every replay API call.
+ *
+ * Held in a module variable rather than storage: it lives for the tab's
+ * lifetime only, so a shared browser does not stay signed in. The server
+ * verifies it on every request, so this is delivery, not enforcement.
+ */
+let judgeIdToken: string | null = null;
+
+export function setJudgeIdToken(token: string | null): void {
+  judgeIdToken = token;
+}
+
+/** Authorization header for the replay API, when a judge is signed in. */
+function authHeaders(base: Record<string, string> = {}): Record<string, string> {
+  return judgeIdToken ? { ...base, Authorization: `Bearer ${judgeIdToken}` } : base;
+}
+
 export class GoldenRuntimeDataSource {
   private config: GoldenRuntimeConfig;
 
@@ -106,7 +124,7 @@ export class GoldenRuntimeDataSource {
   async createSession(): Promise<SessionSnapshot> {
     const res = await fetch(`${this.config.baseUrl}/api/v1/replay/sessions`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ tenant_id: "test" }),
     });
     if (!res.ok) throw new Error(`Failed to create session: ${res.status}`);
@@ -115,7 +133,8 @@ export class GoldenRuntimeDataSource {
 
   async getProjection(sessionId: string, observedCursor?: number): Promise<FullShelfProjection> {
     const res = await fetch(
-      `${this.config.baseUrl}/api/v1/replay/sessions/${sessionId}/projection`
+      `${this.config.baseUrl}/api/v1/replay/sessions/${sessionId}/projection`,
+      { headers: authHeaders() }
     );
     // The serving instance no longer holds this session. Start a clean one
     // rather than stranding the judge on a connection error.
@@ -133,7 +152,8 @@ export class GoldenRuntimeDataSource {
     approved: boolean;
     branch: string | null;
   }> {
-    const res = await fetch(`${this.config.baseUrl}/api/v1/replay/sessions/${sessionId}`);
+    const res = await fetch(`${this.config.baseUrl}/api/v1/replay/sessions/${sessionId}`,
+      { headers: authHeaders() });
     if (!res.ok) throw new Error(`Failed to get state: ${res.status}`);
     return await res.json();
   }
@@ -159,9 +179,9 @@ export class GoldenRuntimeDataSource {
       // `Last-Event-ID` handling already supports.
       for (let attempt = 0; !aborted; attempt++) {
         try {
-          const headers: Record<string, string> = {
+          const headers: Record<string, string> = authHeaders({
             Accept: "text/event-stream",
-          };
+          });
           if (resumeFrom) {
             headers["Last-Event-ID"] = resumeFrom;
           }
@@ -236,7 +256,7 @@ export class GoldenRuntimeDataSource {
       `${this.config.baseUrl}/api/v1/replay/sessions/${sessionId}/start`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ interval_ms: intervalMs }),
       }
     );
@@ -246,7 +266,7 @@ export class GoldenRuntimeDataSource {
   async pause(sessionId: string): Promise<void> {
     const res = await fetch(
       `${this.config.baseUrl}/api/v1/replay/sessions/${sessionId}/pause`,
-      { method: "POST" }
+      { method: "POST", headers: authHeaders() }
     );
     if (!res.ok) throw new Error(`Failed to pause: ${res.status}`);
   }
@@ -254,7 +274,7 @@ export class GoldenRuntimeDataSource {
   async advance(sessionId: string): Promise<AdvanceResult> {
     const res = await fetch(
       `${this.config.baseUrl}/api/v1/replay/sessions/${sessionId}/advance`,
-      { method: "POST" }
+      { method: "POST", headers: authHeaders() }
     );
 
     if (res.ok) {
@@ -291,7 +311,7 @@ export class GoldenRuntimeDataSource {
       `${this.config.baseUrl}/api/v1/replay/sessions/${sessionId}/approve`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify(binding),
       }
     );
@@ -314,7 +334,7 @@ export class GoldenRuntimeDataSource {
       `${this.config.baseUrl}/api/v1/replay/sessions/${sessionId}/branch`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ proof: proofType }),
       }
     );
@@ -329,7 +349,7 @@ export class GoldenRuntimeDataSource {
   async exitBranch(sessionId: string): Promise<void> {
     const res = await fetch(
       `${this.config.baseUrl}/api/v1/replay/sessions/${sessionId}/branch`,
-      { method: "DELETE" }
+      { method: "DELETE", headers: authHeaders() }
     );
     if (!res.ok) throw new Error(`Failed to exit branch: ${res.status}`);
   }
@@ -337,7 +357,7 @@ export class GoldenRuntimeDataSource {
   async reset(sessionId: string): Promise<SessionSnapshot> {
     const res = await fetch(
       `${this.config.baseUrl}/api/v1/replay/sessions/${sessionId}/reset`,
-      { method: "POST" }
+      { method: "POST", headers: authHeaders() }
     );
     if (!res.ok) throw new Error(`Failed to reset: ${res.status}`);
     return await res.json();
