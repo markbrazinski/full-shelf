@@ -109,7 +109,7 @@ Ctrl-C in each shell. Nothing persists: replay sessions are in-memory and reach 
 
 - **Google Cloud Spanner 3.40+** — authoritative relational operational state. The only store that may hold plan, custody, and receipt truth.
 - **Spanner Graph (GQL)** — custody traversal over that *same* authoritative state, not a second store. Produces the `96` current-position reconciliation.
-- **Google ADK 2.6.1 over Gemini** — advisory agent reasoning: reads state, extracts recall scope, proposes a repair. Structurally incapable of mutating authoritative state.
+- **Google ADK 2.6.3 over Gemini** — advisory agent reasoning: reads state, extracts recall scope, proposes a repair. Structurally incapable of mutating authoritative state.
 - **Model Armor** — managed untrusted-input boundary on the regulatory notice before any agent reads it. A screening pass is not factual sufficiency, and the UI says so.
 - **Cloud KMS 3.0+** — signs and verifies the approval envelope binding the exact plan diff. Any altered bound value invalidates approval.
 - **FastAPI + Uvicorn on Cloud Run** — two services only: `full-shelf-orchestrator` (read-only, advisory) and `full-shelf-plan-ledger` (deterministic, the sole mutator).

@@ -1,7 +1,7 @@
 """Unmocked-ADK runtime qualification for the five-agent fleet.
 
 Every test here runs the REAL ADK Runner, session service, agent classes, tool
-dispatch, and event loop under google-adk 2.6.1. Only the Gemini network call is
+dispatch, and event loop under google-adk 2.6.3. Only the Gemini network call is
 scripted. These directly answer independent-audit findings 1, 2, 3, 6, 7, and 8.
 """
 
@@ -47,7 +47,7 @@ def test_adk_version_is_the_pinned_deployable_version():
     """Finding 7: acceptance must run under exactly the pinned ADK."""
     from importlib.metadata import version
 
-    assert version("google-adk") == "2.6.1"
+    assert version("google-adk") == "2.6.3"
 
 
 # --- Finding 1 & 2: genuine coordinator ownership ---------------------------

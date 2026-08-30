@@ -261,7 +261,7 @@ def build_partner_evidence_agent():
 
 
 async def run_partner_evidence_agent(prompt: str) -> tuple[PartnerCustodyProposal, dict[str, Any]]:
-    """Run the real ADK 2.6.1 Runner and retain only identifiers it emits."""
+    """Run the real ADK 2.6.3 Runner and retain only identifiers it emits."""
 
     from google.adk.runners import Runner
     from google.adk.sessions import InMemorySessionService

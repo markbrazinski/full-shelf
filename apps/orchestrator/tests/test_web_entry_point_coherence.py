@@ -61,4 +61,8 @@ def test_the_prohibited_browser_to_ledger_client_is_not_restored():
 def test_environment_contract_still_points_only_at_the_orchestrator():
     env = (WEB / "src" / "env.ts").read_text()
     assert "ORCHESTRATOR_URL" in env
-    assert "127.0.0.1:8787" in env  # loopback replay harness only
+    # The replay harness must stay a LOOPBACK address. The port moved 8787 ->
+    # 8788 when the golden runtime controller replaced the beat selector, so
+    # the guard asserts the property that matters — the only non-orchestrator
+    # endpoint the frontend knows is loopback — rather than one literal port.
+    assert "127.0.0.1:" in env

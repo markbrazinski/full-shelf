@@ -160,5 +160,5 @@ async def test_real_adk_runner_persists_only_emitted_identifiers():
     assert evidence["adk_session_id"]
     assert evidence["adk_invocation_id"]
     assert evidence["adk_event_id"]
-    assert evidence["adk_framework"] == "google-adk/2.6.1"
+    assert evidence["adk_framework"] == "google-adk/2.6.3"
     assert not any("run_id" in key for key in evidence)

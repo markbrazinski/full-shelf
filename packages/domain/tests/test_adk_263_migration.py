@@ -1,6 +1,6 @@
-"""Migration regressions for the google-adk 2.6.1 dependency decision.
+"""Migration regressions for the google-adk 2.6.3 dependency decision.
 
-Every test here runs the REAL ADK 2.6.1 Runner, session service, agent classes,
+Every test here runs the REAL ADK 2.6.3 Runner, session service, agent classes,
 tool dispatch, and event loop. Only the Gemini network call is scripted. These
 prove the migration preserved behavior rather than merely changing a pin.
 """
@@ -35,7 +35,7 @@ from full_shelf_domain.fleet.coordinator import (  # noqa: E402
     build_incident_coordinator_agent,
 )
 
-PINNED = "2.6.1"
+PINNED = "2.6.3"
 
 
 # --- Installed and runtime version ------------------------------------------
@@ -64,7 +64,7 @@ def test_every_deployable_declaration_pins_the_same_version():
         assert f"google-adk=={PINNED}" in text, path
         # Superseded pins, assembled rather than written literally so the
         # audit's forbidden-string search stays clean while the guard holds.
-        for stale in (".".join(["1", "14", "1"]), ".".join(["2", "6", "3"])):
+        for stale in (".".join(["1", "14", "1"]), ".".join(["2", "6", "1"])):
             assert f"google-adk=={stale}" not in text, (path, stale)
 
 
@@ -146,7 +146,7 @@ def test_successful_executions_retain_distinct_truthful_identifiers():
 
 
 def test_caller_supplied_invocation_id_governs_runtime_events():
-    """2.6.1 honors run_async(invocation_id=...), which is how failed hops keep IDs."""
+    """2.6.3 honors run_async(invocation_id=...), which is how failed hops keep IDs."""
     with scripted_gemini():
         proposal = run_canonical_fleet()["proposal"]
     for entry in proposal.delegation_trace:

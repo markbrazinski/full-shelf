@@ -27,7 +27,7 @@ not used for implementation and was not modified.
   approved field and forbids extras. `RECORD_ACKNOWLEDGMENT_HOLD` creates the
   open typed work item transactionally and derives its ID once at creation.
 - `STRUCTURALLY_VERIFIED` — the Partner Operations task uses the existing
-  `full-shelf.partner-operations.v1` identity, a real ADK 2.6.1 `Runner`, a real
+  `full-shelf.partner-operations.v1` identity, a real ADK 2.6.3 `Runner`, a real
   `InMemorySessionService`, and a strict proposal schema. Tests stub the model
   response below the Runner while exercising session creation and the event
   loop. Only emitted session, invocation, and final-event identifiers persist;

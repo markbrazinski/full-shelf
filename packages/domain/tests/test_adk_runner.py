@@ -44,7 +44,7 @@ def test_recall_extraction_runs_as_a_real_adk_agent_ordered_by_the_coordinator()
     assert recall_hop["specialist_run_id"]
     assert recall_hop["specialist_session_id"]
     assert recall_hop["model_used"] == "gemini-3.5-flash"
-    assert recall_hop["adk_framework"] == "google-adk/2.6.1"
+    assert recall_hop["adk_framework"] == "google-adk/2.6.3"
 
 
 @pytest.mark.parametrize("text", [

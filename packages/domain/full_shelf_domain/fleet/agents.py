@@ -298,7 +298,7 @@ async def collect_specialist_output(
     # session ID recorded here is that specialist's real session, never the
     # coordinator's, so evidence cannot imply a shared or nested invocation.
     # Both identifiers exist BEFORE the model is contacted. The session is
-    # created here; the run ID is chosen here and handed to ADK 2.6.1 via
+    # created here; the run ID is chosen here and handed to ADK 2.6.3 via
     # `run_async(invocation_id=...)`, which is authoritative for every event the
     # run emits. A failure at any later point - including on the very first turn
     # - therefore reports the real, non-null identifiers of the execution that

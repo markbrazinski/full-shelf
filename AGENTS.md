@@ -35,8 +35,19 @@ never resolve them silently.
 
 ## Locked architecture
 
-- There are exactly two Cloud Run services: `full-shelf-orchestrator` and
-  `full-shelf-plan-ledger`. A third service requires a formal change request.
+- There are exactly two AUTHORITATIVE Cloud Run services:
+  `full-shelf-orchestrator` and `full-shelf-plan-ledger`. A further
+  authoritative service requires a formal change request.
+- AMENDMENT CR-001 (approved 2026-08-30). A third, non-authoritative service,
+  `full-shelf-judge`, serves the authenticated judge experience. Its scope is
+  closed: serve the judge frontend, integrate Cloud Identity Platform, verify
+  the judge's Identity Platform token, own the judge session/lease, call the
+  private orchestrator with its own service identity, and emit the structured
+  login event. It may NOT contain agent logic, mutate Spanner directly, call
+  the plan ledger directly, weaken authentication on either authoritative
+  service, or become another source of operational truth. It is not evidence
+  of managed-path behavior, and judge activity is confined to the isolated
+  `full-shelf-judge` database — never canonical `full-shelf-main`.
 - Spanner is authoritative. Spanner Graph traverses the same authoritative
   Spanner state; it is not a second store.
 - The orchestrator, ADK agents, and model reasoning are read-only and advisory.

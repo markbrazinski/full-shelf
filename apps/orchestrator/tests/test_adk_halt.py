@@ -40,7 +40,7 @@ def successful_extraction(correlation_id):
         "source_anchor": "Supplier Safety Bulletin SB-8842",
         "model_used": "gemini-3.5-flash",
         "vertex_location": "global",
-        "adk_framework": "google-adk/2.6.1",
+        "adk_framework": "google-adk/2.6.3",
         "adk_session_backend": "InMemorySessionService",
         "adk_session_id": "session-success",
         "adk_run_id": "run-success",
