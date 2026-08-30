@@ -15,11 +15,13 @@ from full_shelf_domain.kms import (
 from full_shelf_domain.identity import (
     GoogleOidcVerifier,
     IdentityConfigurationError,
+    IdentityPlatformOperatorVerifier,
     InvalidIdentityToken,
     MissingIdentityToken,
     UnauthorizedIdentity,
     VerifiedGoogleIdentity,
 )
+from full_shelf_domain.judge_isolation import assert_judge_isolation
 from full_shelf_domain.authority import (
     AuthorityConfigurationError,
     AuthorityScopeResolver,
@@ -49,6 +51,12 @@ tracer = get_tracer("plan-ledger")
 def startup_checks():
     """Reject an ambiguous canonical/audit authority mapping at startup."""
     AuthorityScopeResolver.from_environment()
+    # CR-002: a judge deployment pointed at canonical state must never become
+    # healthy, so Cloud Run never routes traffic to it. No-op on canonical.
+    assert_judge_isolation()
+    # An unknown identity mode must fail here rather than at the first
+    # approval, and the mode's verifier must be constructible.
+    _human_operator_verifier()
 
 
 @app.middleware("http")
@@ -146,13 +154,41 @@ class HumanRepairPlanDiff(BaseModel):
 HumanApprovalRequest.model_rebuild()
 
 
+# Which human identity this DEPLOYMENT accepts as the operator. The modes are
+# mutually exclusive by construction: exactly one verifier is built, so a
+# deployment can never accept both a canonical Google operator and an isolated
+# judge operator. Unset means the canonical Google OAuth mode, so the canonical
+# ledger keeps its existing behavior without being reconfigured.
+OPERATOR_IDENTITY_MODE = os.getenv("OPERATOR_IDENTITY_MODE", "google-oauth").strip()
+
+
+def _human_operator_verifier():
+    """Build the one verifier this deployment's identity mode permits."""
+    if OPERATOR_IDENTITY_MODE == "identity-platform":
+        # CR-002: the isolated judge environment only. Judges arrive from
+        # unfamiliar locations at unpredictable times, where a conventional
+        # Google account's security challenges would make the demonstration
+        # unreliable, so a dedicated Identity Platform account is the operator
+        # there. It is verified independently here — this ledger does not
+        # trust the gateway's word for it.
+        return IdentityPlatformOperatorVerifier(
+            project_id=os.getenv("IDENTITY_PLATFORM_PROJECT_ID", ""),
+            allowed_subjects={os.getenv("ALLOWED_OPERATOR_SUBJECT", "")},
+        )
+    if OPERATOR_IDENTITY_MODE != "google-oauth":
+        raise IdentityConfigurationError(
+            f"Unknown OPERATOR_IDENTITY_MODE: {OPERATOR_IDENTITY_MODE}"
+        )
+    return GoogleOidcVerifier(
+        audience=os.getenv("OPERATOR_OAUTH_CLIENT_ID", ""),
+        allowed_subjects={os.getenv("ALLOWED_OPERATOR_SUBJECT", "")},
+        allowed_emails={os.getenv("ALLOWED_OPERATOR_EMAIL", "")},
+    )
+
+
 def verify_human_operator(token: Optional[str]) -> VerifiedGoogleIdentity:
     try:
-        return GoogleOidcVerifier(
-            audience=os.getenv("OPERATOR_OAUTH_CLIENT_ID", ""),
-            allowed_subjects={os.getenv("ALLOWED_OPERATOR_SUBJECT", "")},
-            allowed_emails={os.getenv("ALLOWED_OPERATOR_EMAIL", "")},
-        ).verify_authorization(token)
+        return _human_operator_verifier().verify_authorization(token)
     except IdentityConfigurationError as exc:
         raise HTTPException(503, "OPERATOR_IDENTITY_BOUNDARY_NOT_CONFIGURED") from exc
     except MissingIdentityToken as exc:

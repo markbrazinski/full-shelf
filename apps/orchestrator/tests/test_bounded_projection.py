@@ -959,8 +959,30 @@ def test_v2_handler_matches_committed_replay_fixture(name, as_of, next_day):
 
     Reclassification is applied through the generator's own function, so this
     proves fixture parity rather than re-implementing the generation rule.
+
+    The committed fixtures are HISTORICAL EVIDENCE and are never regenerated to
+    match a changed handler. They were produced with the canonical partner
+    reply present — it lands at 10:11 and is what the closure refusal is
+    explained by — so parity has to feed the handler the same input. Boundaries
+    at or after 10:11 therefore supply that row; earlier ones must not, because
+    the evidence had not arrived yet.
     """
-    live = _reclassify(project(as_of, include_next_day=next_day).json())
+    reply_has_landed = as_of is not None and as_of >= T(10, 11)
+    database = _database(
+        partner_evidence_rows=(CANONICAL_PARTNER_REPLY_ROW,)
+        if reply_has_landed else (),
+        # Its DENIED receipt is part of the same historical record: the reply
+        # was processed and refused, applying zero domain mutations and one
+        # evidence mutation.
+        receipts=(
+            ALL_RECEIPTS + [partner_receipt(
+                "fixture-partner-canonical-vague", T(10, 11), "DENIED", 0)]
+            if reply_has_landed else ALL_RECEIPTS
+        ),
+    )
+    live = _reclassify(
+        project(as_of, include_next_day=next_day, db=database).json()
+    )
     stored = _json.loads((REPLAY_FIXTURES / f"{name}.json").read_text())
     stored.pop("replay_notice", None)
     assert live == stored

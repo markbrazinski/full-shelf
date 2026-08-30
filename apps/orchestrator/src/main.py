@@ -28,6 +28,8 @@ from full_shelf_domain.identity import (
     MissingIdentityToken, UnauthorizedIdentity, VerifiedGoogleIdentity,
     fetch_google_id_token,
 )
+from full_shelf_domain.identity import IdentityPlatformOperatorVerifier
+from full_shelf_domain.judge_isolation import assert_judge_isolation
 from full_shelf_domain.authority import (
     AuthorityConfigurationError,
     AuthorityScopeResolver,
@@ -426,13 +428,34 @@ class SiteEscalationRequest(BaseModel):
     unconfirmed_cases: int = Field(gt=0)
 
 
+# CR-002: which human identity THIS deployment accepts as the operator.
+# Exactly one verifier is built, so a deployment can never accept both a
+# canonical Google operator and an isolated judge operator. Unset means the
+# canonical Google OAuth mode, leaving the canonical deployment unchanged.
+OPERATOR_IDENTITY_MODE = os.getenv("OPERATOR_IDENTITY_MODE", "google-oauth").strip()
+
+
+def _operator_verifier():
+    """Build the one verifier this deployment's identity mode permits."""
+    if OPERATOR_IDENTITY_MODE == "identity-platform":
+        return IdentityPlatformOperatorVerifier(
+            project_id=os.getenv("IDENTITY_PLATFORM_PROJECT_ID", ""),
+            allowed_subjects={os.getenv("ALLOWED_OPERATOR_SUBJECT", "")},
+        )
+    if OPERATOR_IDENTITY_MODE != "google-oauth":
+        raise IdentityConfigurationError(
+            f"Unknown OPERATOR_IDENTITY_MODE: {OPERATOR_IDENTITY_MODE}"
+        )
+    return GoogleOidcVerifier(
+        audience=os.getenv("OPERATOR_OAUTH_CLIENT_ID", ""),
+        allowed_subjects={os.getenv("ALLOWED_OPERATOR_SUBJECT", "")},
+        allowed_emails={os.getenv("ALLOWED_OPERATOR_EMAIL", "")},
+    )
+
+
 def _verify_operator(authorization: Optional[str]):
     try:
-        return GoogleOidcVerifier(
-            audience=os.getenv("OPERATOR_OAUTH_CLIENT_ID", ""),
-            allowed_subjects={os.getenv("ALLOWED_OPERATOR_SUBJECT", "")},
-            allowed_emails={os.getenv("ALLOWED_OPERATOR_EMAIL", "")},
-        ).verify_authorization(authorization)
+        return _operator_verifier().verify_authorization(authorization)
     except IdentityConfigurationError as exc:
         raise HTTPException(503, "OPERATOR_IDENTITY_BOUNDARY_NOT_CONFIGURED") from exc
     except MissingIdentityToken as exc:
@@ -824,6 +847,9 @@ def require_internal_workload(
 
 @app.on_event("startup")
 def startup_checks():
+    # CR-002: a judge deployment pointed at canonical state must never become
+    # healthy. No-op on the canonical deployment.
+    assert_judge_isolation()
     """Reject an ineligible configured model without triggering a paid health call."""
     if not PLAN_LEDGER_URL or not PLAN_LEDGER_AUDIENCE:
         raise RuntimeError("PLAN_LEDGER_URL and PLAN_LEDGER_AUDIENCE must be configured")
@@ -832,11 +858,7 @@ def startup_checks():
         raise RuntimeError("Managed callback OIDC configuration must be complete")
     # Construct every boundary at startup so a public platform ingress can never
     # become healthy with a missing application identity configuration.
-    GoogleOidcVerifier(
-        audience=os.getenv("OPERATOR_OAUTH_CLIENT_ID", ""),
-        allowed_subjects={os.getenv("ALLOWED_OPERATOR_SUBJECT", "")},
-        allowed_emails={os.getenv("ALLOWED_OPERATOR_EMAIL", "")},
-    )
+    _operator_verifier()
     GoogleOidcVerifier(
         audience=MANAGED_CALLBACK_AUDIENCE,
         allowed_subjects={MANAGED_CALLBACK_SERVICE_ACCOUNT_SUBJECT},
