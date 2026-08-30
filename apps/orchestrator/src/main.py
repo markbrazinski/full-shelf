@@ -468,8 +468,16 @@ def _verify_operator(authorization: Optional[str]):
 
 def require_human_operator(
     authorization: Optional[str] = Header(None),
+    operator_authorization: Optional[str] = Header(
+        None, alias="X-Full-Shelf-Operator-Authorization"
+    ),
 ) -> VerifiedGoogleIdentity:
-    return _verify_operator(authorization)
+    """Verify the human operator, from either delivery lane.
+
+    Both are verified identically. See `require_frontend_authority` for
+    why a forwarded lane exists at all.
+    """
+    return _verify_operator(operator_authorization or authorization)
 
 
 def _verify_managed_callback(authorization: Optional[str]):
@@ -587,15 +595,31 @@ def _verify_internal_workload(authorization: Optional[str]):
 
 def require_frontend_authority(
     authorization: Optional[str] = Header(None),
+    operator_authorization: Optional[str] = Header(
+        None, alias="X-Full-Shelf-Operator-Authorization"
+    ),
 ) -> tuple[VerifiedGoogleIdentity, Any, str]:
-    """Derive the sole frontend tenant/day from verified identity and config."""
+    """Derive the sole frontend tenant/day from verified identity and config.
+
+    The operator token may arrive in either of two places, and BOTH are
+    verified identically — the header is a delivery detail, never a
+    weaker path:
+
+      * `Authorization`, when an operator calls this service directly;
+      * `X-Full-Shelf-Operator-Authorization`, when the call arrives
+        through the judge gateway. Cloud Run claims `Authorization` for
+        its own invoker check on a private service, so the human token
+        cannot ride there and needs a lane of its own. This is the same
+        header the orchestrator already uses to carry the original human
+        token on to the ledger, so one convention covers both hops.
+    """
     tenant_id = os.getenv("FRONTEND_AUTHORITY_TENANT_ID", "").strip()
     operating_day = os.getenv("FRONTEND_AUTHORITY_OPERATING_DAY", "").strip()
     if not tenant_id or not operating_day:
         raise HTTPException(503, "FRONTEND_AUTHORITY_SCOPE_NOT_CONFIGURED")
     try:
         datetime.fromisoformat(operating_day)
-        identity = _verify_operator(authorization)
+        identity = _verify_operator(operator_authorization or authorization)
         return identity, _resolve_authority_scope(tenant_id), operating_day
     except ValueError as exc:
         raise HTTPException(503, "FRONTEND_OPERATING_DAY_INVALID") from exc
@@ -605,9 +629,18 @@ def require_frontend_authority(
 def approve_and_activate(
     proposal: HumanApprovalProposal,
     authorization: Optional[str] = Header(None),
+    operator_authorization: Optional[str] = Header(
+        None, alias="X-Full-Shelf-Operator-Authorization"
+    ),
     operator: VerifiedGoogleIdentity = Depends(require_human_operator),
 ):
-    """Validate the human token, then preserve it for independent ledger verification."""
+    """Validate the human token, then preserve it for independent ledger verification.
+
+    The ORIGINAL token is forwarded, never a token minted here on the
+    operator's behalf: the ledger must verify the human identity itself
+    before KMS signing, and a re-minted workload token would prove only
+    that this service asked.
+    """
     _resolve_authority_scope(proposal.tenant_id)
     if proposal.source_revision != "rev07" or proposal.proposed_revision != "rev08":
         raise HTTPException(409, "CANONICAL_REVISION_TRANSITION_REQUIRED")
@@ -615,7 +648,7 @@ def approve_and_activate(
         "/api/v1/approvals/approve-and-activate",
         payload=proposal.model_dump(),
         trace_id=generate_trace_id(),
-        operator_authorization=authorization,
+        operator_authorization=operator_authorization or authorization,
     )
     result = response.json()
     result["verified_operator_subject"] = operator.subject
