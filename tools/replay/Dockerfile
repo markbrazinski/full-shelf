@@ -36,6 +36,11 @@ ENV VITE_DATA_SOURCE=deterministic_replay \
 # built in, and without one the map degrades to the truthful schematic.
 ARG VITE_GOOGLE_MAPS_API_KEY=""
 ENV VITE_GOOGLE_MAPS_API_KEY=$VITE_GOOGLE_MAPS_API_KEY
+# Identity Platform browser key. Public by design — it identifies the
+# project for sign-in and grants nothing on its own; the account allowlist
+# and server-side token verification are what protect the demonstration.
+ARG VITE_IDENTITY_PLATFORM_API_KEY=""
+ENV VITE_IDENTITY_PLATFORM_API_KEY=$VITE_IDENTITY_PLATFORM_API_KEY
 RUN npm run build
 
 

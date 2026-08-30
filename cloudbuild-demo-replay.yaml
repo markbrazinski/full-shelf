@@ -16,6 +16,8 @@ steps:
       - 'org.opencontainers.image.revision=${_GIT_SHA}'
       - '--build-arg'
       - 'VITE_GOOGLE_MAPS_API_KEY=${_MAPS_KEY}'
+      - '--build-arg'
+      - 'VITE_IDENTITY_PLATFORM_API_KEY=${_IDP_KEY}'
       - '-t'
       - 'us-central1-docker.pkg.dev/preflight-hackathon/full-shelf-repo/demo-replay:${_GIT_SHA}'
       - '-f'
@@ -30,6 +32,9 @@ substitutions:
   # Restricted browser key. Empty by default so a build without it still
   # produces a working page on the truthful schematic.
   _MAPS_KEY: ''
+  # Identity Platform browser key. Empty leaves the build unauthenticated,
+  # which is correct for local and CI use.
+  _IDP_KEY: ''
 
 options:
   logging: CLOUD_LOGGING_ONLY
