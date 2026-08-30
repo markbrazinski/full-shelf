@@ -55,10 +55,30 @@ interface GoldenRuntimeConfig {
   baseUrl: string;
 }
 
+/**
+ * Where the replay API lives.
+ *
+ * In the deployed judge build the frontend and the replay API are served
+ * by one container, so the API is same-origin and the base URL is empty —
+ * requests go to `/api/v1/replay/...` on whatever host served the page.
+ * That is also what keeps the deployment free of any CORS grant.
+ *
+ * Local development is unchanged: Vite serves the page on 5173 while the
+ * runtime controller listens on 8788, two different origins, so the
+ * explicit loopback default still applies there.
+ */
+export function defaultRuntimeBaseUrl(): string {
+  const configured = import.meta.env.VITE_REPLAY_API_BASE?.trim();
+  if (configured !== undefined && configured !== "") {
+    return configured === "same-origin" ? "" : configured;
+  }
+  return "http://127.0.0.1:8788";
+}
+
 export class GoldenRuntimeDataSource {
   private config: GoldenRuntimeConfig;
 
-  constructor(baseUrl = "http://127.0.0.1:8788") {
+  constructor(baseUrl = defaultRuntimeBaseUrl()) {
     this.config = { baseUrl };
   }
 

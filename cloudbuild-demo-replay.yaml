@@ -1,0 +1,30 @@
+# =====================================================================
+# Build the public deterministic replay image.
+#
+# Builds only. Deployment is a separate, explicit `gcloud run deploy`
+# against the resulting digest, so a build can never move public traffic
+# on its own.
+#
+# The image is tagged with the full Git SHA and deployed by DIGEST, so the
+# running revision is bound to an exact, immutable artifact.
+# =====================================================================
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '--label'
+      - 'org.opencontainers.image.revision=${_GIT_SHA}'
+      - '-t'
+      - 'us-central1-docker.pkg.dev/preflight-hackathon/full-shelf-repo/demo-replay:${_GIT_SHA}'
+      - '-f'
+      - 'tools/replay/Dockerfile'
+      - '.'
+
+images:
+  - 'us-central1-docker.pkg.dev/preflight-hackathon/full-shelf-repo/demo-replay:${_GIT_SHA}'
+
+substitutions:
+  _GIT_SHA: 'UNBOUND'
+
+options:
+  logging: CLOUD_LOGGING_ONLY

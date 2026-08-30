@@ -86,3 +86,15 @@ export function presenterModeEnabled(): boolean {
   if (typeof location === "undefined") return false;
   return new URLSearchParams(location.search).get("presenter") === "1";
 }
+
+/**
+ * Judge mode: the deployed public replay build.
+ *
+ * Set at BUILD time by the deployment Dockerfile, never inferred from the
+ * URL, so an ordinary development or filming build is byte-identical to
+ * what it was before. It changes exactly one thing — it renders the
+ * "REPLAY · RECORDED RUN" disclosure — and grants no authority.
+ */
+export function judgeModeEnabled(): boolean {
+  return import.meta.env.VITE_JUDGE_MODE === "1";
+}

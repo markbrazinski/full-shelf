@@ -17,7 +17,10 @@
 
 import { test, expect, type Page, type BrowserContext } from "@playwright/test";
 
-const RUNTIME = "http://127.0.0.1:8788";
+// Local development serves the replay API on its own port; the deployed
+// judge build serves it same-origin from the page's own host. Pointing
+// this at the base URL is what lets one suite verify both topologies.
+const RUNTIME = process.env.FS_RUNTIME_URL ?? process.env.FS_BASE_URL ?? "http://127.0.0.1:8788";
 
 test.setTimeout(240_000);
 

@@ -27,6 +27,7 @@ import {
   googleMapsApiKey,
   debugReplayControlsEnabled,
   presenterModeEnabled,
+  judgeModeEnabled,
 } from "./env";
 import { routesForBoundary } from "./data/contract/routeGeometry";
 import {
@@ -150,6 +151,7 @@ const HOLD_EVENTS = new Set([24]);
 const dwellFor = (cursor: number): number => DWELL_MS[cursor] ?? DWELL_DEFAULT_MS;
 const DEBUG_CONTROLS = debugReplayControlsEnabled();
 const PRESENTER = presenterModeEnabled();
+const JUDGE_MODE = judgeModeEnabled();
 
 type View = "today" | "incident" | "history";
 type Day = "fri" | "sat";
@@ -775,6 +777,22 @@ export default function App() {
           <span className="mono" style={css("font-size:9.5px;letter-spacing:.14em;color:#7e939c;white-space:nowrap")}>
             FULFILLMENT CONTROL PLANE
           </span>
+          {/* Judge builds must say what they are. The filmed product frame
+              is unchanged: this renders only when the deployed public
+              replay build sets the flag. */}
+          {JUDGE_MODE ? (
+            <span
+              className="mono"
+              data-testid="replay-disclosure"
+              title="A replay of one previously completed operating day. Nothing here is live."
+              style={css(
+                "font-size:9px;font-weight:700;letter-spacing:.08em;color:#f0d9b0;background:#4a3a1c;" +
+                  "border:1px solid #6d5527;border-radius:5px;padding:3px 8px;white-space:nowrap",
+              )}
+            >
+              REPLAY · RECORDED RUN
+            </span>
+          ) : null}
         </div>
 
         <div style={css("display:flex;align-items:center;gap:10px;min-width:0")}>
