@@ -41,9 +41,50 @@ async function sessionOf(page: Page): Promise<string> {
   );
 }
 
-/** Runtime state for a session, read from the runtime itself. */
+/**
+ * Call the replay API as the PAGE would, not as a separate HTTP client.
+ *
+ * `page.request` keeps its own cookie jar. Against a deployment that pins a
+ * visitor to one instance by cookie, that client is a different visitor and
+ * lands on whichever instance it likes — so a session created by the browser
+ * is invisible to it. Issuing these from inside the page shares the browser's
+ * cookies and reaches the instance actually holding the session.
+ */
+async function api(
+  page: Page,
+  method: "GET" | "POST",
+  path: string,
+  body?: unknown,
+): Promise<{ status: number; json: unknown }> {
+  return await page.evaluate(
+    async ({ method, url, body }) => {
+      const res = await fetch(url, {
+        method,
+        headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      const text = await res.text();
+      let parsed: unknown = null;
+      try {
+        parsed = text ? JSON.parse(text) : null;
+      } catch {
+        parsed = text;
+      }
+      return { status: res.status, json: parsed };
+    },
+    { method, url: `${RUNTIME}${path}`, body },
+  );
+}
+
+/** Runtime state for a session, read as the page. */
 async function runtimeState(page: Page, sid: string) {
-  return await (await page.request.get(`${RUNTIME}/api/v1/replay/sessions/${sid}`)).json();
+  return (await api(page, "GET", `/api/v1/replay/sessions/${sid}`)).json as {
+    cursor: number;
+    approved: boolean;
+    classification?: string;
+    synthetic?: boolean;
+    feed?: { sequence: number }[];
+  };
 }
 
 /**
@@ -52,15 +93,15 @@ async function runtimeState(page: Page, sid: string) {
  * exercise the same committed path.
  */
 async function driveTo(page: Page, sid: string, target: number) {
-  await page.request.post(`${RUNTIME}/api/v1/replay/sessions/${sid}/pause`).catch(() => {});
+  await api(page, "POST", `/api/v1/replay/sessions/${sid}/pause`).catch(() => {});
 
   for (let guard = 0; guard < 40; guard++) {
     const state = await runtimeState(page, sid);
     if (state.cursor >= target) break;
 
-    const res = await page.request.post(`${RUNTIME}/api/v1/replay/sessions/${sid}/advance`);
-    if (res.status() === 409) {
-      const detail = (await res.json()).detail;
+    const res = await api(page, "POST", `/api/v1/replay/sessions/${sid}/advance`);
+    if (res.status === 409) {
+      const detail = (res.json as { detail?: string }).detail;
       if (detail === "HUMAN_APPROVAL_REQUIRED") {
         const approve = page.locator('[data-testid="approve-update"]');
         await expect(approve).toBeVisible({ timeout: 30_000 });
@@ -224,7 +265,7 @@ test.describe("Interaction during an atomic transition", () => {
 
     // DURING — event 11 commits while the operator stands on Incidents.
     // The recall holds for a deliberate act; it must not half-render.
-    await page.request.post(`${RUNTIME}/api/v1/replay/sessions/${sid}/advance`);
+    await api(page, "POST", `/api/v1/replay/sessions/${sid}/advance`);
     await expect.poll(() => cursor(page), { timeout: 30_000 }).toBe(11);
     await expect(page.locator('[data-testid="start-recall-response"]')).toBeVisible({
       timeout: 20_000,
@@ -340,9 +381,9 @@ test.describe("Canonical event contract holds under exploration", () => {
     await expect(page.locator('[data-testid="auth-rev"]')).toHaveText("rev07");
 
     // The runtime refuses to advance past the gate on its own.
-    const refused = await page.request.post(`${RUNTIME}/api/v1/replay/sessions/${sid}/advance`);
-    expect(refused.status()).toBe(409);
-    expect((await refused.json()).detail).toBe("HUMAN_APPROVAL_REQUIRED");
+    const refused = await api(page, "POST", `/api/v1/replay/sessions/${sid}/advance`);
+    expect(refused.status).toBe(409);
+    expect((refused.json as { detail?: string }).detail).toBe("HUMAN_APPROVAL_REQUIRED");
 
     // Clicking around cannot manufacture rev08 authority.
     for (let i = 0; i < 12; i++) {
@@ -364,9 +405,7 @@ test.describe("Canonical event contract holds under exploration", () => {
 
     for (const boundary of [5, 6, 8, 10]) {
       if (boundary > 5) await driveTo(page, sid, boundary);
-      const projection = await (
-        await page.request.get(`${RUNTIME}/api/v1/replay/sessions/${sid}/projection`)
-      ).json();
+      const projection = (await api(page, "GET", `/api/v1/replay/sessions/${sid}/projection`)).json as any;
 
       const incidents = projection.current_day?.incidents ?? [];
       expect(
@@ -389,9 +428,7 @@ test.describe("Canonical event contract holds under exploration", () => {
     await page.locator('[data-testid="nav-incident"]').click();
     await expect(page.locator('[data-testid="incident-workspace"]')).toBeVisible();
 
-    const projection = await (
-      await page.request.get(`${RUNTIME}/api/v1/replay/sessions/${sid}/projection`)
-    ).json();
+    const projection = (await api(page, "GET", `/api/v1/replay/sessions/${sid}/projection`)).json as any;
     const recall = (projection.current_day?.incidents ?? []).find(
       (i: { incident_id?: string }) => i.incident_id === "INC-2231",
     );
@@ -412,9 +449,7 @@ test.describe("Canonical event contract holds under exploration", () => {
       await page.locator('[data-testid="nav-history"]').click({ force: true }).catch(() => {});
       await page.locator('[data-testid="nav-incident"]').click({ force: true }).catch(() => {});
     }
-    const after = await (
-      await page.request.get(`${RUNTIME}/api/v1/replay/sessions/${sid}/projection`)
-    ).json();
+    const after = (await api(page, "GET", `/api/v1/replay/sessions/${sid}/projection`)).json as any;
     expect(
       (after.current_day?.incidents ?? []).find(
         (i: { incident_id?: string }) => i.incident_id === "INC-2231",
@@ -461,26 +496,22 @@ test.describe("Canonical event contract holds under exploration", () => {
     // There is no rewind verb at all: the transport exposes no route that
     // can lower a committed cursor.
     for (const verb of ["rewind", "seek", "goto", "set_cursor"]) {
-      const res = await page.request.post(`${RUNTIME}/api/v1/replay/sessions/${sid}/${verb}`, {
-        data: { cursor: 5 },
-      });
-      expect(res.status(), `${verb} is not a route`).toBe(404);
+      const res = await api(page, "POST", `/api/v1/replay/sessions/${sid}/${verb}`, { cursor: 5 });
+      expect(res.status, `${verb} is not a route`).toBe(404);
     }
     expect((await runtimeState(page, sid)).cursor, "cursor unchanged").toBe(at);
 
     // An approval with an altered binding commits nothing.
-    const bad = await page.request.post(`${RUNTIME}/api/v1/replay/sessions/${sid}/approve`, {
-      data: {
-        plan_id: "PLAN-001",
-        incident_id: "INC-2210",
-        expected_revision: "rev07",
-        target_revision: "rev08",
-        actions: [{ order_id: "O202", cases: 999, disposition: "TRUCK_2" }],
-        plan_diff_hash: "tampered",
-        idempotency_key: "judge-safety-tamper",
-      },
+    const bad = await api(page, "POST", `/api/v1/replay/sessions/${sid}/approve`, {
+      plan_id: "PLAN-001",
+      incident_id: "INC-2210",
+      expected_revision: "rev07",
+      target_revision: "rev08",
+      actions: [{ order_id: "O202", cases: 999, disposition: "TRUCK_2" }],
+      plan_diff_hash: "tampered",
+      idempotency_key: "judge-safety-tamper",
     });
-    expect(bad.status()).toBe(409);
+    expect(bad.status).toBe(409);
     expect((await runtimeState(page, sid)).cursor, "zero mutations on refusal").toBe(at);
   });
 });
@@ -512,15 +543,29 @@ test.describe("Transport degradation", () => {
   });
 
   test("a duplicated projection response never double-applies state", async ({ page }) => {
-    // Serve every projection read twice; the client must be idempotent.
+    // Replay a STALE projection body over a later read.
+    //
+    // Duplicating a response is only interesting if the duplicate is out of
+    // date — an identical repeat changes nothing by definition. So the first
+    // body is captured and served again in place of a later one, which is
+    // the real hazard: an older snapshot landing after a newer one. The
+    // client's revision guard must drop it rather than render it.
     let duplicated = 0;
+    let firstBody: string | null = null;
     await page.route("**/api/v1/replay/sessions/**/projection", async (route) => {
       const res = await route.fetch();
       const body = await res.text();
+      if (firstBody === null) {
+        firstBody = body;
+        await route.fulfill({ response: res, body });
+        return;
+      }
+      // Every third read is answered with the opening snapshot instead.
       duplicated += 1;
-      await route.fulfill({ response: res, body });
-      // Fire a second identical read behind it.
-      await page.request.get(route.request().url()).catch(() => {});
+      await route.fulfill({
+        response: res,
+        body: duplicated % 3 === 0 ? firstBody : body,
+      });
     });
 
     await page.goto("/");
@@ -560,9 +605,7 @@ test.describe("Repeatability", () => {
 
       await driveTo(page, sid, 25);
 
-      const projection = await (
-        await page.request.get(`${RUNTIME}/api/v1/replay/sessions/${sid}/projection`)
-      ).json();
+      const projection = (await api(page, "GET", `/api/v1/replay/sessions/${sid}/projection`)).json as any;
       const recall = (projection.current_day?.incidents ?? []).find(
         (i: { incident_id?: string }) => i.incident_id === "INC-2231",
       );

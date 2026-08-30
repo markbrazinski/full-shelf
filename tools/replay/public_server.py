@@ -33,6 +33,7 @@ import json
 import mimetypes
 import os
 import pathlib
+import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
@@ -57,6 +58,48 @@ JUDGE_MODE = os.getenv("FULL_SHELF_JUDGE_MODE", "1") == "1"
 # Same-origin: the frontend and the replay API are served by this one
 # process, so no cross-origin grant is needed or given.
 STORE = runtime.SessionStore()
+
+
+def _session(session_id):
+    """Fetch a session, adopting an unknown id rather than refusing it.
+
+    Sessions live in the serving instance's memory and this service runs on
+    more than one instance. Cloud Run pins a visitor to the instance that
+    created their session, but that is best-effort: an instance recycling, or
+    a client that does not carry the affinity cookie, can present a perfectly
+    valid id to an instance that has never seen it.
+
+    Refusing it strands the visitor. Adopting it does not invent anything: a
+    replay session holds a cursor and an approval receipt and nothing else,
+    every event is a committed fixture, and a fresh session is exactly what
+    the visitor would get by reloading. So an unrecognised id is registered
+    at the opening boundary and the replay simply starts from the beginning,
+    which is the same guarantee the front door already makes.
+
+    This cannot resurrect another visitor's progress or leak it: adoption
+    always begins at INITIAL_CURSOR with no approval, never at some other
+    session's cursor.
+    """
+    try:
+        return STORE.get(session_id)
+    except runtime.ReplayError:
+        if not _ADOPTABLE.match(session_id or ""):
+            raise
+        adopted = runtime.ReplaySession(session_id=session_id)
+        with STORE._lock:  # noqa: SLF001 - same module family, no public verb
+            # Another thread may have adopted the same id first; keep theirs.
+            existing = STORE._sessions.get(session_id)
+            if existing is not None:
+                return existing
+            STORE._sessions[session_id] = adopted
+        _remember(session_id)
+        return adopted
+
+
+# Only ids this service itself mints are adoptable, so an arbitrary string
+# cannot conjure a session.
+_ADOPTABLE = re.compile(
+    r"^fs-replay-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
 # A single deterministic replay holds ~25 events and one projection cursor.
 # The cap exists so an unbounded visit count cannot exhaust a 512MiB
@@ -214,7 +257,7 @@ class PublicHandler(BaseHTTPRequestHandler):
             parts = self._segments()
             if (len(parts) == 6 and parts[:4] == ["api", "v1", "replay", "sessions"]
                     and parts[5] == "branch"):
-                return self._json(200, STORE.get(parts[4]).exit_branch())
+                return self._json(200, _session(parts[4]).exit_branch())
             return self._json(404, {"detail": "NOT_A_RUNTIME_ROUTE"})
         except runtime.ReplayError as exc:
             self._json(exc.status, exc.body())
@@ -236,7 +279,7 @@ class PublicHandler(BaseHTTPRequestHandler):
         if len(parts) < 5 or parts[:4] != ["api", "v1", "replay", "sessions"]:
             return self._json(404, {"detail": "NOT_A_RUNTIME_ROUTE"})
 
-        session = STORE.get(parts[4])
+        session = _session(parts[4])
         tail = parts[5:]
         if not tail:
             return self._json(200, {**session.state(),
@@ -261,7 +304,7 @@ class PublicHandler(BaseHTTPRequestHandler):
         if len(parts) != 6 or parts[:4] != ["api", "v1", "replay", "sessions"]:
             return self._json(404, {"detail": "NOT_A_RUNTIME_ROUTE"})
 
-        session = STORE.get(parts[4])
+        session = _session(parts[4])
         action = parts[5]
 
         # `start` deliberately does NOT spawn a server-side autoplay thread.
