@@ -159,7 +159,11 @@ class PublicHandler(BaseHTTPRequestHandler):
             parts = self._segments()
             # Readiness must never touch replay state, so it is answered
             # before any session lookup and mints nothing.
-            if parts == ["healthz"]:
+            # `/healthz` is intercepted by Google Frontend on Cloud Run and
+            # never reaches the container, so readiness lives under the
+            # API namespace where nothing else can claim it. Both spellings
+            # are answered: the local one still works off-platform.
+            if parts in (["api", "healthz"], ["healthz"]):
                 return self._json(200, {
                     "status": "ok",
                     "service": "full-shelf-demo-replay",
