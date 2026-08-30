@@ -75,6 +75,27 @@ export function defaultRuntimeBaseUrl(): string {
   return "http://127.0.0.1:8788";
 }
 
+/**
+ * Recover from a session the server no longer holds.
+ *
+ * Replay sessions live in the serving instance's memory. Cloud Run keeps a
+ * visitor pinned to one instance, but that is best-effort: an instance
+ * recycling, or scaling activity, can leave a browser holding an id nobody
+ * answers for, and every later call 404s.
+ *
+ * A lost session has nothing to salvage — it holds presentation state only,
+ * and the replay always starts from the same committed opening event. So the
+ * honest recovery is to start a clean one, which is exactly what a judge
+ * pressing Restart would get. Reloading is what performs that, and it is
+ * done once: a reload loop would be worse than the error it replaces.
+ */
+let recovering = false;
+function recoverLostSession(): void {
+  if (recovering || typeof location === "undefined") return;
+  recovering = true;
+  location.reload();
+}
+
 export class GoldenRuntimeDataSource {
   private config: GoldenRuntimeConfig;
 
@@ -96,6 +117,9 @@ export class GoldenRuntimeDataSource {
     const res = await fetch(
       `${this.config.baseUrl}/api/v1/replay/sessions/${sessionId}/projection`
     );
+    // The serving instance no longer holds this session. Start a clean one
+    // rather than stranding the judge on a connection error.
+    if (res.status === 404) recoverLostSession();
     if (!res.ok) throw new Error(`Failed to get projection: ${res.status}`);
     const raw = await res.json();
     return normalize(raw, observedCursor);
@@ -146,6 +170,10 @@ export class GoldenRuntimeDataSource {
             `${this.config.baseUrl}/api/v1/replay/sessions/${sessionId}/stream`,
             { headers }
           );
+          if (res.status === 404) {
+            recoverLostSession();
+            return;
+          }
           if (!res.ok) throw new Error(`SSE failed: ${res.status}`);
 
           const reader = res.body?.getReader();
