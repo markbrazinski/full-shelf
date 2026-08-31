@@ -1,5 +1,20 @@
 # Public replay deployment
 
+> **DATED NOTE — 2026-08-31.** Two statements below have changed since this
+> document was written:
+>
+> - *"Full Shelf still has exactly the two Cloud Run services `AGENTS.md` locks
+>   in"* — still true of **authoritative** services, but an authenticated judge
+>   environment has since been deployed alongside them under amendment CR-001.
+>   See *Deployed services* in `README.md`.
+> - *"the project's key currently has no HTTP-referrer restriction"* — the Maps
+>   Platform key has since been restricted to the judge/replay hosts plus
+>   localhost, and scoped to the Maps JavaScript backend only. The reasoning for
+>   keeping the key out of the anonymous replay bundle is unchanged.
+>
+> The rest of this document remains accurate for `full-shelf-demo-replay`.
+
+
 The hosted deterministic replay judges use: what it is, how it was built and
 deployed, how to verify it, what it costs, and how to take it down.
 

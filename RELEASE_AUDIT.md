@@ -1,5 +1,19 @@
 # Full Shelf — Release Audit
 
+> **SUPERSEDED IN PART — 2026-08-31.** This report is retained as an accurate
+> record of what was observed on 2026-08-28. Three of its findings no longer
+> describe the deployment:
+>
+> - **§2 "Local-only"** and **§13 "No publicly reachable deployment"** are no
+>   longer true. An authenticated judge environment and an anonymous replay are
+>   both deployed; see *The hosted judge experience* in `README.md`.
+> - **§1 / §12 test counts** (`540 passed`) have since moved to `563 passed`.
+> - **§5** describes the tree at 356 files, before `apps/judge/` existed.
+>
+> Its secret-scan and license conclusions still hold and were re-verified on
+> 2026-08-31. Nothing below has been rewritten.
+
+
 **Date:** 2026-08-28
 **Branch:** `main`
 **Skill:** `repo-release-readme` v1.1

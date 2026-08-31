@@ -79,7 +79,7 @@ def command(complete=False, *, source_event_id="partner-event-1"):
             "model_armor": {"status": "APPROVED", "safety_verdict": "PASSED"},
             "proposal": candidate(complete),
             "agent_id": "full-shelf.partner-operations.v2",
-            "model_id": "gemini-3.5-flash", "adk_framework": "google-adk/2.6.1",
+            "model_id": "gemini-3.5-flash", "adk_framework": "google-adk/2.6.3",
             "adk_session_id": "session-real", "adk_invocation_id": "invocation-real",
             "adk_event_id": "event-real",
         },

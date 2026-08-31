@@ -243,7 +243,7 @@ export interface BoundaryChip {
 }
 
 export interface AgentActivityView {
-  adkLabel: string; // "ADK 2.6.1"
+  adkLabel: string; // "ADK 2.6.3"
   note: string;
   agents: AgentCell[];
   boundaries: BoundaryChip[]; // Model Armor etc. — visually NOT an agent

@@ -271,7 +271,7 @@ class ProcessPartnerEvidencePayload(StrictPayload):
     proposal: PartnerCustodyProposal
     agent_id: Literal["full-shelf.partner-operations.v2"]
     model_id: str = Field(min_length=1, max_length=128)
-    adk_framework: str = Field(pattern=r"^google-adk/2\.6\.1$")
+    adk_framework: str = Field(pattern=r"^google-adk/2\.6\.3$")
     adk_session_id: str = Field(min_length=1, max_length=128)
     adk_invocation_id: str = Field(min_length=1, max_length=128)
     adk_event_id: str = Field(min_length=1, max_length=128)

@@ -56,7 +56,7 @@ export function ExecutionRecordDrawer({ evidence, onClose }: Props) {
           <div style={css("background:#fff;border:1px solid #d5d8d2;border-radius:10px;padding:15px 16px;margin-bottom:14px")}>
             <div style={css("display:flex;align-items:center;justify-content:space-between;margin-bottom:10px")}>
               <div className="mono" style={css("font-size:11px;letter-spacing:.08em;color:#74848a;font-weight:600")}>COORDINATOR EXECUTION</div>
-              <span className="mono" style={css("font-size:10px;font-weight:600;padding:2px 7px;border-radius:4px;background:#e0eef1;color:#1f6f8b;border:1px solid #bcdae2")}>ADK 2.6.1</span>
+              <span className="mono" style={css("font-size:10px;font-weight:600;padding:2px 7px;border-radius:4px;background:#e0eef1;color:#1f6f8b;border:1px solid #bcdae2")}>ADK 2.6.3</span>
             </div>
             <div style={css("display:flex;align-items:center;justify-content:space-between;gap:9px;margin-bottom:8px")}>
               <div style={css("display:flex;align-items:center;gap:9px")}>

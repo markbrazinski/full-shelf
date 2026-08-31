@@ -597,7 +597,7 @@ function reroutedCases(stops: RawDispatch["vehicles"][number]["stops"]): number 
 function buildAgentActivity(raw: RawProjection, recall: RawIncident | undefined): AgentActivityView {
   const aa = raw.agent_activity_as_of!;
   // The ADK version lives on the specialists as `adk_framework`
-  // ("google-adk-2.6.1"); manifest_version is the fleet manifest, a
+  // ("google-adk-2.6.3"); manifest_version is the fleet manifest, a
   // different thing entirely. Label only what the contract states.
   const framework = aa.agents.map((a) => a.adk_framework).find((f): f is string => !!f);
   const view: AgentActivityView = {

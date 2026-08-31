@@ -104,7 +104,7 @@ const OK: AgentDisplayStatus = "COMPLETED";
 
 // truck-failure recovery fleet (recall agent not involved)
 const FLEET_RECOVERY = {
-  adkLabel: "ADK 2.6.1",
+  adkLabel: "ADK 2.6.3",
   note: "agents propose & use bounded tools · deterministic policy + ledger commit",
   agents: [
     agent("coord", true, [OK, "Coordinate truck-failure response", "Coordination complete · rev08 proposed"]),
@@ -127,7 +127,7 @@ interface FleetRecallOpts {
 }
 
 const fleetRecall = (opts: FleetRecallOpts) => ({
-  adkLabel: "ADK 2.6.1",
+  adkLabel: "ADK 2.6.3",
   note: "agents propose & use bounded tools · deterministic policy + ledger commit",
   agents: [
     agent("coord", true, opts.coord),
